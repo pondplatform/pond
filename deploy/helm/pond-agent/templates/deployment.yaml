@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: pond-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pond-agent
+  template:
+    metadata:
+      labels:
+        app: pond-agent
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: pond-agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: POND_SERVER_ADDR
+              value: {{ .Values.serverAddr | quote }}
+            - name: POND_AGENT_TOKEN
+              value: {{ .Values.agentToken | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

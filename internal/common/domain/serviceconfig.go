@@ -1,0 +1,48 @@
+package domain
+
+// ServiceConfig is the fully-resolved configuration for deploying a service
+// to a specific environment (overrides already applied).
+type ServiceConfig struct {
+	Version int    `json:"version" yaml:"version"`
+	Name    string `json:"name"    yaml:"name"`
+	Image   string `json:"image"   yaml:"image"`
+	Build   string `json:"build"   yaml:"build"`
+
+	Ingress IngressConfig    `json:"ingress"    yaml:"ingress"`
+	Service ServiceSpec      `json:"service"    yaml:"service"`
+	Manage  ManagementConfig `json:"management" yaml:"management"`
+
+	Dependencies map[string]DependencyDeclaration `json:"dependencies" yaml:"dependencies"`
+	Env          map[string]string                `json:"env"          yaml:"env"`
+	Configs      map[string]ConfigFileSpec        `json:"configs"      yaml:"configs"`
+}
+
+type IngressConfig struct {
+	Enabled bool `json:"enabled" yaml:"enabled"`
+}
+
+type ServiceSpec struct {
+	Port     int32 `json:"port"     yaml:"port"`
+	Replicas int32 `json:"replicas" yaml:"replicas"`
+}
+
+type ManagementConfig struct {
+	Metrics MetricsConfig `json:"metrics" yaml:"metrics"`
+	Health  HealthConfig  `json:"health"  yaml:"health"`
+}
+
+type MetricsConfig struct {
+	Port     int    `json:"port"     yaml:"port"`
+	Endpoint string `json:"endpoint" yaml:"endpoint"`
+}
+
+type HealthConfig struct {
+	Port     int    `json:"port"     yaml:"port"`
+	Endpoint string `json:"endpoint" yaml:"endpoint"`
+}
+
+type ConfigFileSpec struct {
+	Format   string         `json:"format"   yaml:"format"`
+	MountDir string         `json:"mountDir" yaml:"mountDir"`
+	Values   map[string]any `json:"values"   yaml:"values"`
+}

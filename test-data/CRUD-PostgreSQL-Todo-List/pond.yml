@@ -1,0 +1,38 @@
+version: 1
+name: todo-app
+build: Dockerfile
+image: ghcr.io/janmh/todo-app
+
+ingress:
+  enabled: true
+
+service:
+  port: 3000
+
+dependencies:
+  myDb:
+    type: postgres
+
+env:
+  ENVIRONMENT: "testing"
+
+configs:
+  .env:
+    format: .env
+    mountDir: /usr/src/app/
+    values:
+      DB_HOST: "{{myDb.host}}"
+      DB_USER: "{{myDb.username}}"
+      DB_PASSWORD: "{{myDb.password}}"
+      DB_DATABASE: "{{myDb.database}}"
+      DB_PORT: "{{myDb.port}}"
+
+overrides:
+  experiments: 
+    env: 
+      ENVIRONMENT: production
+    dependencies:
+      myDb:
+        config:
+          host: todo-app-cluster-rw
+          port: 5432

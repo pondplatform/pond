@@ -1,0 +1,66 @@
+package domain
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// DependencyDeclaration represents a dependency as declared in pond.yml.
+type DependencyDeclaration struct {
+	Type   string         `json:"type"   yaml:"type"`
+	Config map[string]any `json:"config" yaml:"config"`
+}
+
+// DependencyConfig represents the server-side wiring of a dependency
+// for a specific (service, environment) pair.
+type DependencyConfig struct {
+	ID             uuid.UUID
+	ServiceID      uuid.UUID
+	EnvironmentID  uuid.UUID
+	DependencyName string
+	DependencyType string
+	Managed        bool
+	ProviderInputs map[string]any
+	UserConfig     map[string]any
+	UpdatedAt      time.Time
+}
+
+// ResolvedContext holds the runtime-resolved values for a dependency,
+// ready for injection into config templates.
+type ResolvedContext struct {
+	ID                 uuid.UUID
+	ServiceID          uuid.UUID
+	EnvironmentID      uuid.UUID
+	DependencyName     string
+	Values             map[string]any
+	ResolvedAt         time.Time
+	SourceDeploymentID *uuid.UUID
+}
+
+// DependencySpec describes a built-in dependency type's schema.
+type DependencySpec struct {
+	Type         string
+	Description  string
+	ConfigFields []FieldSpec
+	OutputFields []FieldSpec
+}
+
+type FieldSpec struct {
+	Name        string
+	Description string
+	Required    bool
+	Sensitive   bool
+}
+
+type DependencyConfigRepository interface {
+	Get(ctx context.Context, serviceID, envID uuid.UUID, depName string) (*DependencyConfig, error)
+	Set(ctx context.Context, cfg *DependencyConfig) error
+	ListByServiceAndEnv(ctx context.Context, serviceID, envID uuid.UUID) ([]DependencyConfig, error)
+}
+
+type ResolvedContextRepository interface {
+	Get(ctx context.Context, serviceID, envID uuid.UUID, depName string) (*ResolvedContext, error)
+	Set(ctx context.Context, rc *ResolvedContext) error
+}
