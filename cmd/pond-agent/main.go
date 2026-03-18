@@ -8,6 +8,8 @@ import (
 	"syscall"
 
 	"github.com/pondplatform/pond/internal/agent"
+	"github.com/pondplatform/pond/internal/agent/helm"
+	"github.com/pondplatform/pond/internal/agent/tofu"
 )
 
 func main() {
@@ -19,7 +21,9 @@ func main() {
 		AgentToken: os.Getenv("POND_AGENT_TOKEN"),
 	}
 
-	if err := agent.Run(ctx, cfg); err != nil {
+	exec := agent.NewExecutor(helm.NewRunner(), tofu.NewRunner())
+
+	if err := agent.Run(ctx, cfg, exec); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

@@ -1,6 +1,9 @@
 package agent
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 // AgentConnection represents the persistent connection to the server.
 type AgentConnection interface {
@@ -13,12 +16,12 @@ type AgentConnection interface {
 
 // CommandExecutor dispatches and runs agent commands.
 type CommandExecutor interface {
-	Execute(ctx context.Context, cmd *Command) (*CommandResult, error)
+	Execute(ctx context.Context, cmd *Command, logSink func(LogEntry)) (*CommandResult, error)
 }
 
 // HelmRunner wraps Helm CLI operations.
 type HelmRunner interface {
-	Upgrade(ctx context.Context, req HelmUpgradeRequest) error
+	Upgrade(ctx context.Context, req HelmUpgradeRequest, logW io.Writer) error
 }
 
 type HelmUpgradeRequest struct {
@@ -30,8 +33,8 @@ type HelmUpgradeRequest struct {
 
 // TofuRunner wraps OpenTofu CLI operations.
 type TofuRunner interface {
-	Init(ctx context.Context, workDir string) error
-	Apply(ctx context.Context, workDir string, vars map[string]string) error
+	Init(ctx context.Context, workDir string, logW io.Writer) error
+	Apply(ctx context.Context, workDir string, vars map[string]string, logW io.Writer) error
 	Output(ctx context.Context, workDir string) (map[string]any, error)
-	Destroy(ctx context.Context, workDir string, vars map[string]string) error
+	Destroy(ctx context.Context, workDir string, vars map[string]string, logW io.Writer) error
 }

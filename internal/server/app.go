@@ -38,6 +38,7 @@ func Run(ctx context.Context, cfg Config) error {
 	deploymentStore := store.NewDeploymentStore(db)
 	depConfigStore := store.NewDependencyConfigStore(db)
 	resolvedCtxStore := store.NewResolvedContextStore(db)
+	clusterStore := store.NewClusterStore(db)
 	cmdQueue := queue.NewCommandQueue(db)
 
 	// Registries
@@ -49,8 +50,11 @@ func Run(ctx context.Context, cfg Config) error {
 	helmGenerator := helmgen.NewGenerator()
 	deploySvc := deployment.NewDeploymentService(deploymentStore, serviceStore, envStore, depResolver, helmGenerator, cmdQueue)
 
+	// Agent handler
+	agentHandler := api.NewAgentHandler(clusterStore, cmdQueue)
+
 	// HTTP router
-	router := api.NewRouter(deploySvc, serviceStore, envStore, depConfigStore, resolvedCtxStore)
+	router := api.NewRouter(deploySvc, serviceStore, envStore, depConfigStore, resolvedCtxStore, agentHandler)
 
 	log.Printf("server listening on %s", cfg.ListenAddr)
 	server := &http.Server{

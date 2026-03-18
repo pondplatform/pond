@@ -13,6 +13,7 @@ func NewRouter(
 	envs domain.EnvironmentRepository,
 	depConfigs domain.DependencyConfigRepository,
 	resolvedCtxs domain.ResolvedContextRepository,
+	agentHandler *AgentHandler,
 ) http.Handler {
 	mux := http.NewServeMux()
 
@@ -36,7 +37,10 @@ func NewRouter(
 	mux.HandleFunc("GET /services/{serviceID}/environments/{envID}/dependencies/{name}", depHandler.GetConfig)
 	mux.HandleFunc("GET /services/{serviceID}/environments/{envID}/dependencies/{name}/context", depHandler.GetContext)
 
-	// Apply middleware
+	// Agent WebSocket endpoint — registered before middleware to bypass jsonContentType.
+	mux.HandleFunc("GET /agent/ws", agentHandler.ServeWS)
+
+	// Apply middleware to all routes.
 	var handler http.Handler = mux
 	handler = jsonContentType(handler)
 	handler = loggingMiddleware(handler)

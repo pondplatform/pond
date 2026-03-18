@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"os/exec"
 
 	"github.com/pondplatform/pond/internal/agent"
@@ -16,11 +16,11 @@ func NewRunner() agent.TofuRunner {
 	return &runner{}
 }
 
-func (r *runner) Init(ctx context.Context, workDir string) error {
+func (r *runner) Init(ctx context.Context, workDir string, logW io.Writer) error {
 	cmd := exec.CommandContext(ctx, "tofu", "init")
 	cmd.Dir = workDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = logW
+	cmd.Stderr = logW
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("tofu init: %w", err)
@@ -28,7 +28,7 @@ func (r *runner) Init(ctx context.Context, workDir string) error {
 	return nil
 }
 
-func (r *runner) Apply(ctx context.Context, workDir string, vars map[string]string) error {
+func (r *runner) Apply(ctx context.Context, workDir string, vars map[string]string, logW io.Writer) error {
 	args := []string{"apply", "-auto-approve"}
 	for k, v := range vars {
 		args = append(args, "-var", fmt.Sprintf("%s=%s", k, v))
@@ -36,8 +36,8 @@ func (r *runner) Apply(ctx context.Context, workDir string, vars map[string]stri
 
 	cmd := exec.CommandContext(ctx, "tofu", args...)
 	cmd.Dir = workDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = logW
+	cmd.Stderr = logW
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("tofu apply: %w", err)
@@ -61,7 +61,7 @@ func (r *runner) Output(ctx context.Context, workDir string) (map[string]any, er
 	return outputs, nil
 }
 
-func (r *runner) Destroy(ctx context.Context, workDir string, vars map[string]string) error {
+func (r *runner) Destroy(ctx context.Context, workDir string, vars map[string]string, logW io.Writer) error {
 	args := []string{"destroy", "-auto-approve"}
 	for k, v := range vars {
 		args = append(args, "-var", fmt.Sprintf("%s=%s", k, v))
@@ -69,8 +69,8 @@ func (r *runner) Destroy(ctx context.Context, workDir string, vars map[string]st
 
 	cmd := exec.CommandContext(ctx, "tofu", args...)
 	cmd.Dir = workDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = logW
+	cmd.Stderr = logW
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("tofu destroy: %w", err)

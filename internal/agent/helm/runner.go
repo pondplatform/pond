@@ -3,6 +3,7 @@ package helm
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +17,7 @@ func NewRunner() agent.HelmRunner {
 	return &runner{}
 }
 
-func (r *runner) Upgrade(ctx context.Context, req agent.HelmUpgradeRequest) error {
+func (r *runner) Upgrade(ctx context.Context, req agent.HelmUpgradeRequest, logW io.Writer) error {
 	valuesFile := filepath.Join(os.TempDir(), fmt.Sprintf("pond-helm-%s.yaml", req.ReleaseName))
 	if err := os.WriteFile(valuesFile, req.Values, 0600); err != nil {
 		return fmt.Errorf("write values file: %w", err)
@@ -33,8 +34,8 @@ func (r *runner) Upgrade(ctx context.Context, req agent.HelmUpgradeRequest) erro
 	}
 
 	cmd := exec.CommandContext(ctx, "helm", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = logW
+	cmd.Stderr = logW
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("helm upgrade: %w", err)
