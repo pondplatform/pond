@@ -1,4 +1,4 @@
-package deployment
+package service
 
 import (
 	"context"
@@ -7,47 +7,25 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/internal/common/dependency"
 	"github.com/pondplatform/pond/internal/common/domain"
-	"github.com/pondplatform/pond/internal/common/helmgen"
+	"github.com/pondplatform/pond/internal/server/dependency"
+	"github.com/pondplatform/pond/internal/server/helmgen"
+	"github.com/pondplatform/pond/internal/server/store"
 )
 
-// Command types used by the deployment service to enqueue agent commands.
-type Command struct {
-	ID           uuid.UUID
-	DeploymentID uuid.UUID
-	Type         string
-	Payload      json.RawMessage
-	CreatedAt    time.Time
-}
-
-type CommandResult struct {
-	CommandID uuid.UUID
-	Success   bool
-	Output    json.RawMessage
-	Error     string
-}
-
-// CommandQueue manages the outbound command queue from server to agents.
-type CommandQueue interface {
-	Enqueue(ctx context.Context, clusterID uuid.UUID, cmd *Command) error
-	Dequeue(ctx context.Context, clusterID uuid.UUID) (*Command, error)
-	Acknowledge(ctx context.Context, cmdID uuid.UUID, result *CommandResult) error
-}
-
 type deploymentService struct {
-	deployments domain.DeploymentRepository
-	services    domain.ServiceRepository
-	envs        domain.EnvironmentRepository
+	deployments store.DeploymentRepository
+	services    store.ServiceRepository
+	envs        store.EnvironmentRepository
 	resolver    dependency.DependencyResolver
 	helmGen     helmgen.HelmValuesGenerator
 	queue       CommandQueue
 }
 
 func NewDeploymentService(
-	deployments domain.DeploymentRepository,
-	services domain.ServiceRepository,
-	envs domain.EnvironmentRepository,
+	deployments store.DeploymentRepository,
+	services store.ServiceRepository,
+	envs store.EnvironmentRepository,
 	resolver dependency.DependencyResolver,
 	helmGen helmgen.HelmValuesGenerator,
 	queue CommandQueue,

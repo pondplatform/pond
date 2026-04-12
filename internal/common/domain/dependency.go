@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,13 +53,4 @@ type FieldSpec struct {
 	Sensitive   bool
 }
 
-type DependencyConfigRepository interface {
-	Get(ctx context.Context, serviceID, envID uuid.UUID, depName string) (*DependencyConfig, error)
-	Set(ctx context.Context, cfg *DependencyConfig) error
-	ListByServiceAndEnv(ctx context.Context, serviceID, envID uuid.UUID) ([]DependencyConfig, error)
-}
 
-type ResolvedContextRepository interface {
-	Get(ctx context.Context, serviceID, envID uuid.UUID, depName string) (*ResolvedContext, error)
-	Set(ctx context.Context, rc *ResolvedContext) error
-}

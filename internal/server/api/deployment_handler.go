@@ -6,20 +6,20 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/internal/common/deployment"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/service"
 )
 
 type DeploymentHandler struct {
-	svc deployment.DeploymentService
+	svc service.DeploymentService
 }
 
-func NewDeploymentHandler(svc deployment.DeploymentService) *DeploymentHandler {
+func NewDeploymentHandler(svc service.DeploymentService) *DeploymentHandler {
 	return &DeploymentHandler{svc: svc}
 }
 
 func (h *DeploymentHandler) Submit(w http.ResponseWriter, r *http.Request) {
-	var req deployment.SubmitRequest
+	var req service.SubmitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return

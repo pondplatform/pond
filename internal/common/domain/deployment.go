@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,9 +28,3 @@ type Deployment struct {
 	CompletedAt           *time.Time
 }
 
-type DeploymentRepository interface {
-	GetByID(ctx context.Context, id uuid.UUID) (*Deployment, error)
-	ListByService(ctx context.Context, serviceID uuid.UUID) ([]Deployment, error)
-	Create(ctx context.Context, d *Deployment) error
-	UpdateStatus(ctx context.Context, id uuid.UUID, status DeploymentStatus, completedAt *time.Time) error
-}

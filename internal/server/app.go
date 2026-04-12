@@ -8,11 +8,11 @@ import (
 	"net/http"
 
 	_ "github.com/lib/pq"
-	"github.com/pondplatform/pond/internal/common/dependency"
-	"github.com/pondplatform/pond/internal/common/deployment"
-	"github.com/pondplatform/pond/internal/common/helmgen"
 	"github.com/pondplatform/pond/internal/server/api"
+	"github.com/pondplatform/pond/internal/server/dependency"
+	"github.com/pondplatform/pond/internal/server/helmgen"
 	"github.com/pondplatform/pond/internal/server/queue"
+	"github.com/pondplatform/pond/internal/server/service"
 	"github.com/pondplatform/pond/internal/server/store"
 )
 
@@ -48,7 +48,7 @@ func Run(ctx context.Context, cfg Config) error {
 	// Services
 	depResolver := dependency.NewDependencyResolver(depConfigStore, resolvedCtxStore, specRegistry, providerRegistry)
 	helmGenerator := helmgen.NewGenerator()
-	deploySvc := deployment.NewDeploymentService(deploymentStore, serviceStore, envStore, depResolver, helmGenerator, cmdQueue)
+	deploySvc := service.NewDeploymentService(deploymentStore, serviceStore, envStore, depResolver, helmGenerator, cmdQueue)
 
 	// Agent handler
 	agentHandler := api.NewAgentHandler(clusterStore, cmdQueue)

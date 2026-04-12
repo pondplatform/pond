@@ -5,14 +5,14 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/store"
 )
 
 type EnvironmentHandler struct {
-	envs domain.EnvironmentRepository
+	envs store.EnvironmentRepository
 }
 
-func NewEnvironmentHandler(envs domain.EnvironmentRepository) *EnvironmentHandler {
+func NewEnvironmentHandler(envs store.EnvironmentRepository) *EnvironmentHandler {
 	return &EnvironmentHandler{envs: envs}
 }
 

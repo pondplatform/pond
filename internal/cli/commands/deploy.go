@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/cli/client"
 	"github.com/pondplatform/pond/internal/common/config"
-	"github.com/pondplatform/pond/internal/common/deployment"
+	"github.com/pondplatform/pond/internal/server/service"
 	"github.com/spf13/cobra"
 )
 
@@ -42,7 +42,7 @@ func NewDeployCmd(serverClient client.ServerClient) *cobra.Command {
 				return fmt.Errorf("invalid project id: %w", err)
 			}
 
-			req := deployment.SubmitRequest{
+			req := service.SubmitRequest{
 				ProjectID:     projID,
 				ServiceConfig: *svcConfig,
 				ImageTag:      tag,

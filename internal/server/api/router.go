@@ -3,16 +3,16 @@ package api
 import (
 	"net/http"
 
-	"github.com/pondplatform/pond/internal/common/deployment"
-	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/service"
+	"github.com/pondplatform/pond/internal/server/store"
 )
 
 func NewRouter(
-	deploySvc deployment.DeploymentService,
-	services domain.ServiceRepository,
-	envs domain.EnvironmentRepository,
-	depConfigs domain.DependencyConfigRepository,
-	resolvedCtxs domain.ResolvedContextRepository,
+	deploySvc service.DeploymentService,
+	services store.ServiceRepository,
+	envs store.EnvironmentRepository,
+	depConfigs store.DependencyConfigRepository,
+	resolvedCtxs store.ResolvedContextRepository,
 	agentHandler *AgentHandler,
 ) http.Handler {
 	mux := http.NewServeMux()

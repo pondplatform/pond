@@ -5,14 +5,14 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/store"
 )
 
 type ServiceHandler struct {
-	services domain.ServiceRepository
+	services store.ServiceRepository
 }
 
-func NewServiceHandler(services domain.ServiceRepository) *ServiceHandler {
+func NewServiceHandler(services store.ServiceRepository) *ServiceHandler {
 	return &ServiceHandler{services: services}
 }
 

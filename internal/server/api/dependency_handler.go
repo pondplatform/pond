@@ -7,14 +7,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/store"
 )
 
 type DependencyHandler struct {
-	configs  domain.DependencyConfigRepository
-	contexts domain.ResolvedContextRepository
+	configs  store.DependencyConfigRepository
+	contexts store.ResolvedContextRepository
 }
 
-func NewDependencyHandler(configs domain.DependencyConfigRepository, contexts domain.ResolvedContextRepository) *DependencyHandler {
+func NewDependencyHandler(configs store.DependencyConfigRepository, contexts store.ResolvedContextRepository) *DependencyHandler {
 	return &DependencyHandler{configs: configs, contexts: contexts}
 }
 

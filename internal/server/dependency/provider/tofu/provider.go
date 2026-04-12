@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pondplatform/pond/internal/common/dependency"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/dependency"
 )
 
 // Provider implements ManagedProvider using OpenTofu for provisioning.

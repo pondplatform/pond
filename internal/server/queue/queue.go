@@ -8,18 +8,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/internal/common/deployment"
+	"github.com/pondplatform/pond/internal/server/service"
 )
 
 type commandQueue struct {
 	db *sql.DB
 }
 
-func NewCommandQueue(db *sql.DB) deployment.CommandQueue {
+func NewCommandQueue(db *sql.DB) service.CommandQueue {
 	return &commandQueue{db: db}
 }
 
-func (q *commandQueue) Enqueue(ctx context.Context, clusterID uuid.UUID, cmd *deployment.Command) error {
+func (q *commandQueue) Enqueue(ctx context.Context, clusterID uuid.UUID, cmd *service.Command) error {
 	payload, err := json.Marshal(cmd.Payload)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
@@ -34,8 +34,8 @@ func (q *commandQueue) Enqueue(ctx context.Context, clusterID uuid.UUID, cmd *de
 	return nil
 }
 
-func (q *commandQueue) Dequeue(ctx context.Context, clusterID uuid.UUID) (*deployment.Command, error) {
-	var cmd deployment.Command
+func (q *commandQueue) Dequeue(ctx context.Context, clusterID uuid.UUID) (*service.Command, error) {
+	var cmd service.Command
 	var payload []byte
 	err := q.db.QueryRowContext(ctx,
 		"DELETE FROM command_queue WHERE id = (SELECT id FROM command_queue WHERE cluster_id = $1 ORDER BY created_at ASC LIMIT 1) RETURNING id, deployment_id, type, payload, created_at",
@@ -51,7 +51,7 @@ func (q *commandQueue) Dequeue(ctx context.Context, clusterID uuid.UUID) (*deplo
 	return &cmd, nil
 }
 
-func (q *commandQueue) Acknowledge(ctx context.Context, cmdID uuid.UUID, result *deployment.CommandResult) error {
+func (q *commandQueue) Acknowledge(ctx context.Context, cmdID uuid.UUID, result *service.CommandResult) error {
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("marshal result: %w", err)

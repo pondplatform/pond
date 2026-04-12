@@ -7,18 +7,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/store"
 )
 
 type dependencyResolver struct {
-	configs    domain.DependencyConfigRepository
-	contexts   domain.ResolvedContextRepository
-	specs      SpecRegistry
-	providers  ProviderRegistry
+	configs   store.DependencyConfigRepository
+	contexts  store.ResolvedContextRepository
+	specs     SpecRegistry
+	providers ProviderRegistry
 }
 
 func NewDependencyResolver(
-	configs domain.DependencyConfigRepository,
-	contexts domain.ResolvedContextRepository,
+	configs store.DependencyConfigRepository,
+	contexts store.ResolvedContextRepository,
 	specs SpecRegistry,
 	providers ProviderRegistry,
 ) DependencyResolver {

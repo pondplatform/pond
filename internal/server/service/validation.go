@@ -1,4 +1,4 @@
-package deployment
+package service
 
 import "github.com/pondplatform/pond/internal/common/domain"
 

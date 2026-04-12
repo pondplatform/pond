@@ -9,13 +9,13 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/internal/common/deployment"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/service"
 )
 
 // ServerClient is the CLI's interface to the Pond server API.
 type ServerClient interface {
-	SubmitDeployment(ctx context.Context, req deployment.SubmitRequest) (*domain.Deployment, error)
+	SubmitDeployment(ctx context.Context, req service.SubmitRequest) (*domain.Deployment, error)
 	GetDeployment(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
 	SetDependencyConfig(ctx context.Context, cfg *domain.DependencyConfig) error
 	GetDependencyConfig(ctx context.Context, serviceID, envID uuid.UUID, depName string) (*domain.DependencyConfig, error)
@@ -35,7 +35,7 @@ func NewHTTPClient(baseURL string) ServerClient {
 	}
 }
 
-func (c *httpClient) SubmitDeployment(ctx context.Context, req deployment.SubmitRequest) (*domain.Deployment, error) {
+func (c *httpClient) SubmitDeployment(ctx context.Context, req service.SubmitRequest) (*domain.Deployment, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
