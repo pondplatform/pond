@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/pondplatform/pond/internal/common/deployment"
-	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/service"
+	"github.com/pondplatform/pond/internal/server/store"
 )
 
 var upgrader = websocket.Upgrader{
@@ -26,11 +26,11 @@ type wsEnvelope struct {
 
 // AgentHandler handles WebSocket connections from agents.
 type AgentHandler struct {
-	clusters domain.ClusterRepository
-	queue    deployment.CommandQueue
+	clusters store.ClusterRepository
+	queue    service.CommandQueue
 }
 
-func NewAgentHandler(clusters domain.ClusterRepository, queue deployment.CommandQueue) *AgentHandler {
+func NewAgentHandler(clusters store.ClusterRepository, queue service.CommandQueue) *AgentHandler {
 	return &AgentHandler{clusters: clusters, queue: queue}
 }
 
@@ -60,7 +60,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	_ = h.clusters.UpdateLastSeen(r.Context(), cluster.ID, time.Now())
 
 	// resultCh receives the result of the currently executing command.
-	resultCh := make(chan *deployment.CommandResult, 1)
+	resultCh := make(chan *service.CommandResult, 1)
 
 	// Reader goroutine: receives results and logs from the agent.
 	go func() {
@@ -76,7 +76,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 			switch env.Type {
 			case "result":
-				var res deployment.CommandResult
+				var res service.CommandResult
 				if err := json.Unmarshal(env.Data, &res); err != nil {
 					log.Printf("decode result: %v", err)
 					continue
