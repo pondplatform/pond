@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/common/domain"
@@ -16,6 +18,33 @@ type MockTransactor struct {
 func (m *MockTransactor) RunInTx(ctx context.Context, fn func(ctx context.Context, tx TxRepos) error) error {
 	if m.RunInTxFn != nil {
 		return m.RunInTxFn(ctx, fn)
+	}
+	return nil
+}
+
+type mockDependencyService struct {
+	scheduleCommandsFn func(ctx context.Context, tx TxRepos, dep *domain.Deployment, clusterID uuid.UUID) ([]PendingDep, error)
+	buildContextsFn    func(ctx context.Context, dep *domain.Deployment, rawOutputs map[string]json.RawMessage) (map[string]domain.ResolvedContext, error)
+	validateFn         func(ctx context.Context, serviceID, envID uuid.UUID, deps map[string]domain.DependencyDeclaration) error
+}
+
+func (m *mockDependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, dep *domain.Deployment, clusterID uuid.UUID) ([]PendingDep, error) {
+	if m.scheduleCommandsFn != nil {
+		return m.scheduleCommandsFn(ctx, tx, dep, clusterID)
+	}
+	return nil, nil
+}
+
+func (m *mockDependencyService) BuildContexts(ctx context.Context, dep *domain.Deployment, rawOutputs map[string]json.RawMessage) (map[string]domain.ResolvedContext, error) {
+	if m.buildContextsFn != nil {
+		return m.buildContextsFn(ctx, dep, rawOutputs)
+	}
+	return map[string]domain.ResolvedContext{}, nil
+}
+
+func (m *mockDependencyService) Validate(ctx context.Context, serviceID, envID uuid.UUID, deps map[string]domain.DependencyDeclaration) error {
+	if m.validateFn != nil {
+		return m.validateFn(ctx, serviceID, envID, deps)
 	}
 	return nil
 }
@@ -37,27 +66,21 @@ func TestDeploymentService_Submit(t *testing.T) {
 			return &domain.Environment{ID: id, ClusterID: clusterID}, nil
 		},
 	}
-	deployRepo := &testutil.MockDeploymentRepository{}
-	depConfigRepo := &testutil.MockDependencyConfigRepository{}
-	depRequestRepo := &testutil.MockDepRequestRepository{}
-	cmdRepo := &testutil.MockCommandRepository{}
-	resolver := &testutil.MockDependencyResolver{}
+	infoStore := &testutil.MockDeploymentInfoStore{}
+	depSvc := &mockDependencyService{}
 	helmGen := &testutil.MockHelmValuesGenerator{}
 	bus := &testutil.MockBus{}
 	tx := &MockTransactor{
 		RunInTxFn: func(ctx context.Context, fn func(ctx context.Context, tx TxRepos) error) error {
-			repos := TxRepos{
-				Deployments: deployRepo,
-				DepRequests: depRequestRepo,
-				Commands:    cmdRepo,
-			}
-			return fn(ctx, repos)
+			return fn(ctx, TxRepos{DeploymentInfo: infoStore})
 		},
 	}
 
-	s := NewDeploymentService(deployRepo, svcRepo, envRepo, depConfigRepo, depRequestRepo, resolver, helmGen, tx, bus, cmdRepo)
+	s := NewDeploymentService(infoStore, svcRepo, envRepo, depSvc, helmGen, tx, bus)
 
 	t.Run("Submit without managed dependencies", func(t *testing.T) {
+		depSvc.scheduleCommandsFn = nil // returns nil (no managed deps)
+
 		req := SubmitRequest{
 			ProjectID:     projectID,
 			EnvironmentID: envID,
@@ -69,13 +92,13 @@ func TestDeploymentService_Submit(t *testing.T) {
 		}
 
 		var createdDep *domain.Deployment
-		deployRepo.CreateFn = func(ctx context.Context, d *domain.Deployment) error {
+		infoStore.CreateFn = func(ctx context.Context, d *domain.Deployment) error {
 			createdDep = d
 			return nil
 		}
 
 		var enqueuedCmd *domain.Command
-		cmdRepo.EnqueueFn = func(ctx context.Context, cID uuid.UUID, cmd *domain.Command) error {
+		infoStore.EnqueueFn = func(ctx context.Context, cID uuid.UUID, cmd *domain.Command) error {
 			if cID != clusterID {
 				t.Errorf("expected clusterID %v, got %v", clusterID, cID)
 			}
@@ -83,7 +106,7 @@ func TestDeploymentService_Submit(t *testing.T) {
 			return nil
 		}
 
-		deployRepo.SetHelmCommandIDFn = func(ctx context.Context, dID uuid.UUID, cmdID uuid.UUID) error {
+		infoStore.SetHelmCommandIDFn = func(ctx context.Context, dID uuid.UUID, cmdID uuid.UUID) error {
 			if dID != createdDep.ID {
 				t.Errorf("expected deploymentID %v, got %v", createdDep.ID, dID)
 			}
@@ -118,6 +141,43 @@ func TestDeploymentService_Submit(t *testing.T) {
 	})
 
 	t.Run("Submit with managed dependencies", func(t *testing.T) {
+		var enqueuedCmds []*domain.Command
+		infoStore.EnqueueFn = func(ctx context.Context, cID uuid.UUID, cmd *domain.Command) error {
+			enqueuedCmds = append(enqueuedCmds, cmd)
+			return nil
+		}
+
+		var createdDepCfgs []*domain.DeploymentDependencyConfig
+		infoStore.CreateDepConfigFn = func(ctx context.Context, deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig) error {
+			createdDepCfgs = append(createdDepCfgs, cfg)
+			return nil
+		}
+
+		// ScheduleCommands enqueues the tofu command and dep config inside the tx.
+		depSvc.scheduleCommandsFn = func(ctx context.Context, tx TxRepos, dep *domain.Deployment, clusterID uuid.UUID) ([]PendingDep, error) {
+			cmd := &domain.Command{
+				ID:           uuid.New(),
+				DeploymentID: dep.ID,
+				Type:         "tofu.apply",
+				CreatedAt:    time.Now(),
+			}
+			depCfg := &domain.DeploymentDependencyConfig{
+				ID:             uuid.New(),
+				DependencyName: "db",
+				DependencyType: "postgres",
+				Managed:        true,
+				Status:         domain.DependencyRequestStatusPending,
+				CommandID:      &cmd.ID,
+			}
+			if err := tx.DeploymentInfo.Enqueue(ctx, clusterID, cmd); err != nil {
+				return nil, err
+			}
+			if err := tx.DeploymentInfo.CreateDepConfig(ctx, dep.ID, depCfg); err != nil {
+				return nil, err
+			}
+			return []PendingDep{{Cmd: cmd, DepCfg: depCfg}}, nil
+		}
+
 		req := SubmitRequest{
 			ProjectID:     projectID,
 			EnvironmentID: envID,
@@ -132,25 +192,6 @@ func TestDeploymentService_Submit(t *testing.T) {
 			TriggeredBy: "user",
 		}
 
-		depConfigRepo.GetFn = func(ctx context.Context, sID, eID uuid.UUID, depName string) (*domain.DependencyConfig, error) {
-			if depName == "db" {
-				return &domain.DependencyConfig{Managed: true, ProviderInputs: map[string]any{"workDir": "/terraform/db"}}, nil
-			}
-			return &domain.DependencyConfig{Managed: false}, nil
-		}
-
-		var enqueuedCmds []*domain.Command
-		cmdRepo.EnqueueFn = func(ctx context.Context, cID uuid.UUID, cmd *domain.Command) error {
-			enqueuedCmds = append(enqueuedCmds, cmd)
-			return nil
-		}
-
-		var createdDepReqs []*domain.DependencyDeploymentRequest
-		depRequestRepo.CreateFn = func(ctx context.Context, req *domain.DependencyDeploymentRequest) error {
-			createdDepReqs = append(createdDepReqs, req)
-			return nil
-		}
-
 		d, err := s.Submit(ctx, req)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -159,19 +200,18 @@ func TestDeploymentService_Submit(t *testing.T) {
 			t.Fatal("expected deployment, got nil")
 		}
 
-		// Should only have 1 command (tofu.apply for "db")
-		// Redis is unmanaged, so it doesn't get a command yet.
-		// Helm upgrade is NOT enqueued yet because it waits for managed deps.
+		// Should only have 1 command (tofu.apply for "db").
+		// Helm upgrade is NOT enqueued yet — it waits for managed deps.
 		if len(enqueuedCmds) != 1 {
 			t.Errorf("expected 1 enqueued command, got %d", len(enqueuedCmds))
 		} else if enqueuedCmds[0].Type != "tofu.apply" {
 			t.Errorf("expected command type tofu.apply, got %s", enqueuedCmds[0].Type)
 		}
 
-		if len(createdDepReqs) != 1 {
-			t.Errorf("expected 1 dependency request, got %d", len(createdDepReqs))
-		} else if createdDepReqs[0].DependencyName != "db" {
-			t.Errorf("expected dependency name db, got %s", createdDepReqs[0].DependencyName)
+		if len(createdDepCfgs) != 1 {
+			t.Errorf("expected 1 dep config, got %d", len(createdDepCfgs))
+		} else if createdDepCfgs[0].DependencyName != "db" {
+			t.Errorf("expected dependency name db, got %s", createdDepCfgs[0].DependencyName)
 		}
 	})
 }

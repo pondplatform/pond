@@ -41,6 +41,8 @@ CREATE TABLE services (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id),
     name TEXT NOT NULL,
+    current_deployment_id UUID,
+    running_deployment_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(project_id, name)
 );
@@ -52,66 +54,41 @@ CREATE TABLE deployments (
     image_tag TEXT NOT NULL,
     service_config_snapshot JSONB NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
-    triggered_by TEXT NOT NULL,
-    helm_command_id UUID,
+    helm_command_id UUID REFERENCES commands(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
 );
 
+CREATE TABLE dependency_deployments (
+    id UUID PRIMARY KEY,
+    deployment_id UUID NOT NULL REFERENCES deployments(id),
+    dependency_name TEXT NOT NULL,
+    dependency_type TEXT NOT NULL,
+    managed BOOLEAN NOT NULL DEFAULT false,
+    user_config JSONB,
+    status TEXT NOT NULL,
+    -- status: queued | dispatched | succeeded | failed | cancelled | timed_out | waiting_for_user_input
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(service_id, environment_id, dependency_name)
+);
+
+
 CREATE TABLE commands (
     id            UUID PRIMARY KEY,
-    cluster_id    UUID NOT NULL REFERENCES clusters(id),
     deployment_id UUID NOT NULL REFERENCES deployments(id),
     type          TEXT NOT NULL,
     payload       JSONB NOT NULL,
-    status        TEXT NOT NULL DEFAULT 'queued',
-    -- status: queued | dispatched | succeeded | failed | cancelled | timed_out
     output        JSONB,
     error         TEXT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX commands_cluster_queued ON commands (cluster_id, created_at)
-    WHERE status = 'queued';
 
 CREATE TABLE command_logs (
-    id         BIGSERIAL PRIMARY KEY,
     command_id UUID NOT NULL REFERENCES commands(id),
     line       TEXT NOT NULL,
     logged_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE dependency_deployment_requests (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    deployment_id    UUID NOT NULL REFERENCES deployments(id),
-    command_id       UUID NOT NULL,
-    dependency_name  TEXT NOT NULL,
-    status           TEXT NOT NULL DEFAULT 'pending',
-    output           JSONB,
-    completed_at     TIMESTAMPTZ
-);
-
-CREATE TABLE dependency_configs (
-    id UUID PRIMARY KEY,
-    service_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    dependency_name TEXT NOT NULL,
-    dependency_type TEXT NOT NULL,
-    managed BOOLEAN NOT NULL DEFAULT false,
-    provider_inputs JSONB,
-    user_config JSONB,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(service_id, environment_id, dependency_name)
-);
-
-CREATE TABLE resolved_contexts (
-    id UUID PRIMARY KEY,
-    service_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    dependency_name TEXT NOT NULL,
-    values JSONB,
-    resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    source_deployment_id UUID,
-    UNIQUE(service_id, environment_id, dependency_name)
-);
+CREATE INDEX command_logs_command on command_logs (command_id, logged_at);

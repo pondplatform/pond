@@ -9,14 +9,36 @@ import (
 	"github.com/pondplatform/pond/internal/common/domain"
 )
 
-// DeploymentRepository manages deployment persistence.
-type DeploymentRepository interface {
+// DeploymentInfoStore manages all deployment, command, and dependency config persistence.
+type DeploymentInfoStore interface {
+	// Deployment operations
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
 	ListByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error)
 	Create(ctx context.Context, d *domain.Deployment) error
 	UpdateStatus(ctx context.Context, id uuid.UUID, status domain.DeploymentStatus, completedAt *time.Time) error
 	SetHelmCommandID(ctx context.Context, id uuid.UUID, cmdID uuid.UUID) error
 	GetByHelmCommandID(ctx context.Context, cmdID uuid.UUID) (*domain.Deployment, error)
+
+	// Command operations
+	Enqueue(ctx context.Context, clusterID uuid.UUID, cmd *domain.Command) error
+	Dequeue(ctx context.Context, clusterID uuid.UUID) (*domain.Command, error)
+	MarkCommandSucceeded(ctx context.Context, commandID uuid.UUID, output json.RawMessage) error
+	MarkCommandFailed(ctx context.Context, commandID uuid.UUID, errMsg string) error
+	Requeue(ctx context.Context, commandID uuid.UUID) error
+	CancelDeployment(ctx context.Context, deploymentID uuid.UUID) error
+
+	// Command log operations
+	AppendLog(ctx context.Context, commandID uuid.UUID, line string) error
+
+	// Dependency config operations (dependency_deployments table)
+	CreateDepConfig(ctx context.Context, deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig) error
+	// GetDepConfigByCommandID returns the deployment ID and dep config for the given
+	// command. Returns (uuid.Nil, nil, nil) when not found.
+	GetDepConfigByCommandID(ctx context.Context, commandID uuid.UUID) (deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig, err error)
+	MarkDepConfigSucceeded(ctx context.Context, deploymentID uuid.UUID, depName string, output json.RawMessage) error
+	MarkDepConfigFailed(ctx context.Context, deploymentID uuid.UUID, depName string) error
+	AllDepConfigsComplete(ctx context.Context, deploymentID uuid.UUID) (allSucceeded bool, anyFailed bool, err error)
+	GetDepOutputsByDeployment(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error)
 }
 
 // ServiceRepository manages service persistence.
@@ -71,39 +93,4 @@ type DependencyConfigRepository interface {
 type ResolvedContextRepository interface {
 	Get(ctx context.Context, serviceID, envID uuid.UUID, depName string) (*domain.ResolvedContext, error)
 	Set(ctx context.Context, rc *domain.ResolvedContext) error
-}
-
-// CommandRepository manages the unified command lifecycle in the commands table.
-type CommandRepository interface {
-	// Enqueue inserts a command with status=queued.
-	Enqueue(ctx context.Context, clusterID uuid.UUID, cmd *domain.Command) error
-	// Dequeue atomically transitions the next queued command to dispatched
-	// via SELECT FOR UPDATE SKIP LOCKED. Returns nil if the queue is empty.
-	Dequeue(ctx context.Context, clusterID uuid.UUID) (*domain.Command, error)
-	// MarkSucceeded transitions a command to succeeded and stores its output.
-	MarkSucceeded(ctx context.Context, commandID uuid.UUID, output json.RawMessage) error
-	// MarkFailed transitions a command to failed and stores the error message.
-	MarkFailed(ctx context.Context, commandID uuid.UUID, errMsg string) error
-	// Requeue transitions a dispatched command back to queued (agent disconnect
-	// recovery). Guard: only applies when status = 'dispatched'.
-	Requeue(ctx context.Context, commandID uuid.UUID) error
-	// CancelDeployment transitions all queued commands for a deployment to
-	// cancelled. Already-dispatched commands are unaffected.
-	CancelDeployment(ctx context.Context, deploymentID uuid.UUID) error
-}
-
-// CommandLogRepository persists log lines streamed by agents during command
-// execution.
-type CommandLogRepository interface {
-	Append(ctx context.Context, commandID uuid.UUID, line string) error
-}
-
-// DependencyDeploymentRequestRepository persists dependency requests.
-type DependencyDeploymentRequestRepository interface {
-	Create(ctx context.Context, req *domain.DependencyDeploymentRequest) error
-	GetByCommandID(ctx context.Context, commandID uuid.UUID) (*domain.DependencyDeploymentRequest, error)
-	MarkSucceeded(ctx context.Context, commandID uuid.UUID, output json.RawMessage) error
-	MarkFailed(ctx context.Context, commandID uuid.UUID) error
-	AllComplete(ctx context.Context, deploymentID uuid.UUID) (allSucceeded bool, anyFailed bool, err error)
-	GetOutputsByDeployment(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error)
 }

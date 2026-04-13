@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/pondplatform/pond/internal/common/domain"
 	"gopkg.in/yaml.v3"
@@ -38,6 +39,11 @@ func (g *generator) Generate(cfg *domain.ServiceConfig, env *domain.Environment,
 		ClassName: "nginx",
 	}
 	if cfg.Ingress.Enabled && env != nil {
+		vals.Ingress.Annotations = map[string]string{
+			"cert-manager.io/cluster-issuer":           "letsencrypt-prod",
+			"nginx.ingress.kubernetes.io/ssl-redirect": "true",
+		}
+
 		host := fmt.Sprintf("%s.%s", cfg.Name, env.DefaultIngressBaseHost)
 		vals.Ingress.Hosts = []HelmIngressHost{
 			{
@@ -57,10 +63,15 @@ func (g *generator) Generate(cfg *domain.ServiceConfig, env *domain.Environment,
 
 	// Health probes
 	if cfg.Manage.Health.Endpoint != "" {
+		port := int(cfg.Service.Port)
+		if cfg.Manage.Health.Port != 0 {
+			port = cfg.Manage.Health.Port
+		}
+
 		probe := &HelmProbe{
 			HTTPGet: HelmHTTPGet{
 				Path: cfg.Manage.Health.Endpoint,
-				Port: cfg.Manage.Health.Port,
+				Port: port,
 			},
 		}
 		vals.LivenessProbe = probe
@@ -69,22 +80,39 @@ func (g *generator) Generate(cfg *domain.ServiceConfig, env *domain.Environment,
 
 	// Metrics annotations
 	if cfg.Manage.Metrics.Endpoint != "" {
-		vals.PodAnnotations = map[string]string{
-			"prometheus.io/scrape": "true",
-			"prometheus.io/port":   fmt.Sprintf("%d", cfg.Manage.Metrics.Port),
-			"prometheus.io/path":   cfg.Manage.Metrics.Endpoint,
+		if vals.PodAnnotations == nil {
+			vals.PodAnnotations = make(map[string]string)
+		}
+		vals.PodAnnotations["prometheus.io/scrape"] = "true"
+		vals.PodAnnotations["prometheus.io/port"] = fmt.Sprintf("%d", cfg.Manage.Metrics.Port)
+		vals.PodAnnotations["prometheus.io/path"] = cfg.Manage.Metrics.Endpoint
+	}
+
+	// Build variable context for config substitution
+	variables := make(map[string]string)
+	for depName, res := range contexts {
+		for k, v := range res.Values {
+			variables[fmt.Sprintf("%s.%s", depName, k)] = fmt.Sprintf("%v", v)
 		}
 	}
 
 	// Config files
 	for name, cfgFile := range cfg.Configs {
-		encoded, err := encodeConfigFile(cfgFile)
+		// 1. Substitute variables in the Values map
+		renderedValues, err := renderValues(cfgFile.Values, variables)
+		if err != nil {
+			return nil, fmt.Errorf("render config %q: %w", name, err)
+		}
+
+		// 2. Encode to base64
+		encoded, err := encodeConfigFile(cfgFile.Format, renderedValues)
 		if err != nil {
 			return nil, fmt.Errorf("encode config %q: %w", name, err)
 		}
+
 		vals.Configs = append(vals.Configs, HelmConfig{
 			Enabled:       true,
-			MountLocation: cfgFile.MountDir + "/" + name,
+			MountLocation: strings.TrimSuffix(cfgFile.MountDir, "/") + "/" + name,
 			Data:          encoded,
 		})
 	}
@@ -92,19 +120,80 @@ func (g *generator) Generate(cfg *domain.ServiceConfig, env *domain.Environment,
 	return vals, nil
 }
 
-func encodeConfigFile(spec domain.ConfigFileSpec) (string, error) {
+func renderValues(values map[string]any, variables map[string]string) (map[string]any, error) {
+	if values == nil {
+		return nil, nil
+	}
+
+	result := make(map[string]any)
+	for k, v := range values {
+		rendered, err := renderValue(v, variables)
+		if err != nil {
+			return nil, fmt.Errorf("key %q: %w", k, err)
+		}
+		result[k] = rendered
+	}
+	return result, nil
+}
+
+func renderValue(v any, variables map[string]string) (any, error) {
+	switch val := v.(type) {
+	case string:
+		return renderString(val, variables)
+	case map[string]any:
+		return renderValues(val, variables)
+	case []any:
+		result := make([]any, len(val))
+		for i, item := range val {
+			rendered, err := renderValue(item, variables)
+			if err != nil {
+				return nil, fmt.Errorf("index %d: %w", i, err)
+			}
+			result[i] = rendered
+		}
+		return result, nil
+	default:
+		return val, nil
+	}
+}
+
+func renderString(str string, variables map[string]string) (string, error) {
+	if !strings.Contains(str, "{{") {
+		return str, nil
+	}
+
+	result := str
+	for key, value := range variables {
+		placeholder := "{{" + key + "}}"
+		result = strings.ReplaceAll(result, placeholder, value)
+	}
+
+	// Check for unreplaced variables
+	if strings.Contains(result, "{{") && strings.Contains(result, "}}") {
+		start := strings.Index(result, "{{")
+		end := strings.Index(result[start:], "}}") + start + 2
+		if end > start {
+			unreplaced := result[start:end]
+			return "", fmt.Errorf("variable not found: %s", unreplaced)
+		}
+	}
+
+	return result, nil
+}
+
+func encodeConfigFile(format string, values map[string]any) (string, error) {
 	var data []byte
 	var err error
 
-	switch spec.Format {
-	case "yaml":
-		data, err = yaml.Marshal(spec.Values)
+	switch format {
+	case "yaml", "yml":
+		data, err = yaml.Marshal(values)
 	case "json":
-		data, err = json.Marshal(spec.Values)
+		data, err = json.Marshal(values)
 	case "env":
-		data, err = marshalEnv(spec.Values)
+		data, err = marshalEnv(values)
 	default:
-		return "", fmt.Errorf("unsupported config format: %s", spec.Format)
+		return "", fmt.Errorf("unsupported config format: %s", format)
 	}
 	if err != nil {
 		return "", err
@@ -116,7 +205,9 @@ func encodeConfigFile(spec domain.ConfigFileSpec) (string, error) {
 func marshalEnv(values map[string]any) ([]byte, error) {
 	var result []byte
 	for k, v := range values {
-		result = append(result, []byte(fmt.Sprintf("%s=%v\n", k, v))...)
+		line := fmt.Sprintf("%s=%v\n", k, v)
+		result = append(result, []byte(line)...)
 	}
 	return result, nil
 }
+

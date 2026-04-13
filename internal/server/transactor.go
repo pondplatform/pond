@@ -10,7 +10,7 @@ import (
 )
 
 // serverTransactor implements service.Transactor by opening a *sql.Tx and
-// constructing tx-scoped store instances for each transaction.
+// constructing a tx-scoped DeploymentInfoStore for each transaction.
 type serverTransactor struct{ db *sql.DB }
 
 func newTransactor(db *sql.DB) service.Transactor {
@@ -23,9 +23,7 @@ func (t *serverTransactor) RunInTx(ctx context.Context, fn func(ctx context.Cont
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	repos := service.TxRepos{
-		Deployments: store.NewDeploymentStore(sqlTx),
-		DepRequests: store.NewDependencyRequestStore(sqlTx),
-		Commands:    store.NewCommandStore(sqlTx),
+		DeploymentInfo: store.NewDeploymentInfoStore(sqlTx),
 	}
 	if err := fn(ctx, repos); err != nil {
 		_ = sqlTx.Rollback()

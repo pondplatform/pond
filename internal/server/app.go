@@ -32,37 +32,33 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("ping db: %w", err)
 	}
 
-	// Repositories (non-transactional; used for reads and single-row writes)
+	// Repositories
+	deploymentInfoStore := store.NewDeploymentInfoStore(db)
 	envStore := store.NewEnvironmentStore(db)
 	serviceStore := store.NewServiceStore(db)
-	deploymentStore := store.NewDeploymentStore(db)
 	depConfigStore := store.NewDependencyConfigStore(db)
-	depRequestStore := store.NewDependencyRequestStore(db)
 	resolvedCtxStore := store.NewResolvedContextStore(db)
 	clusterStore := store.NewClusterStore(db)
-	cmdStore := store.NewCommandStore(db)
-	cmdLogStore := store.NewCommandLogStore(db)
 
 	// Transactor for multi-step atomic writes in services
 	tx := newTransactor(db)
 
-	// Registries
+	// Spec registry for dependency type validation
 	specRegistry := dependency.NewSpecRegistry()
-	providerRegistry := dependency.NewProviderRegistry()
 
 	// Event bus
 	bus := events.NewMemoryBus()
 
 	// Services
-	depResolver := dependency.NewDependencyResolver(depConfigStore, resolvedCtxStore, specRegistry, providerRegistry)
+	depSvc := service.NewDependencyService(depConfigStore, specRegistry)
 	helmGenerator := helmgen.NewGenerator()
-	deploySvc := service.NewDeploymentService(deploymentStore, serviceStore, envStore, depConfigStore, depRequestStore, depResolver, helmGenerator, tx, bus, cmdStore)
+	deploySvc := service.NewDeploymentService(deploymentInfoStore, serviceStore, envStore, depSvc, helmGenerator, tx, bus)
 
 	// Start the deployment service event loop (subscribes to command_results topic).
 	go deploySvc.Start(ctx)
 
 	// Agent handler
-	agentHandler := api.NewAgentHandler(clusterStore, cmdStore, cmdLogStore, deploySvc, bus)
+	agentHandler := api.NewAgentHandler(clusterStore, deploymentInfoStore, deploySvc, bus)
 
 	// HTTP router
 	router := api.NewRouter(deploySvc, serviceStore, envStore, depConfigStore, resolvedCtxStore, agentHandler)

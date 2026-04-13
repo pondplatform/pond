@@ -22,22 +22,22 @@ func (m *mockHelmRunner) Upgrade(ctx context.Context, req agent.HelmUpgradeReque
 
 type mockTofuRunner struct {
 	initFn    func(ctx context.Context, workDir string, logW io.Writer) error
-	applyFn   func(ctx context.Context, workDir string, vars map[string]string, logW io.Writer) error
-	outputFn  func(ctx context.Context, workDir string) (map[string]any, error)
-	destroyFn func(ctx context.Context, workDir string, vars map[string]string, logW io.Writer) error
+	applyFn   func(ctx context.Context, workDir string, statePath string, vars map[string]any, logW io.Writer) error
+	outputFn  func(ctx context.Context, workDir string, statePath string) (map[string]any, error)
+	destroyFn func(ctx context.Context, workDir string, statePath string, vars map[string]any, logW io.Writer) error
 }
 
 func (m *mockTofuRunner) Init(ctx context.Context, workDir string, logW io.Writer) error {
 	return m.initFn(ctx, workDir, logW)
 }
-func (m *mockTofuRunner) Apply(ctx context.Context, workDir string, vars map[string]string, logW io.Writer) error {
-	return m.applyFn(ctx, workDir, vars, logW)
+func (m *mockTofuRunner) Apply(ctx context.Context, workDir string, statePath string, vars map[string]any, logW io.Writer) error {
+	return m.applyFn(ctx, workDir, statePath, vars, logW)
 }
-func (m *mockTofuRunner) Output(ctx context.Context, workDir string) (map[string]any, error) {
-	return m.outputFn(ctx, workDir)
+func (m *mockTofuRunner) Output(ctx context.Context, workDir string, statePath string) (map[string]any, error) {
+	return m.outputFn(ctx, workDir, statePath)
 }
-func (m *mockTofuRunner) Destroy(ctx context.Context, workDir string, vars map[string]string, logW io.Writer) error {
-	return m.destroyFn(ctx, workDir, vars, logW)
+func (m *mockTofuRunner) Destroy(ctx context.Context, workDir string, statePath string, vars map[string]any, logW io.Writer) error {
+	return m.destroyFn(ctx, workDir, statePath, vars, logW)
 }
 
 // --- tests ---
@@ -88,7 +88,6 @@ func TestExecute_HelmUpgrade_CallsRunner(t *testing.T) {
 		t.Fatal("expected log lines, got none")
 	}
 }
-
 func TestExecute_TofuApply_CallsRunners(t *testing.T) {
 	initCalled, applyCalled := false, false
 
@@ -98,12 +97,15 @@ func TestExecute_TofuApply_CallsRunners(t *testing.T) {
 			_, _ = io.WriteString(logW, "initializing\n")
 			return nil
 		},
-		applyFn: func(_ context.Context, workDir string, vars map[string]string, logW io.Writer) error {
+		applyFn: func(_ context.Context, workDir string, statePath string, vars map[string]any, logW io.Writer) error {
 			applyCalled = true
+			if statePath != "states/my-service/my-dep/terraform.tfstate" {
+				t.Errorf("unexpected state path: %s", statePath)
+			}
 			_, _ = io.WriteString(logW, "applying\n")
 			return nil
 		},
-		outputFn: func(_ context.Context, workDir string) (map[string]any, error) {
+		outputFn: func(_ context.Context, workDir string, statePath string) (map[string]any, error) {
 			return map[string]any{"endpoint": "https://example.com"}, nil
 		},
 	}
@@ -111,11 +113,15 @@ func TestExecute_TofuApply_CallsRunners(t *testing.T) {
 	exec := agent.NewExecutor(&mockHelmRunner{}, tofu)
 
 	type applyPayload struct {
-		WorkDir string            `json:"workDir"`
-		Vars    map[string]string `json:"vars"`
+		WorkDir   string         `json:"workDir"`
+		StatePath string         `json:"statePath"`
+		Vars      map[string]any `json:"vars"`
 	}
-	payload, _ := json.Marshal(applyPayload{WorkDir: "/tmp/tf", Vars: map[string]string{"region": "us-east-1"}})
-
+	payload, _ := json.Marshal(applyPayload{
+		WorkDir:   "./tofu",
+		StatePath: "states/my-service/my-dep/terraform.tfstate",
+		Vars:      map[string]any{"key": "value"},
+	})
 	cmd := &agent.Command{
 		ID:      uuid.New(),
 		Type:    agent.CommandTofuApply,
@@ -139,7 +145,6 @@ func TestExecute_TofuApply_CallsRunners(t *testing.T) {
 		t.Fatalf("expected ≥2 log lines, got %d", len(logLines))
 	}
 }
-
 func TestExecute_UnknownType_ReturnsError(t *testing.T) {
 	exec := agent.NewExecutor(&mockHelmRunner{}, &mockTofuRunner{})
 	cmd := &agent.Command{ID: uuid.New(), Type: "unknown.command", Payload: json.RawMessage("{}")}

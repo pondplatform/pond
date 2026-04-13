@@ -39,7 +39,7 @@ type HelmUpgradeRequest struct {
 // TofuRunner wraps OpenTofu CLI operations.
 type TofuRunner interface {
 	Init(ctx context.Context, workDir string, logW io.Writer) error
-	Apply(ctx context.Context, workDir string, vars map[string]string, logW io.Writer) error
-	Output(ctx context.Context, workDir string) (map[string]any, error)
-	Destroy(ctx context.Context, workDir string, vars map[string]string, logW io.Writer) error
+	Apply(ctx context.Context, workDir string, statePath string, vars map[string]any, logW io.Writer) error
+	Output(ctx context.Context, workDir string, statePath string) (map[string]any, error)
+	Destroy(ctx context.Context, workDir string, statePath string, vars map[string]any, logW io.Writer) error
 }

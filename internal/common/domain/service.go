@@ -7,9 +7,11 @@ import (
 )
 
 type Service struct {
-	ID        uuid.UUID
-	ProjectID uuid.UUID
-	Name      string
-	CreatedAt time.Time
+	ID                  uuid.UUID
+	ProjectID           uuid.UUID
+	Name                string
+	CurrentDeploymentID *uuid.UUID
+	RunningDeploymentID *uuid.UUID
+	CreatedAt           time.Time
 }
 

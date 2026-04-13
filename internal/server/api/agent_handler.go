@@ -41,26 +41,23 @@ type wsLog struct {
 
 // AgentHandler handles WebSocket connections from agents.
 type AgentHandler struct {
-	clusters    store.ClusterRepository
-	commands    store.CommandRepository
-	logs        store.CommandLogRepository
-	deployments service.DeploymentService
-	bus         events.Bus
+	clusters       store.ClusterRepository
+	deploymentInfo store.DeploymentInfoStore
+	deployments    service.DeploymentService
+	bus            events.Bus
 }
 
 func NewAgentHandler(
 	clusters store.ClusterRepository,
-	commands store.CommandRepository,
-	logs store.CommandLogRepository,
+	deploymentInfo store.DeploymentInfoStore,
 	deployments service.DeploymentService,
 	bus events.Bus,
 ) *AgentHandler {
 	return &AgentHandler{
-		clusters:    clusters,
-		commands:    commands,
-		logs:        logs,
-		deployments: deployments,
-		bus:         bus,
+		clusters:       clusters,
+		deploymentInfo: deploymentInfo,
+		deployments:    deployments,
+		bus:            bus,
 	}
 }
 
@@ -117,7 +114,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// On disconnect, requeue any in-flight command so it can be redelivered.
 	defer func() {
 		if id := takeCommandID(); id != uuid.Nil {
-			if err := h.commands.Requeue(context.Background(), id); err != nil {
+			if err := h.deploymentInfo.Requeue(context.Background(), id); err != nil {
 				log.Printf("requeue on disconnect: %v", err)
 			}
 		}
@@ -171,7 +168,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// the cluster topic and sends an "idle" message.
 	var sendNextOrIdle func()
 	sendNextOrIdle = func() {
-		cmd, err := h.commands.Dequeue(ctx, cluster.ID)
+		cmd, err := h.deploymentInfo.Dequeue(ctx, cluster.ID)
 		if err != nil {
 			log.Printf("dequeue: %v", err)
 			return
@@ -194,7 +191,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		idleUnsub = h.bus.Subscribe(events.ClusterTopic(cluster.ID), func(_ any) {
 			once.Do(func() {
 				clearIdle()
-				cmd, err := h.commands.Dequeue(ctx, cluster.ID)
+				cmd, err := h.deploymentInfo.Dequeue(ctx, cluster.ID)
 				if err != nil || cmd == nil {
 					return
 				}
@@ -259,11 +256,11 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			}
 			// Update command status in the database.
 			if res.Success {
-				if err := h.commands.MarkSucceeded(ctx, cmdID, res.Output); err != nil {
+				if err := h.deploymentInfo.MarkCommandSucceeded(ctx, cmdID, res.Output); err != nil {
 					log.Printf("mark command succeeded %s: %v", cmdID, err)
 				}
 			} else {
-				if err := h.commands.MarkFailed(ctx, cmdID, res.Error); err != nil {
+				if err := h.deploymentInfo.MarkCommandFailed(ctx, cmdID, res.Error); err != nil {
 					log.Printf("mark command failed %s: %v", cmdID, err)
 				}
 			}
@@ -285,7 +282,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			if cmdID == uuid.Nil {
 				continue
 			}
-			if err := h.logs.Append(ctx, cmdID, msg.Line); err != nil {
+			if err := h.deploymentInfo.AppendLog(ctx, cmdID, msg.Line); err != nil {
 				log.Printf("append log for command %s: %v", cmdID, err)
 			}
 			h.bus.Publish(ctx, events.TopicCommandLogs, events.CommandLog{

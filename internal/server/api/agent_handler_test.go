@@ -57,7 +57,7 @@ func (m *MockDeploymentService) Start(ctx context.Context) {
 
 func TestAgentHandler_ServeWS_Auth(t *testing.T) {
 	clusterRepo := &testutil.MockClusterRepository{}
-	handler := NewAgentHandler(clusterRepo, nil, nil, nil, nil)
+	handler := NewAgentHandler(clusterRepo, nil, nil, nil)
 
 	t.Run("Unauthorized - no token", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/ws", nil)
@@ -94,10 +94,10 @@ func TestAgentHandler_ServeWS_Auth(t *testing.T) {
 
 func TestAgentHandler_ServeWS_Result(t *testing.T) {
 	clusterRepo := &testutil.MockClusterRepository{}
-	cmdRepo := &testutil.MockCommandRepository{}
+	infoStore := &testutil.MockDeploymentInfoStore{}
 	bus := &testutil.MockBus{}
 	deploySvc := &MockDeploymentService{}
-	handler := NewAgentHandler(clusterRepo, cmdRepo, nil, deploySvc, bus)
+	handler := NewAgentHandler(clusterRepo, infoStore, deploySvc, bus)
 
 	token := "my-token"
 	hash := sha256hex(token)
@@ -134,7 +134,7 @@ func TestAgentHandler_ServeWS_Result(t *testing.T) {
 	// 2. Handler calls Dequeue. We return a command.
 	// 3. Handler sets activeCommandID = cmdID and sends command to agent.
 
-	cmdRepo.DequeueFn = func(ctx context.Context, id uuid.UUID) (*domain.Command, error) {
+	infoStore.DequeueFn = func(ctx context.Context, id uuid.UUID) (*domain.Command, error) {
 		return &domain.Command{ID: cmdID, Type: "test.cmd"}, nil
 	}
 
@@ -165,11 +165,11 @@ func TestAgentHandler_ServeWS_Result(t *testing.T) {
 	}
 
 	// Also mock CommandRepository.MarkSucceeded which is called on "result"
-	cmdRepo.MarkSucceededFn = func(ctx context.Context, id uuid.UUID, output json.RawMessage) error {
+	infoStore.MarkCommandSucceededFn = func(ctx context.Context, id uuid.UUID, output json.RawMessage) error {
 		return nil
 	}
 	// Subsequent dequeues return nil
-	cmdRepo.DequeueFn = func(ctx context.Context, id uuid.UUID) (*domain.Command, error) {
+	infoStore.DequeueFn = func(ctx context.Context, id uuid.UUID) (*domain.Command, error) {
 		return nil, nil
 	}
 

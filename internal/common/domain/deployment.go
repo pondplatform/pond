@@ -23,11 +23,27 @@ type Deployment struct {
 	EnvironmentID         uuid.UUID
 	ImageTag              string
 	ServiceConfigSnapshot ServiceConfig
+	DependencyConfigs     map[string]DeploymentDependencyConfig
 	Status                DeploymentStatus
 	TriggeredBy           string
 	HelmCommandID         *uuid.UUID
 	CreatedAt             time.Time
 	CompletedAt           *time.Time
+}
+
+type DeploymentDependencyConfig struct {
+	ID             uuid.UUID
+	DependencyName string
+	DependencyType string
+	Managed        bool
+	ProviderInputs map[string]any
+	UserConfig     map[string]any
+
+	// Execution state
+	Status      DependencyRequestStatus
+	CommandID   *uuid.UUID
+	Output      json.RawMessage
+	CompletedAt *time.Time
 }
 
 // DependencyRequestStatus represents the lifecycle of a tofu.apply command.
@@ -38,17 +54,5 @@ const (
 	DependencyRequestStatusSucceeded DependencyRequestStatus = "succeeded"
 	DependencyRequestStatusFailed    DependencyRequestStatus = "failed"
 )
-
-// DependencyDeploymentRequest tracks a tofu.apply command enqueued for a
-// managed dependency as part of a deployment.
-type DependencyDeploymentRequest struct {
-	ID             uuid.UUID
-	DeploymentID   uuid.UUID
-	CommandID      uuid.UUID
-	DependencyName string
-	Status         DependencyRequestStatus
-	Output         json.RawMessage // tofu outputs once succeeded
-	CompletedAt    *time.Time
-}
 
 

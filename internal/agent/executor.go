@@ -72,8 +72,9 @@ func (e *executor) executeHelmUpgrade(ctx context.Context, cmd *Command, logSink
 
 func (e *executor) executeTofuApply(ctx context.Context, cmd *Command, logSink func(LogEntry)) (*CommandResult, error) {
 	var payload struct {
-		WorkDir string            `json:"workDir"`
-		Vars    map[string]string `json:"vars"`
+		WorkDir   string         `json:"workDir"`
+		StatePath string         `json:"statePath"`
+		Vars      map[string]any `json:"vars"`
 	}
 	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
 		return nil, fmt.Errorf("unmarshal tofu apply request: %w", err)
@@ -86,11 +87,11 @@ func (e *executor) executeTofuApply(ctx context.Context, cmd *Command, logSink f
 		return nil, fmt.Errorf("tofu init: %w", err)
 	}
 
-	if err := e.tofuRunner.Apply(ctx, payload.WorkDir, payload.Vars, lw); err != nil {
+	if err := e.tofuRunner.Apply(ctx, payload.WorkDir, payload.StatePath, payload.Vars, lw); err != nil {
 		return nil, fmt.Errorf("tofu apply: %w", err)
 	}
 
-	outputs, err := e.tofuRunner.Output(ctx, payload.WorkDir)
+	outputs, err := e.tofuRunner.Output(ctx, payload.WorkDir, payload.StatePath)
 	if err != nil {
 		return nil, fmt.Errorf("tofu output: %w", err)
 	}
@@ -109,13 +110,14 @@ func (e *executor) executeTofuApply(ctx context.Context, cmd *Command, logSink f
 
 func (e *executor) executeTofuOutput(ctx context.Context, cmd *Command) (*CommandResult, error) {
 	var payload struct {
-		WorkDir string `json:"workDir"`
+		WorkDir   string `json:"workDir"`
+		StatePath string `json:"statePath"`
 	}
 	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
 		return nil, fmt.Errorf("unmarshal tofu output request: %w", err)
 	}
 
-	outputs, err := e.tofuRunner.Output(ctx, payload.WorkDir)
+	outputs, err := e.tofuRunner.Output(ctx, payload.WorkDir, payload.StatePath)
 	if err != nil {
 		return nil, fmt.Errorf("tofu output: %w", err)
 	}

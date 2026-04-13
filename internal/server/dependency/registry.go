@@ -41,28 +41,3 @@ func (r *specRegistry) Exists(depType string) bool {
 func (r *specRegistry) register(spec domain.DependencySpec) {
 	r.specs[spec.Type] = spec
 }
-
-// providerRegistry maps dependency types to their ManagedProvider implementations.
-type providerRegistry struct {
-	providers map[string]ManagedProvider
-}
-
-func NewProviderRegistry() ProviderRegistry {
-	return &providerRegistry{providers: make(map[string]ManagedProvider)}
-}
-
-func (r *providerRegistry) Get(depType string) (ManagedProvider, error) {
-	p, ok := r.providers[depType]
-	if !ok {
-		return nil, fmt.Errorf("no provider for type %q: %w", depType, domain.ErrNotFound)
-	}
-	return p, nil
-}
-
-func (r *providerRegistry) Register(depType string, provider ManagedProvider) error {
-	if _, exists := r.providers[depType]; exists {
-		return fmt.Errorf("provider for type %q: %w", depType, domain.ErrAlreadyExists)
-	}
-	r.providers[depType] = provider
-	return nil
-}
