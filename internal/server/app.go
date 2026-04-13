@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	_ "github.com/lib/pq"
+	"github.com/pondplatform/pond/internal/common/config"
 	"github.com/pondplatform/pond/internal/server/api"
 	"github.com/pondplatform/pond/internal/server/dependency"
 	"github.com/pondplatform/pond/internal/server/events"
@@ -52,7 +53,8 @@ func Run(ctx context.Context, cfg Config) error {
 	// Services
 	depSvc := service.NewDependencyService(depConfigStore, specRegistry)
 	helmGenerator := helmgen.NewGenerator()
-	deploySvc := service.NewDeploymentService(deploymentInfoStore, serviceStore, envStore, depSvc, helmGenerator, tx, bus)
+	tmplRenderer := config.NewTemplateRenderer()
+	deploySvc := service.NewDeploymentService(deploymentInfoStore, serviceStore, envStore, depSvc, helmGenerator, tmplRenderer, tx, bus)
 
 	// Start the deployment service event loop (subscribes to command_results topic).
 	go deploySvc.Start(ctx)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pondplatform/pond/internal/common/config"
 	"github.com/pondplatform/pond/internal/common/domain"
 	"github.com/pondplatform/pond/internal/server/events"
 	"github.com/pondplatform/pond/internal/server/helmgen"
@@ -21,6 +22,7 @@ type deploymentService struct {
 	envs           store.EnvironmentRepository
 	depSvc         DependencyService
 	helmGen        helmgen.HelmValuesGenerator
+	tmplRenderer   config.TemplateRenderer
 	tx             Transactor
 	bus            events.Bus
 }
@@ -31,6 +33,7 @@ func NewDeploymentService(
 	envs store.EnvironmentRepository,
 	depSvc DependencyService,
 	helmGen helmgen.HelmValuesGenerator,
+	tmplRenderer config.TemplateRenderer,
 	tx Transactor,
 	bus events.Bus,
 ) DeploymentService {
@@ -40,6 +43,7 @@ func NewDeploymentService(
 		envs:           envs,
 		depSvc:         depSvc,
 		helmGen:        helmGen,
+		tmplRenderer:   tmplRenderer,
 		tx:             tx,
 		bus:            bus,
 	}
@@ -47,6 +51,9 @@ func NewDeploymentService(
 
 func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*domain.Deployment, error) {
 	// --- reads (outside the transaction) ---
+	// Note: Validate performs the same lookups. Submit re-fetches independently
+	// because the handler does not guarantee Validate was called first, and the
+	// data may have changed between the two calls.
 
 	svc, err := s.services.GetByName(ctx, req.ProjectID, req.ServiceConfig.Name)
 	if err != nil {
@@ -58,23 +65,24 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 		return nil, fmt.Errorf("lookup environment: %w", err)
 	}
 
-	d := &domain.Deployment{
-		ID:                    uuid.New(),
-		ServiceID:             svc.ID,
-		EnvironmentID:         env.ID,
-		ImageTag:              req.ImageTag,
-		ServiceConfigSnapshot: req.ServiceConfig,
-		Status:                domain.DeploymentStatusPending,
-		TriggeredBy:           req.TriggeredBy,
-		CreatedAt:             time.Now(),
-	}
-
 	// --- writes (all in one transaction) ---
 
+	var d *domain.Deployment
 	var pendingDeps []PendingDep
-	var helmCmd *domain.Command
 
 	err = s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
+		now := time.Now()
+		d = &domain.Deployment{
+			ID:                    uuid.New(),
+			ServiceID:             svc.ID,
+			EnvironmentID:         env.ID,
+			ImageTag:              req.ImageTag,
+			ServiceConfigSnapshot: req.ServiceConfig,
+			Status:                domain.DeploymentStatusPending,
+			TriggeredBy:           req.TriggeredBy,
+			CreatedAt:             now,
+		}
+
 		if err := tx.DeploymentInfo.Create(ctx, d); err != nil {
 			return fmt.Errorf("create deployment: %w", err)
 		}
@@ -87,34 +95,8 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 
 		if len(pendingDeps) == 0 {
 			// No managed deps: resolve contexts and enqueue helm now.
-			contexts, err := s.depSvc.BuildContexts(ctx, d, nil)
-			if err != nil {
-				return fmt.Errorf("build contexts: %w", err)
-			}
-			helmVals, err := s.helmGen.Generate(&d.ServiceConfigSnapshot, env, contexts)
-			if err != nil {
-				return fmt.Errorf("generate helm values: %w", err)
-			}
-			payload, err := json.Marshal(helmVals)
-			if err != nil {
-				return fmt.Errorf("marshal helm values: %w", err)
-			}
-			now := time.Now()
-			helmCmd = &domain.Command{
-				ID:           uuid.New(),
-				ClusterID:    env.ClusterID,
-				DeploymentID: d.ID,
-				Type:         "helm.upgrade",
-				Payload:      payload,
-				Status:       domain.CommandStatusQueued,
-				CreatedAt:    now,
-				UpdatedAt:    now,
-			}
-			if err := tx.DeploymentInfo.CreateCommand(ctx, helmCmd); err != nil {
-				return fmt.Errorf("create helm command: %w", err)
-			}
-			if err := tx.DeploymentInfo.SetHelmCommandID(ctx, d.ID, helmCmd.ID); err != nil {
-				return fmt.Errorf("set helm command id: %w", err)
+			if err := s.enqueueHelm(ctx, tx, d, env); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -135,7 +117,7 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 	} else {
 		s.bus.Publish(ctx, events.ClusterTopic(env.ClusterID), events.CommandQueued{
 			ClusterID:    env.ClusterID,
-			CommandID:    helmCmd.ID,
+			CommandID:    *d.HelmCommandID,
 			DeploymentID: d.ID,
 		})
 	}
@@ -321,37 +303,40 @@ func (s *deploymentService) processResult(ctx context.Context, result events.Com
 		if err := tx.DeploymentInfo.UpdateCommand(ctx, cmd); err != nil {
 			return fmt.Errorf("update command: %w", err)
 		}
-		return s.advance(ctx, tx, result)
+		return s.advance(ctx, tx, cmd, result)
 	})
 }
 
 // advance routes a command result to the appropriate handler within an
-// existing transaction.
-func (s *deploymentService) advance(ctx context.Context, tx TxRepos, result events.CommandResult) error {
-	// Branch 1: is this the result of a tofu.apply for a managed dependency?
-	deploymentID, cfg, err := s.deploymentInfo.GetDepConfigByCommandID(ctx, result.CommandID)
-	if err != nil {
-		return fmt.Errorf("get dep config by command id: %w", err)
-	}
-	if cfg != nil {
-		return s.advanceDependency(ctx, tx, deploymentID, cfg, result)
-	}
-
-	// Branch 2: is this the result of a helm.upgrade?
-	dep, err := s.deploymentInfo.GetByHelmCommandID(ctx, result.CommandID)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			log.Printf("advance: no deployment for helm command %s (may be cancelled)", result.CommandID)
+// existing transaction, dispatching by command type.
+func (s *deploymentService) advance(ctx context.Context, tx TxRepos, cmd *domain.Command, result events.CommandResult) error {
+	switch cmd.Type {
+	case "tofu.apply":
+		deploymentID, cfg, err := s.deploymentInfo.GetDepConfigByCommandID(ctx, result.CommandID)
+		if err != nil {
+			return fmt.Errorf("get dep config by command id: %w", err)
+		}
+		if cfg == nil {
+			log.Printf("advance: tofu.apply command %s has no dep config row", result.CommandID)
 			return nil
 		}
-		return fmt.Errorf("get deployment by helm command id: %w", err)
-	}
-	if dep != nil {
-		return s.advanceHelm(ctx, tx, dep, result)
-	}
+		return s.advanceDependency(ctx, tx, deploymentID, cfg, result)
 
-	log.Printf("advance: unmatched command result %s", result.CommandID)
-	return nil
+	case "helm.upgrade":
+		dep, err := s.deploymentInfo.GetByID(ctx, cmd.DeploymentID)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				log.Printf("advance: deployment %s not found for helm command %s", cmd.DeploymentID, result.CommandID)
+				return nil
+			}
+			return fmt.Errorf("get deployment: %w", err)
+		}
+		return s.advanceHelm(ctx, tx, dep, result)
+
+	default:
+		log.Printf("advance: unmatched command type %q for command %s", cmd.Type, result.CommandID)
+		return nil
+	}
 }
 
 func (s *deploymentService) advanceDependency(ctx context.Context, tx TxRepos, deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig, result events.CommandResult) error {
@@ -415,7 +400,22 @@ func (s *deploymentService) enqueueHelm(ctx context.Context, tx TxRepos, dep *do
 		return fmt.Errorf("build contexts: %w", err)
 	}
 
-	helmVals, err := s.helmGen.Generate(&dep.ServiceConfigSnapshot, env, contexts)
+	// Render template variables in config file values
+	renderedCfg := dep.ServiceConfigSnapshot
+	if len(renderedCfg.Configs) > 0 {
+		renderedConfigs := make(map[string]domain.ConfigFileSpec, len(renderedCfg.Configs))
+		for name, cfgFile := range renderedCfg.Configs {
+			rendered, err := s.tmplRenderer.Render(cfgFile.Values, contexts, &renderedCfg)
+			if err != nil {
+				return fmt.Errorf("render config %q: %w", name, err)
+			}
+			cfgFile.Values = rendered
+			renderedConfigs[name] = cfgFile
+		}
+		renderedCfg.Configs = renderedConfigs
+	}
+
+	helmVals, err := s.helmGen.Generate(&renderedCfg, env, contexts)
 	if err != nil {
 		return fmt.Errorf("generate helm values: %w", err)
 	}
@@ -438,5 +438,9 @@ func (s *deploymentService) enqueueHelm(ctx context.Context, tx TxRepos, dep *do
 	if err := tx.DeploymentInfo.CreateCommand(ctx, cmd); err != nil {
 		return fmt.Errorf("create helm command: %w", err)
 	}
-	return tx.DeploymentInfo.SetHelmCommandID(ctx, dep.ID, cmd.ID)
+	if err := tx.DeploymentInfo.SetHelmCommandID(ctx, dep.ID, cmd.ID); err != nil {
+		return fmt.Errorf("set helm command id: %w", err)
+	}
+	dep.HelmCommandID = &cmd.ID // update in-memory struct for post-tx event publishing
+	return nil
 }

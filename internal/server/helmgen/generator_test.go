@@ -7,9 +7,10 @@ import (
 	"github.com/pondplatform/pond/internal/common/domain"
 )
 
-func TestGenerator_Generate_VariableSubstitution(t *testing.T) {
+func TestGenerator_Generate_ConfigFiles(t *testing.T) {
 	g := NewGenerator()
 
+	// Values are pre-rendered by the deployment service before calling Generate
 	cfg := &domain.ServiceConfig{
 		Name: "test-service",
 		Configs: map[string]domain.ConfigFileSpec{
@@ -17,19 +18,9 @@ func TestGenerator_Generate_VariableSubstitution(t *testing.T) {
 				Format:   "yaml",
 				MountDir: "/etc/app",
 				Values: map[string]any{
-					"database_url": "postgres://{{db.user}}:{{db.password}}@{{db.host}}:5432/mydb",
+					"database_url": "postgres://admin:password123@db-host:5432/mydb",
 					"debug":        true,
 				},
-			},
-		},
-	}
-
-	contexts := map[string]domain.ResolvedContext{
-		"db": {
-			Values: map[string]any{
-				"user":     "admin",
-				"password": "password123",
-				"host":     "db-host",
 			},
 		},
 	}
@@ -38,7 +29,7 @@ func TestGenerator_Generate_VariableSubstitution(t *testing.T) {
 		DefaultIngressBaseHost: "example.com",
 	}
 
-	vals, err := g.Generate(cfg, env, contexts)
+	vals, err := g.Generate(cfg, env, nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}

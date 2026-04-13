@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pondplatform/pond/internal/common/config"
 	"github.com/pondplatform/pond/internal/common/domain"
 	"github.com/pondplatform/pond/internal/server/events"
 	"github.com/pondplatform/pond/internal/server/helmgen"
@@ -318,10 +319,24 @@ func (m *MockHelmValuesGenerator) Generate(cfg *domain.ServiceConfig, env *domai
 	return &helmgen.HelmValues{}, nil
 }
 
+// --- config.TemplateRenderer ---
+
+type MockTemplateRenderer struct {
+	RenderFn func(values map[string]any, contexts map[string]domain.ResolvedContext, svcConfig *domain.ServiceConfig) (map[string]any, error)
+}
+
+func (m *MockTemplateRenderer) Render(values map[string]any, contexts map[string]domain.ResolvedContext, svcConfig *domain.ServiceConfig) (map[string]any, error) {
+	if m.RenderFn != nil {
+		return m.RenderFn(values, contexts, svcConfig)
+	}
+	return values, nil
+}
+
 // Compile-time interface checks.
 var (
-	_ store.DeploymentInfoStore      = (*MockDeploymentInfoStore)(nil)
-	_ store.ClusterRepository        = (*MockClusterRepository)(nil)
-	_ events.Bus                     = (*MockBus)(nil)
-	_ helmgen.HelmValuesGenerator    = (*MockHelmValuesGenerator)(nil)
+	_ store.DeploymentInfoStore   = (*MockDeploymentInfoStore)(nil)
+	_ store.ClusterRepository     = (*MockClusterRepository)(nil)
+	_ events.Bus                  = (*MockBus)(nil)
+	_ helmgen.HelmValuesGenerator = (*MockHelmValuesGenerator)(nil)
+	_ config.TemplateRenderer     = (*MockTemplateRenderer)(nil)
 )

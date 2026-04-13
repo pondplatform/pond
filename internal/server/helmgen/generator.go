@@ -16,12 +16,24 @@ func NewGenerator() HelmValuesGenerator {
 	return &generator{}
 }
 
+func splitRepositoryTag(image string) (string,string) {
+	split := strings.SplitN(image, ":", 2)
+
+	tag := "latest"
+	if len(split) > 1 {
+		tag = split[1]
+	}
+	return split[0], tag
+}
+
 func (g *generator) Generate(cfg *domain.ServiceConfig, env *domain.Environment, contexts map[string]domain.ResolvedContext) (*HelmValues, error) {
+	repository,tag := splitRepositoryTag(cfg.Image)
+	
 	vals := &HelmValues{
 		ReplicaCount: int(cfg.Service.Replicas),
 		Image: Image{
-			Repository: cfg.Image,
-			Tag:        "",
+			Repository: repository,
+			Tag:        tag,
 			PullPolicy: "IfNotPresent",
 		},
 		NameOverride:     cfg.Name,
@@ -88,24 +100,9 @@ func (g *generator) Generate(cfg *domain.ServiceConfig, env *domain.Environment,
 		vals.PodAnnotations["prometheus.io/path"] = cfg.Manage.Metrics.Endpoint
 	}
 
-	// Build variable context for config substitution
-	variables := make(map[string]string)
-	for depName, res := range contexts {
-		for k, v := range res.Values {
-			variables[fmt.Sprintf("%s.%s", depName, k)] = fmt.Sprintf("%v", v)
-		}
-	}
-
-	// Config files
+	// Config files (values are already rendered by the deployment service)
 	for name, cfgFile := range cfg.Configs {
-		// 1. Substitute variables in the Values map
-		renderedValues, err := renderValues(cfgFile.Values, variables)
-		if err != nil {
-			return nil, fmt.Errorf("render config %q: %w", name, err)
-		}
-
-		// 2. Encode to base64
-		encoded, err := encodeConfigFile(cfgFile.Format, renderedValues)
+		encoded, err := encodeConfigFile(cfgFile.Format, cfgFile.Values)
 		if err != nil {
 			return nil, fmt.Errorf("encode config %q: %w", name, err)
 		}
@@ -118,67 +115,6 @@ func (g *generator) Generate(cfg *domain.ServiceConfig, env *domain.Environment,
 	}
 
 	return vals, nil
-}
-
-func renderValues(values map[string]any, variables map[string]string) (map[string]any, error) {
-	if values == nil {
-		return nil, nil
-	}
-
-	result := make(map[string]any)
-	for k, v := range values {
-		rendered, err := renderValue(v, variables)
-		if err != nil {
-			return nil, fmt.Errorf("key %q: %w", k, err)
-		}
-		result[k] = rendered
-	}
-	return result, nil
-}
-
-func renderValue(v any, variables map[string]string) (any, error) {
-	switch val := v.(type) {
-	case string:
-		return renderString(val, variables)
-	case map[string]any:
-		return renderValues(val, variables)
-	case []any:
-		result := make([]any, len(val))
-		for i, item := range val {
-			rendered, err := renderValue(item, variables)
-			if err != nil {
-				return nil, fmt.Errorf("index %d: %w", i, err)
-			}
-			result[i] = rendered
-		}
-		return result, nil
-	default:
-		return val, nil
-	}
-}
-
-func renderString(str string, variables map[string]string) (string, error) {
-	if !strings.Contains(str, "{{") {
-		return str, nil
-	}
-
-	result := str
-	for key, value := range variables {
-		placeholder := "{{" + key + "}}"
-		result = strings.ReplaceAll(result, placeholder, value)
-	}
-
-	// Check for unreplaced variables
-	if strings.Contains(result, "{{") && strings.Contains(result, "}}") {
-		start := strings.Index(result, "{{")
-		end := strings.Index(result[start:], "}}") + start + 2
-		if end > start {
-			unreplaced := result[start:end]
-			return "", fmt.Errorf("variable not found: %s", unreplaced)
-		}
-	}
-
-	return result, nil
 }
 
 func encodeConfigFile(format string, values map[string]any) (string, error) {

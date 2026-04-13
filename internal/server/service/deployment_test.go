@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pondplatform/pond/internal/common/config"
 	"github.com/pondplatform/pond/internal/common/domain"
 	"github.com/pondplatform/pond/internal/testutil"
 )
@@ -76,7 +77,8 @@ func TestDeploymentService_Submit(t *testing.T) {
 		},
 	}
 
-	s := NewDeploymentService(infoStore, svcRepo, envRepo, depSvc, helmGen, tx, bus)
+	tmplRenderer := config.NewTemplateRenderer()
+	s := NewDeploymentService(infoStore, svcRepo, envRepo, depSvc, helmGen, tmplRenderer, tx, bus)
 
 	t.Run("Submit without managed dependencies", func(t *testing.T) {
 		depSvc.scheduleCommandsFn = nil // returns nil (no managed deps)
