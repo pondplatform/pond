@@ -25,7 +25,7 @@ func (m *MockTransactor) RunInTx(ctx context.Context, fn func(ctx context.Contex
 
 type mockDependencyService struct {
 	scheduleCommandsFn func(ctx context.Context, tx TxRepos, dep *domain.Deployment, clusterID uuid.UUID) ([]PendingDep, error)
-	buildContextsFn    func(ctx context.Context, dep *domain.Deployment, rawOutputs map[string]json.RawMessage) (map[string]domain.ResolvedContext, error)
+	buildContextsFn    func(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
 	validateFn         func(ctx context.Context, serviceID, envID uuid.UUID, deps map[string]domain.DependencyDeclaration) error
 }
 
@@ -36,11 +36,11 @@ func (m *mockDependencyService) ScheduleCommands(ctx context.Context, tx TxRepos
 	return nil, nil
 }
 
-func (m *mockDependencyService) BuildContexts(ctx context.Context, dep *domain.Deployment, rawOutputs map[string]json.RawMessage) (map[string]domain.ResolvedContext, error) {
+func (m *mockDependencyService) BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error) {
 	if m.buildContextsFn != nil {
-		return m.buildContextsFn(ctx, dep, rawOutputs)
+		return m.buildContextsFn(rawOutputs)
 	}
-	return map[string]domain.ResolvedContext{}, nil
+	return map[string]map[string]any{}, nil
 }
 
 func (m *mockDependencyService) Validate(ctx context.Context, serviceID, envID uuid.UUID, deps map[string]domain.DependencyDeclaration) error {

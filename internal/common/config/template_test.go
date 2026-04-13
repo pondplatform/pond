@@ -22,8 +22,8 @@ func TestRender_PlainString_PassesThrough(t *testing.T) {
 
 func TestRender_SingleDepVar_Resolved(t *testing.T) {
 	r := config.NewTemplateRenderer()
-	contexts := map[string]domain.ResolvedContext{
-		"db": {Values: map[string]any{"host": "db.internal"}},
+	contexts := map[string]map[string]any{
+		"db": {"host": "db.internal"},
 	}
 	values := map[string]any{"dbHost": "{{db.host}}"}
 
@@ -69,8 +69,8 @@ func TestRender_EnvVar_Resolved(t *testing.T) {
 
 func TestRender_MultipleVarsInOneString(t *testing.T) {
 	r := config.NewTemplateRenderer()
-	contexts := map[string]domain.ResolvedContext{
-		"db": {Values: map[string]any{"host": "db.internal", "port": "5432"}},
+	contexts := map[string]map[string]any{
+		"db": {"host": "db.internal", "port": "5432"},
 	}
 	svc := &domain.ServiceConfig{Env: map[string]string{"DB_NAME": "mydb"}}
 	values := map[string]any{"dsn": "postgres://{{db.host}}:{{db.port}}/{{env.DB_NAME}}"}
@@ -87,8 +87,8 @@ func TestRender_MultipleVarsInOneString(t *testing.T) {
 
 func TestRender_NestedMap_RecursivelyRendered(t *testing.T) {
 	r := config.NewTemplateRenderer()
-	contexts := map[string]domain.ResolvedContext{
-		"cache": {Values: map[string]any{"addr": "redis:6379"}},
+	contexts := map[string]map[string]any{
+		"cache": {"addr": "redis:6379"},
 	}
 	values := map[string]any{
 		"redis": map[string]any{

@@ -309,10 +309,10 @@ func (m *MockBus) Publish(ctx context.Context, topic string, v any) {
 // --- helmgen.HelmValuesGenerator ---
 
 type MockHelmValuesGenerator struct {
-	GenerateFn func(cfg *domain.ServiceConfig, env *domain.Environment, contexts map[string]domain.ResolvedContext) (*helmgen.HelmValues, error)
+	GenerateFn func(cfg *domain.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*helmgen.HelmValues, error)
 }
 
-func (m *MockHelmValuesGenerator) Generate(cfg *domain.ServiceConfig, env *domain.Environment, contexts map[string]domain.ResolvedContext) (*helmgen.HelmValues, error) {
+func (m *MockHelmValuesGenerator) Generate(cfg *domain.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*helmgen.HelmValues, error) {
 	if m.GenerateFn != nil {
 		return m.GenerateFn(cfg, env, contexts)
 	}
@@ -322,10 +322,10 @@ func (m *MockHelmValuesGenerator) Generate(cfg *domain.ServiceConfig, env *domai
 // --- config.TemplateRenderer ---
 
 type MockTemplateRenderer struct {
-	RenderFn func(values map[string]any, contexts map[string]domain.ResolvedContext, svcConfig *domain.ServiceConfig) (map[string]any, error)
+	RenderFn func(values map[string]any, contexts map[string]map[string]any, svcConfig *domain.ServiceConfig) (map[string]any, error)
 }
 
-func (m *MockTemplateRenderer) Render(values map[string]any, contexts map[string]domain.ResolvedContext, svcConfig *domain.ServiceConfig) (map[string]any, error) {
+func (m *MockTemplateRenderer) Render(values map[string]any, contexts map[string]map[string]any, svcConfig *domain.ServiceConfig) (map[string]any, error) {
 	if m.RenderFn != nil {
 		return m.RenderFn(values, contexts, svcConfig)
 	}

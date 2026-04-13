@@ -275,11 +275,15 @@ func (s *deploymentInfoStore) CreateDepConfig(ctx context.Context, deploymentID 
 	if err != nil {
 		return fmt.Errorf("marshal user config: %w", err)
 	}
+	var output []byte
+	if cfg.Output != nil {
+		output = []byte(cfg.Output)
+	}
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO dependency_deployments
-		        (id, deployment_id, dependency_name, dependency_type, managed, user_config, status, command_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		cfg.ID, deploymentID, cfg.DependencyName, cfg.DependencyType, cfg.Managed, userConfig, cfg.Status, cfg.CommandID,
+		        (id, deployment_id, dependency_name, dependency_type, managed, user_config, status, command_id, output)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		cfg.ID, deploymentID, cfg.DependencyName, cfg.DependencyType, cfg.Managed, userConfig, cfg.Status, cfg.CommandID, output,
 	)
 	if err != nil {
 		return fmt.Errorf("create dep config: %w", err)
@@ -359,7 +363,7 @@ func (s *deploymentInfoStore) AllDepConfigsComplete(ctx context.Context, deploym
 func (s *deploymentInfoStore) GetDepOutputsByDeployment(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT dependency_name, output FROM dependency_deployments
-		  WHERE deployment_id = $1 AND status = $2 AND managed = true`,
+		  WHERE deployment_id = $1 AND status = $2`,
 		deploymentID, domain.DependencyRequestStatusSucceeded,
 	)
 	if err != nil {

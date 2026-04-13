@@ -395,7 +395,7 @@ func (s *deploymentService) enqueueHelm(ctx context.Context, tx TxRepos, dep *do
 		return fmt.Errorf("get dependency outputs: %w", err)
 	}
 
-	contexts, err := s.depSvc.BuildContexts(ctx, dep, rawOutputs)
+	contexts, err := s.depSvc.BuildContexts(rawOutputs)
 	if err != nil {
 		return fmt.Errorf("build contexts: %w", err)
 	}

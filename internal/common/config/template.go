@@ -16,7 +16,7 @@ func NewTemplateRenderer() TemplateRenderer {
 	return &templateRenderer{}
 }
 
-func (t *templateRenderer) Render(values map[string]any, contexts map[string]domain.ResolvedContext, svcConfig *domain.ServiceConfig) (map[string]any, error) {
+func (t *templateRenderer) Render(values map[string]any, contexts map[string]map[string]any, svcConfig *domain.ServiceConfig) (map[string]any, error) {
 	lookupTable := buildLookupTable(contexts, svcConfig)
 	result, err := renderMap(values, lookupTable)
 	if err != nil {
@@ -25,12 +25,12 @@ func (t *templateRenderer) Render(values map[string]any, contexts map[string]dom
 	return result, nil
 }
 
-func buildLookupTable(contexts map[string]domain.ResolvedContext, svcConfig *domain.ServiceConfig) map[string]string {
+func buildLookupTable(contexts map[string]map[string]any, svcConfig *domain.ServiceConfig) map[string]string {
 	table := make(map[string]string)
 
 	// Add dependency context values: {{depName.field}}
-	for name, ctx := range contexts {
-		for k, v := range ctx.Values {
+	for name, vals := range contexts {
+		for k, v := range vals {
 			table[name+"."+k] = fmt.Sprintf("%v", v)
 		}
 	}

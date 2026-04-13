@@ -56,10 +56,10 @@ type DependencyService interface {
 	// deployment and creates DependencyDeploymentRequest rows inside tx.
 	ScheduleCommands(ctx context.Context, tx TxRepos, dep *domain.Deployment, clusterID uuid.UUID) ([]PendingDep, error)
 
-	// BuildContexts constructs the ResolvedContext map for helm value generation.
-	// rawOutputs maps dependency name → JSON-encoded tofu outputs; non-managed
-	// deps not present in rawOutputs fall back to their stored UserConfig.
-	BuildContexts(ctx context.Context, dep *domain.Deployment, rawOutputs map[string]json.RawMessage) (map[string]domain.ResolvedContext, error)
+	// BuildContexts unmarshals raw dependency outputs into a name→values map for
+	// helm value generation. rawOutputs comes from GetDepOutputsByDeployment and
+	// includes both managed (tofu) and non-managed (user_config) deps.
+	BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
 
 	// Validate checks that all declared dep types are known and each dep is
 	// configured for the given (service, environment) pair.

@@ -54,9 +54,23 @@ CREATE TABLE deployments (
     image_tag TEXT NOT NULL,
     service_config_snapshot JSONB NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
-    helm_command_id UUID REFERENCES commands(id),
+    triggered_by TEXT,
+    helm_command_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
+);
+
+CREATE TABLE dependency_configs (
+    id UUID PRIMARY KEY,
+    service_id UUID NOT NULL REFERENCES services(id),
+    environment_id UUID NOT NULL REFERENCES environments(id),
+    dependency_name TEXT NOT NULL,
+    dependency_type TEXT NOT NULL,
+    managed BOOLEAN NOT NULL DEFAULT false,
+    provider_inputs JSONB,
+    user_config JSONB,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(service_id, environment_id, dependency_name)
 );
 
 CREATE TABLE dependency_deployments (
@@ -67,17 +81,20 @@ CREATE TABLE dependency_deployments (
     managed BOOLEAN NOT NULL DEFAULT false,
     user_config JSONB,
     status TEXT NOT NULL,
+    command_id UUID,
+    output JSONB,
     -- status: queued | dispatched | succeeded | failed | cancelled | timed_out | waiting_for_user_input
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(service_id, environment_id, dependency_name)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 
 CREATE TABLE commands (
     id            UUID PRIMARY KEY,
+    cluster_id    UUID NOT NULL REFERENCES clusters(id),
     deployment_id UUID NOT NULL REFERENCES deployments(id),
     type          TEXT NOT NULL,
     payload       JSONB NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'queued',
     output        JSONB,
     error         TEXT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -92,3 +109,7 @@ CREATE TABLE command_logs (
 );
 
 CREATE INDEX command_logs_command on command_logs (command_id, logged_at);
+
+-- Add FK constraint for helm_command_id after commands table exists
+ALTER TABLE deployments ADD CONSTRAINT deployments_helm_command_id_fkey
+    FOREIGN KEY (helm_command_id) REFERENCES commands(id);

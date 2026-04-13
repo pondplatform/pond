@@ -11,12 +11,11 @@ import (
 )
 
 type DependencyHandler struct {
-	configs  store.DependencyConfigRepository
-	contexts store.ResolvedContextRepository
+	configs store.DependencyConfigRepository
 }
 
-func NewDependencyHandler(configs store.DependencyConfigRepository, contexts store.ResolvedContextRepository) *DependencyHandler {
-	return &DependencyHandler{configs: configs, contexts: contexts}
+func NewDependencyHandler(configs store.DependencyConfigRepository) *DependencyHandler {
+	return &DependencyHandler{configs: configs}
 }
 
 func (h *DependencyHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
@@ -80,28 +79,3 @@ func (h *DependencyHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(cfg)
 }
 
-func (h *DependencyHandler) GetContext(w http.ResponseWriter, r *http.Request) {
-	serviceID, err := uuid.Parse(r.PathValue("serviceID"))
-	if err != nil {
-		http.Error(w, "invalid service id", http.StatusBadRequest)
-		return
-	}
-	envID, err := uuid.Parse(r.PathValue("envID"))
-	if err != nil {
-		http.Error(w, "invalid environment id", http.StatusBadRequest)
-		return
-	}
-	depName := r.PathValue("name")
-
-	rc, err := h.contexts.Get(r.Context(), serviceID, envID, depName)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	json.NewEncoder(w).Encode(rc)
-}

@@ -88,8 +88,3 @@ type DependencyConfigRepository interface {
 	ListByServiceAndEnv(ctx context.Context, serviceID, envID uuid.UUID) ([]domain.DependencyConfig, error)
 }
 
-// ResolvedContextRepository manages resolved dependency context persistence.
-type ResolvedContextRepository interface {
-	Get(ctx context.Context, serviceID, envID uuid.UUID, depName string) (*domain.ResolvedContext, error)
-	Set(ctx context.Context, rc *domain.ResolvedContext) error
-}

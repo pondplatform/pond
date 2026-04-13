@@ -38,7 +38,6 @@ func Run(ctx context.Context, cfg Config) error {
 	envStore := store.NewEnvironmentStore(db)
 	serviceStore := store.NewServiceStore(db)
 	depConfigStore := store.NewDependencyConfigStore(db)
-	resolvedCtxStore := store.NewResolvedContextStore(db)
 	clusterStore := store.NewClusterStore(db)
 
 	// Transactor for multi-step atomic writes in services
@@ -63,7 +62,7 @@ func Run(ctx context.Context, cfg Config) error {
 	agentHandler := api.NewAgentHandler(clusterStore, bus)
 
 	// HTTP router
-	router := api.NewRouter(deploySvc, serviceStore, envStore, depConfigStore, resolvedCtxStore, agentHandler)
+	router := api.NewRouter(deploySvc, serviceStore, envStore, depConfigStore, agentHandler)
 
 	log.Printf("server listening on %s", cfg.ListenAddr)
 	server := &http.Server{

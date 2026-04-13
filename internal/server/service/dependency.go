@@ -29,13 +29,35 @@ func NewDependencyService(
 
 // ScheduleCommands queues a tofu.apply command for every managed dependency
 // declared in the deployment's service config snapshot and creates the
-// corresponding dependency config rows — all within the provided transaction.
+// corresponding dependency_deployments rows — all within the provided transaction.
+// Non-managed deps are also recorded with status=succeeded and output=user_config
+// so that GetDepOutputsByDeployment returns all dep outputs uniformly.
 func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, dep *domain.Deployment, clusterID uuid.UUID) ([]PendingDep, error) {
 	var pending []PendingDep
 
 	for depName, decl := range dep.ServiceConfigSnapshot.Dependencies {
 		cfg, err := s.depConfigs.Get(ctx, dep.ServiceID, dep.EnvironmentID, depName)
-		if err != nil || !cfg.Managed {
+		if err != nil {
+			return nil, fmt.Errorf("get dep config for %q: %w", depName, err)
+		}
+
+		if !cfg.Managed {
+			userConfigJSON, err := json.Marshal(cfg.UserConfig)
+			if err != nil {
+				return nil, fmt.Errorf("marshal user config for non-managed dep %q: %w", depName, err)
+			}
+			nonManagedRow := &domain.DeploymentDependencyConfig{
+				ID:             uuid.New(),
+				DependencyName: depName,
+				DependencyType: decl.Type,
+				Managed:        false,
+				UserConfig:     cfg.UserConfig,
+				Status:         domain.DependencyRequestStatusSucceeded,
+				Output:         json.RawMessage(userConfigJSON),
+			}
+			if err := tx.DeploymentInfo.CreateDepConfig(ctx, dep.ID, nonManagedRow); err != nil {
+				return nil, fmt.Errorf("create dep config for non-managed dep %q: %w", depName, err)
+			}
 			continue
 		}
 
@@ -93,29 +115,18 @@ func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, de
 	return pending, nil
 }
 
-// BuildContexts constructs the full ResolvedContext map for helm value
-// generation. Managed deps are resolved from rawOutputs (tofu results already
-// stored in the DB); non-managed deps fall back to their UserConfig.
-func (s *dependencyService) BuildContexts(ctx context.Context, dep *domain.Deployment, rawOutputs map[string]json.RawMessage) (map[string]domain.ResolvedContext, error) {
-	contexts := make(map[string]domain.ResolvedContext, len(dep.ServiceConfigSnapshot.Dependencies))
-
-	for depName := range dep.ServiceConfigSnapshot.Dependencies {
-		if raw, ok := rawOutputs[depName]; ok {
-			var vals map[string]any
-			if err := json.Unmarshal(raw, &vals); err != nil {
-				return nil, fmt.Errorf("unmarshal tofu outputs for %q: %w", depName, err)
-			}
-			contexts[depName] = domain.ResolvedContext{DependencyName: depName, Values: vals}
-			continue
+// BuildContexts unmarshals raw dependency outputs into a name→values map for
+// helm value generation. All deps — managed (tofu outputs) and non-managed
+// (user_config, pre-seeded at scheduling time) — are present in rawOutputs.
+func (s *dependencyService) BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error) {
+	contexts := make(map[string]map[string]any, len(rawOutputs))
+	for depName, raw := range rawOutputs {
+		var vals map[string]any
+		if err := json.Unmarshal(raw, &vals); err != nil {
+			return nil, fmt.Errorf("unmarshal outputs for %q: %w", depName, err)
 		}
-
-		cfg, err := s.depConfigs.Get(ctx, dep.ServiceID, dep.EnvironmentID, depName)
-		if err != nil {
-			return nil, fmt.Errorf("get dep config for %q: %w", depName, err)
-		}
-		contexts[depName] = domain.ResolvedContext{DependencyName: depName, Values: cfg.UserConfig}
+		contexts[depName] = vals
 	}
-
 	return contexts, nil
 }
 

@@ -18,7 +18,7 @@ type ConfigResolver interface {
 }
 
 // TemplateRenderer interpolates {{var}} placeholders in config file values
-// using resolved dependency contexts.
+// using resolved dependency contexts (dependency name → output values).
 type TemplateRenderer interface {
-	Render(values map[string]any, contexts map[string]domain.ResolvedContext, svcConfig *domain.ServiceConfig) (map[string]any, error)
+	Render(values map[string]any, contexts map[string]map[string]any, svcConfig *domain.ServiceConfig) (map[string]any, error)
 }

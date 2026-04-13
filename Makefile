@@ -1,5 +1,5 @@
 .PHONY: build build-images build-server-image build-agent-image build-cli-image build-todo-image \
-       e2e e2e-setup e2e-run e2e-teardown
+       test test-integration e2e e2e-setup e2e-run e2e-teardown
 
 # ---- Build targets ----
 
@@ -19,4 +19,12 @@ build-todo-image:
 	docker build -t todo-app:latest ./test-data/CRUD-PostgreSQL-Todo-List/
 
 build-images: build-server-image build-agent-image build-cli-image build-todo-image
+
+# ---- Test targets ----
+
+test:
+	go test ./...
+
+test-integration:
+	go test -tags integration -v -timeout 120s ./internal/integration/...
 

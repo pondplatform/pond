@@ -26,18 +26,6 @@ type DependencyConfig struct {
 	UpdatedAt      time.Time
 }
 
-// ResolvedContext holds the runtime-resolved values for a dependency,
-// ready for injection into config templates.
-type ResolvedContext struct {
-	ID                 uuid.UUID
-	ServiceID          uuid.UUID
-	EnvironmentID      uuid.UUID
-	DependencyName     string
-	Values             map[string]any
-	ResolvedAt         time.Time
-	SourceDeploymentID *uuid.UUID
-}
-
 // DependencySpec describes a built-in dependency type's schema.
 type DependencySpec struct {
 	Type         string
