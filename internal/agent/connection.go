@@ -80,6 +80,9 @@ func (c *connection) ReceiveCommand(ctx context.Context) (*Command, error) {
 
 	select {
 	case <-ctx.Done():
+		// Close the connection so that ReadJSON in the goroutine above
+		// unblocks immediately, sends into the buffered channel, and exits.
+		conn.Close()
 		return nil, ctx.Err()
 	case r := <-ch:
 		return r.cmd, r.err
@@ -100,14 +103,14 @@ func (c *connection) send(msgType string, payload any) error {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
+	// Hold the lock across the nil-check and the write so that Close() cannot
+	// set c.conn = nil between the two operations (TOCTOU fix).
 	c.mu.Lock()
 	conn := c.conn
-	c.mu.Unlock()
 	if conn == nil {
+		c.mu.Unlock()
 		return fmt.Errorf("not connected")
 	}
-
-	c.mu.Lock()
 	err = conn.WriteJSON(wsEnvelope{Type: msgType, Data: data})
 	c.mu.Unlock()
 	return err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/pondplatform/pond/internal/server/api"
@@ -37,6 +38,7 @@ func Run(ctx context.Context, cfg Config) error {
 	serviceStore := store.NewServiceStore(db)
 	deploymentStore := store.NewDeploymentStore(db)
 	depConfigStore := store.NewDependencyConfigStore(db)
+	depRequestStore := store.NewDependencyRequestStore(db)
 	resolvedCtxStore := store.NewResolvedContextStore(db)
 	clusterStore := store.NewClusterStore(db)
 	cmdQueue := queue.NewCommandQueue(db)
@@ -48,13 +50,31 @@ func Run(ctx context.Context, cfg Config) error {
 	// Services
 	depResolver := dependency.NewDependencyResolver(depConfigStore, resolvedCtxStore, specRegistry, providerRegistry)
 	helmGenerator := helmgen.NewGenerator()
-	deploySvc := service.NewDeploymentService(deploymentStore, serviceStore, envStore, depResolver, helmGenerator, cmdQueue)
+	deploySvc := service.NewDeploymentService(deploymentStore, serviceStore, envStore, depConfigStore, depRequestStore, depResolver, helmGenerator, cmdQueue)
+	advancer := service.NewDeploymentAdvancer(deploymentStore, envStore, depConfigStore, depRequestStore, helmGenerator, cmdQueue)
 
 	// Agent handler
-	agentHandler := api.NewAgentHandler(clusterStore, cmdQueue)
+	agentHandler := api.NewAgentHandler(clusterStore, cmdQueue, advancer)
 
 	// HTTP router
 	router := api.NewRouter(deploySvc, serviceStore, envStore, depConfigStore, resolvedCtxStore, agentHandler)
+
+	// Requeue commands that were claimed by an agent that crashed before
+	// acknowledging. Runs every 30 seconds; resets claims older than 5 minutes.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := cmdQueue.RequeueStaleClaims(ctx, 5*time.Minute); err != nil {
+					log.Printf("requeue stale claims: %v", err)
+				}
+			}
+		}
+	}()
 
 	log.Printf("server listening on %s", cfg.ListenAddr)
 	server := &http.Server{

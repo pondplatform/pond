@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,8 @@ type DeploymentRepository interface {
 	ListByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error)
 	Create(ctx context.Context, d *domain.Deployment) error
 	UpdateStatus(ctx context.Context, id uuid.UUID, status domain.DeploymentStatus, completedAt *time.Time) error
+	SetHelmCommandID(ctx context.Context, id uuid.UUID, cmdID uuid.UUID) error
+	GetByHelmCommandID(ctx context.Context, cmdID uuid.UUID) (*domain.Deployment, error)
 }
 
 // ServiceRepository manages service persistence.
@@ -68,4 +71,14 @@ type DependencyConfigRepository interface {
 type ResolvedContextRepository interface {
 	Get(ctx context.Context, serviceID, envID uuid.UUID, depName string) (*domain.ResolvedContext, error)
 	Set(ctx context.Context, rc *domain.ResolvedContext) error
+}
+
+// DependencyDeploymentRequestRepository persists dependency requests.
+type DependencyDeploymentRequestRepository interface {
+	Create(ctx context.Context, req *domain.DependencyDeploymentRequest) error
+	GetByCommandID(ctx context.Context, commandID uuid.UUID) (*domain.DependencyDeploymentRequest, error)
+	MarkSucceeded(ctx context.Context, commandID uuid.UUID, output json.RawMessage) error
+	MarkFailed(ctx context.Context, commandID uuid.UUID) error
+	AllComplete(ctx context.Context, deploymentID uuid.UUID) (allSucceeded bool, anyFailed bool, err error)
+	GetOutputsByDeployment(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error)
 }

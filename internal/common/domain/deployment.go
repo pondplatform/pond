@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,7 +25,30 @@ type Deployment struct {
 	ServiceConfigSnapshot ServiceConfig
 	Status                DeploymentStatus
 	TriggeredBy           string
+	HelmCommandID         *uuid.UUID
 	CreatedAt             time.Time
 	CompletedAt           *time.Time
 }
+
+// DependencyRequestStatus represents the lifecycle of a tofu.apply command.
+type DependencyRequestStatus string
+
+const (
+	DependencyRequestStatusPending   DependencyRequestStatus = "pending"
+	DependencyRequestStatusSucceeded DependencyRequestStatus = "succeeded"
+	DependencyRequestStatusFailed    DependencyRequestStatus = "failed"
+)
+
+// DependencyDeploymentRequest tracks a tofu.apply command enqueued for a
+// managed dependency as part of a deployment.
+type DependencyDeploymentRequest struct {
+	ID             uuid.UUID
+	DeploymentID   uuid.UUID
+	CommandID      uuid.UUID
+	DependencyName string
+	Status         DependencyRequestStatus
+	Output         json.RawMessage // tofu outputs once succeeded
+	CompletedAt    *time.Time
+}
+
 

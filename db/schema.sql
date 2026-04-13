@@ -53,6 +53,7 @@ CREATE TABLE deployments (
     service_config_snapshot JSONB NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     triggered_by TEXT NOT NULL,
+    helm_command_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
 );
@@ -72,6 +73,16 @@ CREATE TABLE command_results (
     output JSONB,
     error TEXT,
     completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE dependency_deployment_requests (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    deployment_id    UUID NOT NULL REFERENCES deployments(id),
+    command_id       UUID NOT NULL,
+    dependency_name  TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'pending',
+    output           JSONB,
+    completed_at     TIMESTAMPTZ
 );
 
 CREATE TABLE dependency_configs (

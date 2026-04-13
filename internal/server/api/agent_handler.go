@@ -28,10 +28,11 @@ type wsEnvelope struct {
 type AgentHandler struct {
 	clusters store.ClusterRepository
 	queue    service.CommandQueue
+	advancer service.DeploymentAdvancer
 }
 
-func NewAgentHandler(clusters store.ClusterRepository, queue service.CommandQueue) *AgentHandler {
-	return &AgentHandler{clusters: clusters, queue: queue}
+func NewAgentHandler(clusters store.ClusterRepository, queue service.CommandQueue, advancer service.DeploymentAdvancer) *AgentHandler {
+	return &AgentHandler{clusters: clusters, queue: queue, advancer: advancer}
 }
 
 func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +85,9 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 				if err := h.queue.Acknowledge(r.Context(), res.CommandID, &res); err != nil {
 					log.Printf("acknowledge command: %v", err)
 				}
+				if err := h.advancer.Advance(r.Context(), &res); err != nil {
+					log.Printf("advance deployment: %v", err)
+				}
 				// Non-blocking send in case the writer goroutine already moved on.
 				select {
 				case resultCh <- &res:
@@ -125,6 +129,12 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		if err := conn.WriteJSON(env); err != nil {
 			log.Printf("agent ws write: %v", err)
 			return
+		}
+
+		// Transition deployment pending → running now that the command is live.
+		if err := h.advancer.MarkDispatched(ctx, cmd.DeploymentID); err != nil {
+			log.Printf("mark dispatched deployment %s: %v", cmd.DeploymentID, err)
+			// Non-fatal: deployment stays 'pending' briefly longer.
 		}
 
 		// Wait for result before sending next command.
