@@ -8,14 +8,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/internal/server/dependency"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/dependency"
+	"github.com/pondplatform/pond/internal/server/events"
 	"github.com/pondplatform/pond/internal/server/helmgen"
-	"github.com/pondplatform/pond/internal/server/service"
 	"github.com/pondplatform/pond/internal/server/store"
 )
 
-// --- domain.DeploymentRepository ---
+// --- store.DeploymentRepository ---
 
 type MockDeploymentRepository struct {
 	GetByIDFn            func(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
@@ -158,7 +158,7 @@ func (m *MockDependencyConfigRepository) ListByServiceAndEnv(ctx context.Context
 	return nil, nil
 }
 
-// --- domain.DependencyDeploymentRequestRepository ---
+// --- store.DependencyDeploymentRequestRepository ---
 
 type MockDepRequestRepository struct {
 	CreateFn                 func(ctx context.Context, req *domain.DependencyDeploymentRequest) error
@@ -206,45 +206,125 @@ func (m *MockDepRequestRepository) GetOutputsByDeployment(ctx context.Context, d
 	return nil, nil
 }
 
-// --- service.CommandQueue ---
+// --- store.CommandRepository ---
 
-type MockCommandQueue struct {
-	EnqueueFn            func(ctx context.Context, clusterID uuid.UUID, cmd *service.Command) error
-	DequeueFn            func(ctx context.Context, clusterID uuid.UUID) (*service.Command, error)
-	AcknowledgeFn        func(ctx context.Context, cmdID uuid.UUID, result *service.CommandResult) error
-	CancelDeploymentFn   func(ctx context.Context, deploymentID uuid.UUID) error
-	RequeueStaleclaimsFn func(ctx context.Context, maxAge time.Duration) error
+type MockCommandRepository struct {
+	EnqueueFn          func(ctx context.Context, clusterID uuid.UUID, cmd *domain.Command) error
+	DequeueFn          func(ctx context.Context, clusterID uuid.UUID) (*domain.Command, error)
+	MarkSucceededFn    func(ctx context.Context, commandID uuid.UUID, output json.RawMessage) error
+	MarkFailedFn       func(ctx context.Context, commandID uuid.UUID, errMsg string) error
+	RequeueFn          func(ctx context.Context, commandID uuid.UUID) error
+	CancelDeploymentFn func(ctx context.Context, deploymentID uuid.UUID) error
 }
 
-func (m *MockCommandQueue) Enqueue(ctx context.Context, clusterID uuid.UUID, cmd *service.Command) error {
+func (m *MockCommandRepository) Enqueue(ctx context.Context, clusterID uuid.UUID, cmd *domain.Command) error {
 	if m.EnqueueFn != nil {
 		return m.EnqueueFn(ctx, clusterID, cmd)
 	}
 	return nil
 }
-func (m *MockCommandQueue) Dequeue(ctx context.Context, clusterID uuid.UUID) (*service.Command, error) {
+func (m *MockCommandRepository) Dequeue(ctx context.Context, clusterID uuid.UUID) (*domain.Command, error) {
 	if m.DequeueFn != nil {
 		return m.DequeueFn(ctx, clusterID)
 	}
 	return nil, nil
 }
-func (m *MockCommandQueue) Acknowledge(ctx context.Context, cmdID uuid.UUID, result *service.CommandResult) error {
-	if m.AcknowledgeFn != nil {
-		return m.AcknowledgeFn(ctx, cmdID, result)
+func (m *MockCommandRepository) MarkSucceeded(ctx context.Context, commandID uuid.UUID, output json.RawMessage) error {
+	if m.MarkSucceededFn != nil {
+		return m.MarkSucceededFn(ctx, commandID, output)
 	}
 	return nil
 }
-func (m *MockCommandQueue) CancelDeployment(ctx context.Context, deploymentID uuid.UUID) error {
+func (m *MockCommandRepository) MarkFailed(ctx context.Context, commandID uuid.UUID, errMsg string) error {
+	if m.MarkFailedFn != nil {
+		return m.MarkFailedFn(ctx, commandID, errMsg)
+	}
+	return nil
+}
+func (m *MockCommandRepository) Requeue(ctx context.Context, commandID uuid.UUID) error {
+	if m.RequeueFn != nil {
+		return m.RequeueFn(ctx, commandID)
+	}
+	return nil
+}
+func (m *MockCommandRepository) CancelDeployment(ctx context.Context, deploymentID uuid.UUID) error {
 	if m.CancelDeploymentFn != nil {
 		return m.CancelDeploymentFn(ctx, deploymentID)
 	}
 	return nil
 }
-func (m *MockCommandQueue) RequeueStaleClaims(ctx context.Context, maxAge time.Duration) error {
-	if m.RequeueStaleclaimsFn != nil {
-		return m.RequeueStaleclaimsFn(ctx, maxAge)
+
+// --- store.CommandLogRepository ---
+
+type MockCommandLogRepository struct {
+	AppendFn func(ctx context.Context, commandID uuid.UUID, line string) error
+}
+
+func (m *MockCommandLogRepository) Append(ctx context.Context, commandID uuid.UUID, line string) error {
+	if m.AppendFn != nil {
+		return m.AppendFn(ctx, commandID, line)
 	}
 	return nil
+}
+
+// --- store.ClusterRepository ---
+
+type MockClusterRepository struct {
+	GetByIDFn          func(ctx context.Context, id uuid.UUID) (*domain.Cluster, error)
+	GetByTokenHashFn   func(ctx context.Context, hash string) (*domain.Cluster, error)
+	ListByOrganizationFn func(ctx context.Context, orgID uuid.UUID) ([]domain.Cluster, error)
+	CreateFn           func(ctx context.Context, cluster *domain.Cluster) error
+	UpdateLastSeenFn   func(ctx context.Context, id uuid.UUID, lastSeen time.Time) error
+}
+
+func (m *MockClusterRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Cluster, error) {
+	if m.GetByIDFn != nil {
+		return m.GetByIDFn(ctx, id)
+	}
+	return nil, nil
+}
+func (m *MockClusterRepository) GetByTokenHash(ctx context.Context, hash string) (*domain.Cluster, error) {
+	if m.GetByTokenHashFn != nil {
+		return m.GetByTokenHashFn(ctx, hash)
+	}
+	return nil, nil
+}
+func (m *MockClusterRepository) ListByOrganization(ctx context.Context, orgID uuid.UUID) ([]domain.Cluster, error) {
+	if m.ListByOrganizationFn != nil {
+		return m.ListByOrganizationFn(ctx, orgID)
+	}
+	return nil, nil
+}
+func (m *MockClusterRepository) Create(ctx context.Context, cluster *domain.Cluster) error {
+	if m.CreateFn != nil {
+		return m.CreateFn(ctx, cluster)
+	}
+	return nil
+}
+func (m *MockClusterRepository) UpdateLastSeen(ctx context.Context, id uuid.UUID, lastSeen time.Time) error {
+	if m.UpdateLastSeenFn != nil {
+		return m.UpdateLastSeenFn(ctx, id, lastSeen)
+	}
+	return nil
+}
+
+// --- events.Bus ---
+
+type MockBus struct {
+	SubscribeFn func(topic string, handler events.Handler) func()
+	PublishFn   func(ctx context.Context, topic string, v any)
+}
+
+func (m *MockBus) Subscribe(topic string, handler events.Handler) func() {
+	if m.SubscribeFn != nil {
+		return m.SubscribeFn(topic, handler)
+	}
+	return func() {}
+}
+func (m *MockBus) Publish(ctx context.Context, topic string, v any) {
+	if m.PublishFn != nil {
+		m.PublishFn(ctx, topic, v)
+	}
 }
 
 // --- helmgen.HelmValuesGenerator ---
@@ -282,8 +362,12 @@ func (m *MockDependencyResolver) Validate(ctx context.Context, serviceID, envID 
 
 // Compile-time interface checks.
 var (
+	_ store.DeploymentRepository                  = (*MockDeploymentRepository)(nil)
 	_ store.DependencyDeploymentRequestRepository = (*MockDepRequestRepository)(nil)
-	_ service.CommandQueue                         = (*MockCommandQueue)(nil)
-	_ helmgen.HelmValuesGenerator                  = (*MockHelmValuesGenerator)(nil)
-	_ dependency.DependencyResolver                = (*MockDependencyResolver)(nil)
+	_ store.CommandRepository                     = (*MockCommandRepository)(nil)
+	_ store.CommandLogRepository                  = (*MockCommandLogRepository)(nil)
+	_ store.ClusterRepository                     = (*MockClusterRepository)(nil)
+	_ events.Bus                                  = (*MockBus)(nil)
+	_ helmgen.HelmValuesGenerator                 = (*MockHelmValuesGenerator)(nil)
+	_ dependency.DependencyResolver               = (*MockDependencyResolver)(nil)
 )

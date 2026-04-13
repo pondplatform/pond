@@ -10,10 +10,10 @@ import (
 )
 
 type ServiceStore struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewServiceStore(db *sql.DB) *ServiceStore {
+func NewServiceStore(db DBTX) *ServiceStore {
 	return &ServiceStore{db: db}
 }
 

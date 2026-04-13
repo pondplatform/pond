@@ -10,10 +10,10 @@ import (
 )
 
 type EnvironmentStore struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewEnvironmentStore(db *sql.DB) *EnvironmentStore {
+func NewEnvironmentStore(db DBTX) *EnvironmentStore {
 	return &EnvironmentStore{db: db}
 }
 

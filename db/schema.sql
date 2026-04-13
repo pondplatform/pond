@@ -58,21 +58,28 @@ CREATE TABLE deployments (
     completed_at TIMESTAMPTZ
 );
 
-CREATE TABLE command_queue (
-    id UUID PRIMARY KEY,
-    cluster_id UUID NOT NULL REFERENCES clusters(id),
+CREATE TABLE commands (
+    id            UUID PRIMARY KEY,
+    cluster_id    UUID NOT NULL REFERENCES clusters(id),
     deployment_id UUID NOT NULL REFERENCES deployments(id),
-    type TEXT NOT NULL,
-    payload JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    type          TEXT NOT NULL,
+    payload       JSONB NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'queued',
+    -- status: queued | dispatched | succeeded | failed | cancelled | timed_out
+    output        JSONB,
+    error         TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE command_results (
-    command_id UUID PRIMARY KEY,
-    success BOOLEAN NOT NULL,
-    output JSONB,
-    error TEXT,
-    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE INDEX commands_cluster_queued ON commands (cluster_id, created_at)
+    WHERE status = 'queued';
+
+CREATE TABLE command_logs (
+    id         BIGSERIAL PRIMARY KEY,
+    command_id UUID NOT NULL REFERENCES commands(id),
+    line       TEXT NOT NULL,
+    logged_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE dependency_deployment_requests (

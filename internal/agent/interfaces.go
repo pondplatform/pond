@@ -8,7 +8,12 @@ import (
 // AgentConnection represents the persistent connection to the server.
 type AgentConnection interface {
 	Connect(ctx context.Context) error
-	ReceiveCommand(ctx context.Context) (*Command, error)
+	// SendReady tells the server the agent is ready for its first command.
+	SendReady(ctx context.Context) error
+	// SendAck notifies the server that execution of cmd has started.
+	SendAck(ctx context.Context, cmd *Command) error
+	// ReceiveMessage reads the next envelope from the server.
+	ReceiveMessage(ctx context.Context) (*Envelope, error)
 	SendResult(ctx context.Context, result *CommandResult) error
 	SendLog(ctx context.Context, entry LogEntry) error
 	Close() error

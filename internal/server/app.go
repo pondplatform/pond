@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/pondplatform/pond/internal/server/api"
 	"github.com/pondplatform/pond/internal/server/dependency"
+	"github.com/pondplatform/pond/internal/server/events"
 	"github.com/pondplatform/pond/internal/server/helmgen"
-	"github.com/pondplatform/pond/internal/server/queue"
 	"github.com/pondplatform/pond/internal/server/service"
 	"github.com/pondplatform/pond/internal/server/store"
 )
@@ -33,7 +32,7 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("ping db: %w", err)
 	}
 
-	// Repositories
+	// Repositories (non-transactional; used for reads and single-row writes)
 	envStore := store.NewEnvironmentStore(db)
 	serviceStore := store.NewServiceStore(db)
 	deploymentStore := store.NewDeploymentStore(db)
@@ -41,40 +40,32 @@ func Run(ctx context.Context, cfg Config) error {
 	depRequestStore := store.NewDependencyRequestStore(db)
 	resolvedCtxStore := store.NewResolvedContextStore(db)
 	clusterStore := store.NewClusterStore(db)
-	cmdQueue := queue.NewCommandQueue(db)
+	cmdStore := store.NewCommandStore(db)
+	cmdLogStore := store.NewCommandLogStore(db)
+
+	// Transactor for multi-step atomic writes in services
+	tx := newTransactor(db)
 
 	// Registries
 	specRegistry := dependency.NewSpecRegistry()
 	providerRegistry := dependency.NewProviderRegistry()
 
+	// Event bus
+	bus := events.NewMemoryBus()
+
 	// Services
 	depResolver := dependency.NewDependencyResolver(depConfigStore, resolvedCtxStore, specRegistry, providerRegistry)
 	helmGenerator := helmgen.NewGenerator()
-	deploySvc := service.NewDeploymentService(deploymentStore, serviceStore, envStore, depConfigStore, depRequestStore, depResolver, helmGenerator, cmdQueue)
-	advancer := service.NewDeploymentAdvancer(deploymentStore, envStore, depConfigStore, depRequestStore, helmGenerator, cmdQueue)
+	deploySvc := service.NewDeploymentService(deploymentStore, serviceStore, envStore, depConfigStore, depRequestStore, depResolver, helmGenerator, tx, bus, cmdStore)
+
+	// Start the deployment service event loop (subscribes to command_results topic).
+	go deploySvc.Start(ctx)
 
 	// Agent handler
-	agentHandler := api.NewAgentHandler(clusterStore, cmdQueue, advancer)
+	agentHandler := api.NewAgentHandler(clusterStore, cmdStore, cmdLogStore, deploySvc, bus)
 
 	// HTTP router
 	router := api.NewRouter(deploySvc, serviceStore, envStore, depConfigStore, resolvedCtxStore, agentHandler)
-
-	// Requeue commands that were claimed by an agent that crashed before
-	// acknowledging. Runs every 30 seconds; resets claims older than 5 minutes.
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := cmdQueue.RequeueStaleClaims(ctx, 5*time.Minute); err != nil {
-					log.Printf("requeue stale claims: %v", err)
-				}
-			}
-		}
-	}()
 
 	log.Printf("server listening on %s", cfg.ListenAddr)
 	server := &http.Server{

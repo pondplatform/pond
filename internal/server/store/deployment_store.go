@@ -12,10 +12,10 @@ import (
 )
 
 type DeploymentStore struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewDeploymentStore(db *sql.DB) *DeploymentStore {
+func NewDeploymentStore(db DBTX) *DeploymentStore {
 	return &DeploymentStore{db: db}
 }
 

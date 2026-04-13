@@ -12,10 +12,10 @@ import (
 )
 
 type DependencyRequestStore struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewDependencyRequestStore(db *sql.DB) *DependencyRequestStore {
+func NewDependencyRequestStore(db DBTX) *DependencyRequestStore {
 	return &DependencyRequestStore{db: db}
 }
 

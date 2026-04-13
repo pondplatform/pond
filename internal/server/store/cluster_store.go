@@ -11,10 +11,10 @@ import (
 )
 
 type ClusterStore struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewClusterStore(db *sql.DB) *ClusterStore {
+func NewClusterStore(db DBTX) *ClusterStore {
 	return &ClusterStore{db: db}
 }
 

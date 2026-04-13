@@ -10,11 +10,14 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// wsEnvelope is the wire format for all WebSocket messages.
-type wsEnvelope struct {
+// Envelope is the wire format for all WebSocket messages between agent and server.
+type Envelope struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`
 }
+
+// wsEnvelope is an alias used internally for JSON marshalling.
+type wsEnvelope = Envelope
 
 type connection struct {
 	serverAddr string
@@ -46,7 +49,9 @@ func (c *connection) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (c *connection) ReceiveCommand(ctx context.Context) (*Command, error) {
+// ReceiveMessage reads the next envelope from the server.
+// It blocks until a message arrives or ctx is cancelled.
+func (c *connection) ReceiveMessage(ctx context.Context) (*wsEnvelope, error) {
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
@@ -54,9 +59,8 @@ func (c *connection) ReceiveCommand(ctx context.Context) (*Command, error) {
 		return nil, fmt.Errorf("not connected")
 	}
 
-	// Run blocking read in a goroutine so we can respect ctx cancellation.
 	type result struct {
-		cmd *Command
+		env *wsEnvelope
 		err error
 	}
 	ch := make(chan result, 1)
@@ -66,27 +70,30 @@ func (c *connection) ReceiveCommand(ctx context.Context) (*Command, error) {
 			ch <- result{err: fmt.Errorf("read websocket: %w", err)}
 			return
 		}
-		if env.Type != "command" {
-			ch <- result{err: fmt.Errorf("unexpected message type: %s", env.Type)}
-			return
-		}
-		var cmd Command
-		if err := json.Unmarshal(env.Data, &cmd); err != nil {
-			ch <- result{err: fmt.Errorf("decode command: %w", err)}
-			return
-		}
-		ch <- result{cmd: &cmd}
+		ch <- result{env: &env}
 	}()
 
 	select {
 	case <-ctx.Done():
-		// Close the connection so that ReadJSON in the goroutine above
-		// unblocks immediately, sends into the buffered channel, and exits.
 		conn.Close()
 		return nil, ctx.Err()
 	case r := <-ch:
-		return r.cmd, r.err
+		return r.env, r.err
 	}
+}
+
+func (c *connection) SendReady(ctx context.Context) error {
+	return c.send("ready", struct{}{})
+}
+
+func (c *connection) SendAck(ctx context.Context, cmd *Command) error {
+	return c.send("ack", struct {
+		CommandID    any `json:"command_id"`
+		DeploymentID any `json:"deployment_id"`
+	}{
+		CommandID:    cmd.ID,
+		DeploymentID: cmd.DeploymentID,
+	})
 }
 
 func (c *connection) SendResult(ctx context.Context, result *CommandResult) error {
@@ -103,8 +110,6 @@ func (c *connection) send(msgType string, payload any) error {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
-	// Hold the lock across the nil-check and the write so that Close() cannot
-	// set c.conn = nil between the two operations (TOCTOU fix).
 	c.mu.Lock()
 	conn := c.conn
 	if conn == nil {

@@ -10,10 +10,10 @@ import (
 )
 
 type OrganizationStore struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewOrganizationStore(db *sql.DB) *OrganizationStore {
+func NewOrganizationStore(db DBTX) *OrganizationStore {
 	return &OrganizationStore{db: db}
 }
 

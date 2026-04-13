@@ -11,10 +11,10 @@ import (
 )
 
 type DependencyConfigStore struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewDependencyConfigStore(db *sql.DB) *DependencyConfigStore {
+func NewDependencyConfigStore(db DBTX) *DependencyConfigStore {
 	return &DependencyConfigStore{db: db}
 }
 
@@ -105,10 +105,10 @@ func (s *DependencyConfigStore) ListByServiceAndEnv(ctx context.Context, service
 // ResolvedContextStore implements domain.ResolvedContextRepository.
 
 type ResolvedContextStore struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewResolvedContextStore(db *sql.DB) *ResolvedContextStore {
+func NewResolvedContextStore(db DBTX) *ResolvedContextStore {
 	return &ResolvedContextStore{db: db}
 }
 

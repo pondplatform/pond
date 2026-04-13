@@ -14,11 +14,8 @@ import (
 	"github.com/pondplatform/pond/internal/agent"
 )
 
-// wsEnvelope mirrors the wire format in connection.go (unexported there).
-type wsEnvelope struct {
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
-}
+// wsEnvelope mirrors agent.Envelope for use in test server handlers.
+type wsEnvelope = agent.Envelope
 
 func newTestServer(t *testing.T, handler func(*websocket.Conn)) *httptest.Server {
 	t.Helper()
@@ -79,9 +76,16 @@ func TestConnection_ReceiveCommand(t *testing.T) {
 	}
 	defer c.Close()
 
-	cmd, err := c.ReceiveCommand(context.Background())
+	env, err := c.ReceiveMessage(context.Background())
 	if err != nil {
-		t.Fatalf("ReceiveCommand: %v", err)
+		t.Fatalf("ReceiveMessage: %v", err)
+	}
+	if env.Type != "command" {
+		t.Fatalf("expected type 'command', got %q", env.Type)
+	}
+	var cmd agent.Command
+	if err := json.Unmarshal(env.Data, &cmd); err != nil {
+		t.Fatalf("decode command: %v", err)
 	}
 	if cmd.ID != cmdID {
 		t.Errorf("expected id %s, got %s", cmdID, cmd.ID)

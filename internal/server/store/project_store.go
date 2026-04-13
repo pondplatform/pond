@@ -10,10 +10,10 @@ import (
 )
 
 type ProjectStore struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewProjectStore(db *sql.DB) *ProjectStore {
+func NewProjectStore(db DBTX) *ProjectStore {
 	return &ProjectStore{db: db}
 }
 
