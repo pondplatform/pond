@@ -99,15 +99,19 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 			if err != nil {
 				return fmt.Errorf("marshal helm values: %w", err)
 			}
+			now := time.Now()
 			helmCmd = &domain.Command{
 				ID:           uuid.New(),
+				ClusterID:    env.ClusterID,
 				DeploymentID: d.ID,
 				Type:         "helm.upgrade",
 				Payload:      payload,
-				CreatedAt:    time.Now(),
+				Status:       domain.CommandStatusQueued,
+				CreatedAt:    now,
+				UpdatedAt:    now,
 			}
-			if err := tx.DeploymentInfo.Enqueue(ctx, env.ClusterID, helmCmd); err != nil {
-				return fmt.Errorf("enqueue helm command: %w", err)
+			if err := tx.DeploymentInfo.CreateCommand(ctx, helmCmd); err != nil {
+				return fmt.Errorf("create helm command: %w", err)
 			}
 			if err := tx.DeploymentInfo.SetHelmCommandID(ctx, d.ID, helmCmd.ID); err != nil {
 				return fmt.Errorf("set helm command id: %w", err)
@@ -180,69 +184,154 @@ func (s *deploymentService) Validate(ctx context.Context, req SubmitRequest) (*V
 	return result, nil
 }
 
-// MarkRunning transitions a deployment from pending → running when the agent
-// confirms it has begun executing the command.
-func (s *deploymentService) MarkRunning(ctx context.Context, deploymentID uuid.UUID) error {
-	dep, err := s.deploymentInfo.GetByID(ctx, deploymentID)
+// Start subscribes to every handler→service topic and drives the deployment
+// state machine in response. Blocks until ctx is cancelled.
+func (s *deploymentService) Start(ctx context.Context) {
+	unsubs := []func(){
+		s.bus.Subscribe(events.TopicCommandResults, func(v any) {
+			res, ok := v.(events.CommandResult)
+			if !ok {
+				log.Printf("deployment service: unexpected event type %T on command_results", v)
+				return
+			}
+			if err := s.processResult(ctx, res); err != nil {
+				log.Printf("deployment service: processResult for command %s: %v", res.CommandID, err)
+			}
+		}),
+		s.bus.Subscribe(events.TopicAgentReady, func(v any) {
+			e, ok := v.(events.AgentReady)
+			if !ok {
+				log.Printf("deployment service: unexpected event type %T on agent_ready", v)
+				return
+			}
+			s.handleAgentReady(ctx, e)
+		}),
+		s.bus.Subscribe(events.TopicCommandStarted, func(v any) {
+			e, ok := v.(events.CommandStarted)
+			if !ok {
+				log.Printf("deployment service: unexpected event type %T on command_started", v)
+				return
+			}
+			s.handleCommandStarted(ctx, e)
+		}),
+		s.bus.Subscribe(events.TopicCommandLogs, func(v any) {
+			e, ok := v.(events.CommandLog)
+			if !ok {
+				log.Printf("deployment service: unexpected event type %T on command_logs", v)
+				return
+			}
+			s.handleCommandLog(ctx, e)
+		}),
+		s.bus.Subscribe(events.TopicAgentDisconnected, func(v any) {
+			e, ok := v.(events.AgentDisconnected)
+			if !ok {
+				log.Printf("deployment service: unexpected event type %T on agent_disconnected", v)
+				return
+			}
+			s.handleAgentDisconnected(ctx, e)
+		}),
+	}
+	<-ctx.Done()
+	for _, u := range unsubs {
+		u()
+	}
+}
+
+// handleAgentReady dispatches the next queued command for the cluster.
+func (s *deploymentService) handleAgentReady(ctx context.Context, e events.AgentReady) {
+	cmds, err := s.deploymentInfo.ListQueuedCommandsByCluster(ctx, e.ClusterID)
 	if err != nil {
-		return fmt.Errorf("get deployment for mark running: %w", err)
+		log.Printf("deployment service: list queued commands for cluster %s: %v", e.ClusterID, err)
+		return
+	}
+	if len(cmds) == 0 {
+		return
+	}
+	cmd := cmds[0]
+	cmd.Status = domain.CommandStatusDispatched
+	cmd.UpdatedAt = time.Now()
+	if err := s.deploymentInfo.UpdateCommand(ctx, cmd); err != nil {
+		log.Printf("deployment service: update command %s to dispatched: %v", cmd.ID, err)
+		return
+	}
+	s.bus.Publish(ctx, events.ClusterTopic(e.ClusterID), events.CommandDispatch{Cmd: cmd})
+}
+
+// handleCommandStarted transitions a deployment from pending → running when
+// the agent acknowledges the command it just received.
+func (s *deploymentService) handleCommandStarted(ctx context.Context, e events.CommandStarted) {
+	dep, err := s.deploymentInfo.GetByID(ctx, e.DeploymentID)
+	if err != nil {
+		log.Printf("deployment service: get deployment %s for command_started: %v", e.DeploymentID, err)
+		return
 	}
 	if dep.Status != domain.DeploymentStatusPending {
-		return nil
+		return
 	}
-	return s.deploymentInfo.UpdateStatus(ctx, deploymentID, domain.DeploymentStatusRunning, nil)
+	if err := s.deploymentInfo.UpdateStatus(ctx, e.DeploymentID, domain.DeploymentStatusRunning, nil); err != nil {
+		log.Printf("deployment service: mark running %s: %v", e.DeploymentID, err)
+	}
 }
 
-// Start subscribes to the command_results topic and drives the deployment state
-// machine for each result. Blocks until ctx is cancelled.
-func (s *deploymentService) Start(ctx context.Context) {
-	unsub := s.bus.Subscribe(events.TopicCommandResults, func(v any) {
-		res, ok := v.(events.CommandResult)
-		if !ok {
-			log.Printf("deployment service: unexpected event type %T on command_results", v)
-			return
-		}
-		if err := s.processResult(ctx, res); err != nil {
-			log.Printf("deployment service: processResult for command %s: %v", res.CommandID, err)
-		}
-	})
-	<-ctx.Done()
-	unsub()
+// handleCommandLog persists a streamed log line from a running command.
+func (s *deploymentService) handleCommandLog(ctx context.Context, e events.CommandLog) {
+	if err := s.deploymentInfo.AppendLog(ctx, e.CommandID, e.Line); err != nil {
+		log.Printf("deployment service: append log for command %s: %v", e.CommandID, err)
+	}
 }
 
-// processResult drives the deployment state machine forward based on a command
-// result. Runs the state advance inside a transaction and publishes a
-// CommandQueued event to the cluster topic if a new command was enqueued.
-func (s *deploymentService) processResult(ctx context.Context, result events.CommandResult) error {
-	var clusterToNotify *uuid.UUID
-
-	err := s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
-		clusterID, err := s.advance(ctx, tx, result)
-		if err != nil {
-			return err
-		}
-		clusterToNotify = clusterID
-		return nil
-	})
+// handleAgentDisconnected requeues the in-flight command (if any) so it can
+// be redelivered to the next connected agent for the same cluster.
+func (s *deploymentService) handleAgentDisconnected(ctx context.Context, e events.AgentDisconnected) {
+	if e.InFlightCommandID == uuid.Nil {
+		return
+	}
+	cmd, err := s.deploymentInfo.GetCommand(ctx, e.InFlightCommandID)
 	if err != nil {
-		return err
+		log.Printf("deployment service: get command %s on disconnect: %v", e.InFlightCommandID, err)
+		return
 	}
-
-	if clusterToNotify != nil {
-		s.bus.Publish(ctx, events.ClusterTopic(*clusterToNotify), events.CommandQueued{
-			ClusterID: *clusterToNotify,
-		})
+	if cmd.Status != domain.CommandStatusDispatched {
+		return // already completed or cancelled
 	}
-	return nil
+	cmd.Status = domain.CommandStatusQueued
+	cmd.UpdatedAt = time.Now()
+	if err := s.deploymentInfo.UpdateCommand(ctx, cmd); err != nil {
+		log.Printf("deployment service: requeue command %s on disconnect: %v", e.InFlightCommandID, err)
+	}
 }
 
-// advance routes a command result to the appropriate handler within an existing
-// transaction. Returns the cluster ID to notify if a new command was enqueued.
-func (s *deploymentService) advance(ctx context.Context, tx TxRepos, result events.CommandResult) (*uuid.UUID, error) {
+// processResult persists the command outcome AND advances the state machine
+// atomically in one transaction, eliminating the race between result
+// persistence and state read.
+func (s *deploymentService) processResult(ctx context.Context, result events.CommandResult) error {
+	return s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
+		cmd, err := tx.DeploymentInfo.GetCommand(ctx, result.CommandID)
+		if err != nil {
+			return fmt.Errorf("get command: %w", err)
+		}
+		if result.Success {
+			cmd.Status = domain.CommandStatusSucceeded
+			cmd.Output = result.Output
+		} else {
+			cmd.Status = domain.CommandStatusFailed
+			cmd.Error = result.Error
+		}
+		cmd.UpdatedAt = time.Now()
+		if err := tx.DeploymentInfo.UpdateCommand(ctx, cmd); err != nil {
+			return fmt.Errorf("update command: %w", err)
+		}
+		return s.advance(ctx, tx, result)
+	})
+}
+
+// advance routes a command result to the appropriate handler within an
+// existing transaction.
+func (s *deploymentService) advance(ctx context.Context, tx TxRepos, result events.CommandResult) error {
 	// Branch 1: is this the result of a tofu.apply for a managed dependency?
 	deploymentID, cfg, err := s.deploymentInfo.GetDepConfigByCommandID(ctx, result.CommandID)
 	if err != nil {
-		return nil, fmt.Errorf("get dep config by command id: %w", err)
+		return fmt.Errorf("get dep config by command id: %w", err)
 	}
 	if cfg != nil {
 		return s.advanceDependency(ctx, tx, deploymentID, cfg, result)
@@ -253,57 +342,54 @@ func (s *deploymentService) advance(ctx context.Context, tx TxRepos, result even
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			log.Printf("advance: no deployment for helm command %s (may be cancelled)", result.CommandID)
-			return nil, nil
+			return nil
 		}
-		return nil, fmt.Errorf("get deployment by helm command id: %w", err)
+		return fmt.Errorf("get deployment by helm command id: %w", err)
 	}
 	if dep != nil {
-		return nil, s.advanceHelm(ctx, tx, dep, result)
+		return s.advanceHelm(ctx, tx, dep, result)
 	}
 
 	log.Printf("advance: unmatched command result %s", result.CommandID)
-	return nil, nil
+	return nil
 }
 
-func (s *deploymentService) advanceDependency(ctx context.Context, tx TxRepos, deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig, result events.CommandResult) (*uuid.UUID, error) {
+func (s *deploymentService) advanceDependency(ctx context.Context, tx TxRepos, deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig, result events.CommandResult) error {
 	if !result.Success {
 		if err := tx.DeploymentInfo.MarkDepConfigFailed(ctx, deploymentID, cfg.DependencyName); err != nil {
-			return nil, fmt.Errorf("mark dep config failed: %w", err)
+			return fmt.Errorf("mark dep config failed: %w", err)
 		}
-		if err := tx.DeploymentInfo.CancelDeployment(ctx, deploymentID); err != nil {
-			return nil, fmt.Errorf("cancel sibling commands for deployment %s: %w", deploymentID, err)
+		if err := tx.DeploymentInfo.UpdateCommandsByDeployment(ctx, deploymentID, domain.CommandStatusQueued, domain.CommandStatusCancelled); err != nil {
+			return fmt.Errorf("cancel sibling commands for deployment %s: %w", deploymentID, err)
 		}
 		now := time.Now()
-		return nil, tx.DeploymentInfo.UpdateStatus(ctx, deploymentID, domain.DeploymentStatusFailed, &now)
+		return tx.DeploymentInfo.UpdateStatus(ctx, deploymentID, domain.DeploymentStatusFailed, &now)
 	}
 
 	dep, err := s.deploymentInfo.GetByID(ctx, deploymentID)
 	if err != nil {
-		return nil, fmt.Errorf("get deployment: %w", err)
+		return fmt.Errorf("get deployment: %w", err)
 	}
 	env, err := s.envs.GetByID(ctx, dep.EnvironmentID)
 	if err != nil {
-		return nil, fmt.Errorf("get environment: %w", err)
+		return fmt.Errorf("get environment: %w", err)
 	}
 
 	if err := tx.DeploymentInfo.MarkDepConfigSucceeded(ctx, deploymentID, cfg.DependencyName, result.Output); err != nil {
-		return nil, fmt.Errorf("mark dep config succeeded: %w", err)
+		return fmt.Errorf("mark dep config succeeded: %w", err)
 	}
 
 	// AllDepConfigsComplete runs in the same tx so it sees the MarkDepConfigSucceeded
 	// row above, eliminating the TOCTOU race between concurrent dependency completions.
 	allSucceeded, anyFailed, err := tx.DeploymentInfo.AllDepConfigsComplete(ctx, deploymentID)
 	if err != nil {
-		return nil, fmt.Errorf("check all complete: %w", err)
+		return fmt.Errorf("check all complete: %w", err)
 	}
 	if anyFailed || !allSucceeded {
-		return nil, nil
+		return nil
 	}
 
-	if err := s.enqueueHelm(ctx, tx, dep, env); err != nil {
-		return nil, err
-	}
-	return &env.ClusterID, nil
+	return s.enqueueHelm(ctx, tx, dep, env)
 }
 
 func (s *deploymentService) advanceHelm(ctx context.Context, tx TxRepos, dep *domain.Deployment, result events.CommandResult) error {
@@ -315,9 +401,9 @@ func (s *deploymentService) advanceHelm(ctx context.Context, tx TxRepos, dep *do
 	return tx.DeploymentInfo.UpdateStatus(ctx, dep.ID, status, &now)
 }
 
-// enqueueHelm builds helm values and enqueues the upgrade command inside the
-// provided transaction, so the enqueue and the helm_command_id update are
-// atomic with the AllDepConfigsComplete check that called us.
+// enqueueHelm builds helm values and creates the upgrade command inside the
+// provided transaction, so the command creation and the helm_command_id update
+// are atomic with the AllDepConfigsComplete check that called us.
 func (s *deploymentService) enqueueHelm(ctx context.Context, tx TxRepos, dep *domain.Deployment, env *domain.Environment) error {
 	rawOutputs, err := tx.DeploymentInfo.GetDepOutputsByDeployment(ctx, dep.ID)
 	if err != nil {
@@ -338,15 +424,19 @@ func (s *deploymentService) enqueueHelm(ctx context.Context, tx TxRepos, dep *do
 		return fmt.Errorf("marshal helm values: %w", err)
 	}
 
+	now := time.Now()
 	cmd := &domain.Command{
 		ID:           uuid.New(),
+		ClusterID:    env.ClusterID,
 		DeploymentID: dep.ID,
 		Type:         "helm.upgrade",
 		Payload:      payload,
-		CreatedAt:    time.Now(),
+		Status:       domain.CommandStatusQueued,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
-	if err := tx.DeploymentInfo.Enqueue(ctx, env.ClusterID, cmd); err != nil {
-		return fmt.Errorf("enqueue helm command: %w", err)
+	if err := tx.DeploymentInfo.CreateCommand(ctx, cmd); err != nil {
+		return fmt.Errorf("create helm command: %w", err)
 	}
 	return tx.DeploymentInfo.SetHelmCommandID(ctx, dep.ID, cmd.ID)
 }

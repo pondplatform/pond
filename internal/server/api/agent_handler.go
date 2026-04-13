@@ -8,13 +8,12 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/pondplatform/pond/internal/common/domain"
 	"github.com/pondplatform/pond/internal/server/events"
-	"github.com/pondplatform/pond/internal/server/service"
 	"github.com/pondplatform/pond/internal/server/store"
 )
 
@@ -39,25 +38,19 @@ type wsLog struct {
 	Line string `json:"line"`
 }
 
-// AgentHandler handles WebSocket connections from agents.
+// AgentHandler bridges agent WebSocket connections to the event bus. It owns
+// no deployment state: every interaction with the deployment service goes
+// through a published event, and every DB mutation happens on the service
+// side in response to that event.
 type AgentHandler struct {
-	clusters       store.ClusterRepository
-	deploymentInfo store.DeploymentInfoStore
-	deployments    service.DeploymentService
-	bus            events.Bus
+	clusters store.ClusterRepository
+	bus      events.Bus
 }
 
-func NewAgentHandler(
-	clusters store.ClusterRepository,
-	deploymentInfo store.DeploymentInfoStore,
-	deployments service.DeploymentService,
-	bus events.Bus,
-) *AgentHandler {
+func NewAgentHandler(clusters store.ClusterRepository, bus events.Bus) *AgentHandler {
 	return &AgentHandler{
-		clusters:       clusters,
-		deploymentInfo: deploymentInfo,
-		deployments:    deployments,
-		bus:            bus,
+		clusters: clusters,
+		bus:      bus,
 	}
 }
 
@@ -87,211 +80,185 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// activeCommandID tracks the in-flight command for this connection.
-	var (
-		cmdMu           sync.Mutex
-		activeCommandID uuid.UUID
-	)
-	setCommandID := func(id uuid.UUID) {
-		cmdMu.Lock()
-		activeCommandID = id
-		cmdMu.Unlock()
-	}
-	takeCommandID := func() uuid.UUID {
-		cmdMu.Lock()
-		id := activeCommandID
-		activeCommandID = uuid.Nil
-		cmdMu.Unlock()
-		return id
-	}
-	getCommandID := func() uuid.UUID {
-		cmdMu.Lock()
-		id := activeCommandID
-		cmdMu.Unlock()
-		return id
-	}
+	// Per-connection channels. All connection state lives on a single
+	// goroutine (the main select loop below); subscribers and the reader
+	// goroutine only communicate with it through these channels.
+	wsCh := make(chan wsEnvelope, 4)
+	dispatchCh := make(chan *domain.Command, 1)
+	wakeCh := make(chan struct{}, 1)
+	readerDone := make(chan error, 1)
 
-	// On disconnect, requeue any in-flight command so it can be redelivered.
-	defer func() {
-		if id := takeCommandID(); id != uuid.Nil {
-			if err := h.deploymentInfo.Requeue(context.Background(), id); err != nil {
-				log.Printf("requeue on disconnect: %v", err)
-			}
-		}
-	}()
-
-	// sendCh serialises writes so the reader goroutine and the idle-notify
-	// callback (from another goroutine) can both send without racing.
-	sendCh := make(chan wsEnvelope, 4)
-
-	// Writer goroutine: drains sendCh and writes to the WebSocket.
+	// Reader goroutine: gorilla WS requires all ReadJSON calls from one
+	// goroutine, so we park it here and push parsed envelopes onto wsCh.
 	go func() {
 		for {
+			var env wsEnvelope
+			if err := conn.ReadJSON(&env); err != nil {
+				readerDone <- err
+				close(wsCh)
+				return
+			}
 			select {
+			case wsCh <- env:
 			case <-ctx.Done():
 				return
-			case env, ok := <-sendCh:
-				if !ok {
-					return
-				}
-				if err := conn.WriteJSON(env); err != nil {
-					log.Printf("agent ws write: %v", err)
-					return
-				}
 			}
 		}
 	}()
 
-	send := func(env wsEnvelope) {
+	// Cluster topic subscriber: the only bridge from the bus into this
+	// connection's goroutine. Never touches handler-local state directly.
+	unsub := h.bus.Subscribe(events.ClusterTopic(cluster.ID), func(v any) {
+		switch e := v.(type) {
+		case events.CommandDispatch:
+			select {
+			case dispatchCh <- e.Cmd:
+			default:
+				// A dispatch is already queued for the main loop to
+				// consume. The service only dispatches in response to
+				// AgentReady (one outstanding credit), so this path
+				// should be unreachable — log if we ever hit it.
+				log.Printf("agent ws: dropped duplicate CommandDispatch for cluster %s", cluster.ID)
+			}
+		case events.CommandQueued:
+			select {
+			case wakeCh <- struct{}{}:
+			default:
+			}
+		}
+	})
+	defer unsub()
+
+	// Connection state — only mutated on the main goroutine below.
+	var activeCommandID uuid.UUID
+
+	// requestNext publishes AgentReady and, because the in-memory bus
+	// delivers synchronously, any CommandDispatch the service emits in
+	// response will already be sitting on dispatchCh by the time Publish
+	// returns. We pull it (non-blocking) and either send a command frame
+	// or fall back to an "idle" frame.
+	requestNext := func() {
+		h.bus.Publish(ctx, events.TopicAgentReady, events.AgentReady{ClusterID: cluster.ID})
 		select {
-		case sendCh <- env:
-		case <-ctx.Done():
-		}
-	}
-
-	// idleUnsub holds the current idle-notification unsubscribe func (non-nil
-	// only while the agent is registered as idle on the bus).
-	var (
-		idleMu    sync.Mutex
-		idleUnsub func()
-	)
-	clearIdle := func() {
-		idleMu.Lock()
-		if idleUnsub != nil {
-			idleUnsub()
-			idleUnsub = nil
-		}
-		idleMu.Unlock()
-	}
-
-	// sendNextOrIdle dequeues the next command and sends it, or subscribes to
-	// the cluster topic and sends an "idle" message.
-	var sendNextOrIdle func()
-	sendNextOrIdle = func() {
-		cmd, err := h.deploymentInfo.Dequeue(ctx, cluster.ID)
-		if err != nil {
-			log.Printf("dequeue: %v", err)
-			return
-		}
-		if cmd != nil {
-			setCommandID(cmd.ID)
+		case cmd := <-dispatchCh:
+			activeCommandID = cmd.ID
 			data, err := json.Marshal(cmd)
 			if err != nil {
 				log.Printf("marshal command: %v", err)
 				return
 			}
-			send(wsEnvelope{Type: "command", Data: data})
-			return
+			if err := conn.WriteJSON(wsEnvelope{Type: "command", Data: data}); err != nil {
+				log.Printf("agent ws write command: %v", err)
+			}
+		default:
+			if err := conn.WriteJSON(wsEnvelope{Type: "idle"}); err != nil {
+				log.Printf("agent ws write idle: %v", err)
+			}
 		}
-
-		// No command available — subscribe to the cluster topic so the
-		// deployment service can wake us when it enqueues a new command.
-		var once sync.Once
-		idleMu.Lock()
-		idleUnsub = h.bus.Subscribe(events.ClusterTopic(cluster.ID), func(_ any) {
-			once.Do(func() {
-				clearIdle()
-				cmd, err := h.deploymentInfo.Dequeue(ctx, cluster.ID)
-				if err != nil || cmd == nil {
-					return
-				}
-				setCommandID(cmd.ID)
-				data, err := json.Marshal(cmd)
-				if err != nil {
-					log.Printf("marshal command (idle push): %v", err)
-					return
-				}
-				send(wsEnvelope{Type: "command", Data: data})
-			})
-		})
-		idleMu.Unlock()
-
-		send(wsEnvelope{Type: "idle"})
 	}
 
-	// Reader loop — the agent drives the protocol.
+	// On disconnect, publish AgentDisconnected so the service can requeue
+	// whatever was in flight.
+	defer func() {
+		h.bus.Publish(context.Background(), events.TopicAgentDisconnected, events.AgentDisconnected{
+			ClusterID:         cluster.ID,
+			InFlightCommandID: activeCommandID,
+		})
+	}()
+
+	// Main loop: single goroutine owns all connection state. Reader
+	// goroutine feeds wsCh; bus subscriber feeds dispatchCh/wakeCh.
 	for {
-		var env wsEnvelope
-		if err := conn.ReadJSON(&env); err != nil {
-			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+		select {
+		case <-ctx.Done():
+			return
+
+		case err := <-readerDone:
+			if err != nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				log.Printf("agent ws read: %v", err)
 			}
-			clearIdle()
 			return
-		}
 
-		switch env.Type {
-		case "ready":
-			// Agent is ready for its first command (sent on connect).
-			sendNextOrIdle()
+		case env, ok := <-wsCh:
+			if !ok {
+				return
+			}
+			switch env.Type {
+			case "ready":
+				requestNext()
 
-		case "ack":
-			// Agent has begun executing the command — transition deployment to running.
-			var ack wsAck
-			if err := json.Unmarshal(env.Data, &ack); err != nil {
-				log.Printf("decode ack: %v", err)
-				continue
-			}
-			if err := h.deployments.MarkRunning(ctx, ack.DeploymentID); err != nil {
-				log.Printf("mark running deployment %s: %v", ack.DeploymentID, err)
-				// Non-fatal: deployment stays 'pending' briefly longer.
-			}
-
-		case "result":
-			// Agent finished executing a command — store the result, publish to
-			// the event bus (which triggers the deployment state machine), then
-			// dispatch the next command.
-			clearIdle()
-			var res events.CommandResult
-			if err := json.Unmarshal(env.Data, &res); err != nil {
-				log.Printf("decode result: %v", err)
-				continue
-			}
-			// Trust the server-tracked command ID, not the agent-supplied one.
-			res.CommandID = getCommandID()
-			cmdID := takeCommandID()
-			if cmdID == uuid.Nil {
-				log.Printf("received result with no active command")
-				continue
-			}
-			// Update command status in the database.
-			if res.Success {
-				if err := h.deploymentInfo.MarkCommandSucceeded(ctx, cmdID, res.Output); err != nil {
-					log.Printf("mark command succeeded %s: %v", cmdID, err)
+			case "ack":
+				var ack wsAck
+				if err := json.Unmarshal(env.Data, &ack); err != nil {
+					log.Printf("decode ack: %v", err)
+					continue
 				}
-			} else {
-				if err := h.deploymentInfo.MarkCommandFailed(ctx, cmdID, res.Error); err != nil {
-					log.Printf("mark command failed %s: %v", cmdID, err)
+				h.bus.Publish(ctx, events.TopicCommandStarted, events.CommandStarted{
+					DeploymentID: ack.DeploymentID,
+				})
+
+			case "result":
+				var res events.CommandResult
+				if err := json.Unmarshal(env.Data, &res); err != nil {
+					log.Printf("decode result: %v", err)
+					continue
 				}
-			}
-			// Publish to the bus — the deployment service's subscriber advances
-			// the state machine synchronously (in-memory bus).
-			h.bus.Publish(ctx, events.TopicCommandResults, res)
-			// Immediately try to dispatch the next command (e.g. helm.upgrade
-			// enqueued by processResult above).
-			sendNextOrIdle()
+				if activeCommandID == uuid.Nil {
+					log.Printf("received result with no active command")
+					continue
+				}
+				// Trust the server-tracked command ID, not the agent-supplied one.
+				res.CommandID = activeCommandID
+				activeCommandID = uuid.Nil
+				// Synchronous bus: by the time this returns, the service
+				// has persisted the result and advanced the state machine.
+				h.bus.Publish(ctx, events.TopicCommandResults, res)
+				// Ask for the next command (may yield a new dispatch or idle).
+				requestNext()
 
-		case "log":
-			// Agent is streaming a log line from the running command.
-			var msg wsLog
-			if err := json.Unmarshal(env.Data, &msg); err != nil {
-				log.Printf("decode log: %v", err)
+			case "log":
+				var msg wsLog
+				if err := json.Unmarshal(env.Data, &msg); err != nil {
+					log.Printf("decode log: %v", err)
+					continue
+				}
+				if activeCommandID == uuid.Nil {
+					continue
+				}
+				h.bus.Publish(ctx, events.TopicCommandLogs, events.CommandLog{
+					CommandID: activeCommandID,
+					Line:      msg.Line,
+				})
+
+			default:
+				log.Printf("agent ws: unknown message type %q", env.Type)
+			}
+
+		case cmd := <-dispatchCh:
+			// An unsolicited dispatch arrived outside of requestNext. This
+			// can happen if the service dispatched before our AgentReady
+			// publish consumed it; treat it as a valid command arrival.
+			if activeCommandID != uuid.Nil {
+				log.Printf("agent ws: dispatch arrived while busy, dropping command %s", cmd.ID)
 				continue
 			}
-			cmdID := getCommandID()
-			if cmdID == uuid.Nil {
+			activeCommandID = cmd.ID
+			data, err := json.Marshal(cmd)
+			if err != nil {
+				log.Printf("marshal command: %v", err)
 				continue
 			}
-			if err := h.deploymentInfo.AppendLog(ctx, cmdID, msg.Line); err != nil {
-				log.Printf("append log for command %s: %v", cmdID, err)
+			if err := conn.WriteJSON(wsEnvelope{Type: "command", Data: data}); err != nil {
+				log.Printf("agent ws write command: %v", err)
 			}
-			h.bus.Publish(ctx, events.TopicCommandLogs, events.CommandLog{
-				CommandID: cmdID,
-				Line:      msg.Line,
-			})
 
-		default:
-			log.Printf("agent ws: unknown message type %q", env.Type)
+		case <-wakeCh:
+			// A new command was enqueued for this cluster. If we're idle,
+			// ask for it; otherwise the post-result requestNext will pick
+			// it up when the current command finishes.
+			if activeCommandID == uuid.Nil {
+				requestNext()
+			}
 		}
 	}
 }

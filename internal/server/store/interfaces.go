@@ -19,13 +19,12 @@ type DeploymentInfoStore interface {
 	SetHelmCommandID(ctx context.Context, id uuid.UUID, cmdID uuid.UUID) error
 	GetByHelmCommandID(ctx context.Context, cmdID uuid.UUID) (*domain.Deployment, error)
 
-	// Command operations
-	Enqueue(ctx context.Context, clusterID uuid.UUID, cmd *domain.Command) error
-	Dequeue(ctx context.Context, clusterID uuid.UUID) (*domain.Command, error)
-	MarkCommandSucceeded(ctx context.Context, commandID uuid.UUID, output json.RawMessage) error
-	MarkCommandFailed(ctx context.Context, commandID uuid.UUID, errMsg string) error
-	Requeue(ctx context.Context, commandID uuid.UUID) error
-	CancelDeployment(ctx context.Context, deploymentID uuid.UUID) error
+	// Command operations (pure CRUD)
+	CreateCommand(ctx context.Context, cmd *domain.Command) error
+	GetCommand(ctx context.Context, id uuid.UUID) (*domain.Command, error)
+	UpdateCommand(ctx context.Context, cmd *domain.Command) error
+	ListQueuedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
+	UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error
 
 	// Command log operations
 	AppendLog(ctx context.Context, commandID uuid.UUID, line string) error

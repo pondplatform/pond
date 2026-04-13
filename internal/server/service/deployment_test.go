@@ -97,12 +97,12 @@ func TestDeploymentService_Submit(t *testing.T) {
 			return nil
 		}
 
-		var enqueuedCmd *domain.Command
-		infoStore.EnqueueFn = func(ctx context.Context, cID uuid.UUID, cmd *domain.Command) error {
-			if cID != clusterID {
-				t.Errorf("expected clusterID %v, got %v", clusterID, cID)
+		var createdCmd *domain.Command
+		infoStore.CreateCommandFn = func(ctx context.Context, cmd *domain.Command) error {
+			if cmd.ClusterID != clusterID {
+				t.Errorf("expected clusterID %v, got %v", clusterID, cmd.ClusterID)
 			}
-			enqueuedCmd = cmd
+			createdCmd = cmd
 			return nil
 		}
 
@@ -110,8 +110,8 @@ func TestDeploymentService_Submit(t *testing.T) {
 			if dID != createdDep.ID {
 				t.Errorf("expected deploymentID %v, got %v", createdDep.ID, dID)
 			}
-			if cmdID != enqueuedCmd.ID {
-				t.Errorf("expected commandID %v, got %v", enqueuedCmd.ID, cmdID)
+			if cmdID != createdCmd.ID {
+				t.Errorf("expected commandID %v, got %v", createdCmd.ID, cmdID)
 			}
 			return nil
 		}
@@ -132,18 +132,21 @@ func TestDeploymentService_Submit(t *testing.T) {
 		if d.Status != domain.DeploymentStatusPending {
 			t.Errorf("expected status %v, got %v", domain.DeploymentStatusPending, d.Status)
 		}
-		if enqueuedCmd == nil {
-			t.Fatal("expected enqueued command, got nil")
+		if createdCmd == nil {
+			t.Fatal("expected created command, got nil")
 		}
-		if enqueuedCmd.Type != "helm.upgrade" {
-			t.Errorf("expected command type helm.upgrade, got %s", enqueuedCmd.Type)
+		if createdCmd.Type != "helm.upgrade" {
+			t.Errorf("expected command type helm.upgrade, got %s", createdCmd.Type)
+		}
+		if createdCmd.Status != domain.CommandStatusQueued {
+			t.Errorf("expected command status queued, got %s", createdCmd.Status)
 		}
 	})
 
 	t.Run("Submit with managed dependencies", func(t *testing.T) {
-		var enqueuedCmds []*domain.Command
-		infoStore.EnqueueFn = func(ctx context.Context, cID uuid.UUID, cmd *domain.Command) error {
-			enqueuedCmds = append(enqueuedCmds, cmd)
+		var createdCmds []*domain.Command
+		infoStore.CreateCommandFn = func(ctx context.Context, cmd *domain.Command) error {
+			createdCmds = append(createdCmds, cmd)
 			return nil
 		}
 
@@ -153,13 +156,17 @@ func TestDeploymentService_Submit(t *testing.T) {
 			return nil
 		}
 
-		// ScheduleCommands enqueues the tofu command and dep config inside the tx.
+		// ScheduleCommands creates the tofu command and dep config inside the tx.
 		depSvc.scheduleCommandsFn = func(ctx context.Context, tx TxRepos, dep *domain.Deployment, clusterID uuid.UUID) ([]PendingDep, error) {
+			now := time.Now()
 			cmd := &domain.Command{
 				ID:           uuid.New(),
+				ClusterID:    clusterID,
 				DeploymentID: dep.ID,
 				Type:         "tofu.apply",
-				CreatedAt:    time.Now(),
+				Status:       domain.CommandStatusQueued,
+				CreatedAt:    now,
+				UpdatedAt:    now,
 			}
 			depCfg := &domain.DeploymentDependencyConfig{
 				ID:             uuid.New(),
@@ -169,7 +176,7 @@ func TestDeploymentService_Submit(t *testing.T) {
 				Status:         domain.DependencyRequestStatusPending,
 				CommandID:      &cmd.ID,
 			}
-			if err := tx.DeploymentInfo.Enqueue(ctx, clusterID, cmd); err != nil {
+			if err := tx.DeploymentInfo.CreateCommand(ctx, cmd); err != nil {
 				return nil, err
 			}
 			if err := tx.DeploymentInfo.CreateDepConfig(ctx, dep.ID, depCfg); err != nil {
@@ -201,11 +208,11 @@ func TestDeploymentService_Submit(t *testing.T) {
 		}
 
 		// Should only have 1 command (tofu.apply for "db").
-		// Helm upgrade is NOT enqueued yet — it waits for managed deps.
-		if len(enqueuedCmds) != 1 {
-			t.Errorf("expected 1 enqueued command, got %d", len(enqueuedCmds))
-		} else if enqueuedCmds[0].Type != "tofu.apply" {
-			t.Errorf("expected command type tofu.apply, got %s", enqueuedCmds[0].Type)
+		// Helm upgrade is NOT created yet — it waits for managed deps.
+		if len(createdCmds) != 1 {
+			t.Errorf("expected 1 created command, got %d", len(createdCmds))
+		} else if createdCmds[0].Type != "tofu.apply" {
+			t.Errorf("expected command type tofu.apply, got %s", createdCmds[0].Type)
 		}
 
 		if len(createdDepCfgs) != 1 {

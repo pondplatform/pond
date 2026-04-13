@@ -58,7 +58,7 @@ func Run(ctx context.Context, cfg Config) error {
 	go deploySvc.Start(ctx)
 
 	// Agent handler
-	agentHandler := api.NewAgentHandler(clusterStore, deploymentInfoStore, deploySvc, bus)
+	agentHandler := api.NewAgentHandler(clusterStore, bus)
 
 	// HTTP router
 	router := api.NewRouter(deploySvc, serviceStore, envStore, depConfigStore, resolvedCtxStore, agentHandler)

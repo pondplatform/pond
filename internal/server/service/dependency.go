@@ -59,12 +59,16 @@ func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, de
 			return nil, fmt.Errorf("marshal tofu payload for %q: %w", depName, err)
 		}
 
+		now := time.Now()
 		cmd := &domain.Command{
 			ID:           uuid.New(),
+			ClusterID:    clusterID,
 			DeploymentID: dep.ID,
 			Type:         "tofu.apply",
 			Payload:      payload,
-			CreatedAt:    time.Now(),
+			Status:       domain.CommandStatusQueued,
+			CreatedAt:    now,
+			UpdatedAt:    now,
 		}
 		depCfg := &domain.DeploymentDependencyConfig{
 			ID:             uuid.New(),
@@ -76,11 +80,11 @@ func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, de
 			CommandID:      &cmd.ID,
 		}
 
-		if err := tx.DeploymentInfo.Enqueue(ctx, clusterID, cmd); err != nil {
-			return nil, fmt.Errorf("enqueue tofu command for dep %q: %w", depName, err)
-		}
 		if err := tx.DeploymentInfo.CreateDepConfig(ctx, dep.ID, depCfg); err != nil {
 			return nil, fmt.Errorf("create dep config for dep %q: %w", depName, err)
+		}
+		if err := tx.DeploymentInfo.CreateCommand(ctx, cmd); err != nil {
+			return nil, fmt.Errorf("create tofu command for dep %q: %w", depName, err)
 		}
 
 		pending = append(pending, PendingDep{Cmd: cmd, DepCfg: depCfg})

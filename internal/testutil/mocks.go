@@ -24,13 +24,12 @@ type MockDeploymentInfoStore struct {
 	UpdateStatusFn       func(ctx context.Context, id uuid.UUID, status domain.DeploymentStatus, completedAt *time.Time) error
 	SetHelmCommandIDFn   func(ctx context.Context, id uuid.UUID, cmdID uuid.UUID) error
 	GetByHelmCommandIDFn func(ctx context.Context, cmdID uuid.UUID) (*domain.Deployment, error)
-	// Command operations
-	EnqueueFn              func(ctx context.Context, clusterID uuid.UUID, cmd *domain.Command) error
-	DequeueFn              func(ctx context.Context, clusterID uuid.UUID) (*domain.Command, error)
-	MarkCommandSucceededFn func(ctx context.Context, commandID uuid.UUID, output json.RawMessage) error
-	MarkCommandFailedFn    func(ctx context.Context, commandID uuid.UUID, errMsg string) error
-	RequeueFn              func(ctx context.Context, commandID uuid.UUID) error
-	CancelDeploymentFn     func(ctx context.Context, deploymentID uuid.UUID) error
+	// Command operations (pure CRUD)
+	CreateCommandFn               func(ctx context.Context, cmd *domain.Command) error
+	GetCommandFn                  func(ctx context.Context, id uuid.UUID) (*domain.Command, error)
+	UpdateCommandFn               func(ctx context.Context, cmd *domain.Command) error
+	ListQueuedCommandsByClusterFn func(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
+	UpdateCommandsByDeploymentFn  func(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error
 	// Command log operations
 	AppendLogFn func(ctx context.Context, commandID uuid.UUID, line string) error
 	// Dependency config operations
@@ -78,39 +77,33 @@ func (m *MockDeploymentInfoStore) GetByHelmCommandID(ctx context.Context, cmdID 
 	}
 	return nil, nil
 }
-func (m *MockDeploymentInfoStore) Enqueue(ctx context.Context, clusterID uuid.UUID, cmd *domain.Command) error {
-	if m.EnqueueFn != nil {
-		return m.EnqueueFn(ctx, clusterID, cmd)
+func (m *MockDeploymentInfoStore) CreateCommand(ctx context.Context, cmd *domain.Command) error {
+	if m.CreateCommandFn != nil {
+		return m.CreateCommandFn(ctx, cmd)
 	}
 	return nil
 }
-func (m *MockDeploymentInfoStore) Dequeue(ctx context.Context, clusterID uuid.UUID) (*domain.Command, error) {
-	if m.DequeueFn != nil {
-		return m.DequeueFn(ctx, clusterID)
+func (m *MockDeploymentInfoStore) GetCommand(ctx context.Context, id uuid.UUID) (*domain.Command, error) {
+	if m.GetCommandFn != nil {
+		return m.GetCommandFn(ctx, id)
 	}
 	return nil, nil
 }
-func (m *MockDeploymentInfoStore) MarkCommandSucceeded(ctx context.Context, commandID uuid.UUID, output json.RawMessage) error {
-	if m.MarkCommandSucceededFn != nil {
-		return m.MarkCommandSucceededFn(ctx, commandID, output)
+func (m *MockDeploymentInfoStore) UpdateCommand(ctx context.Context, cmd *domain.Command) error {
+	if m.UpdateCommandFn != nil {
+		return m.UpdateCommandFn(ctx, cmd)
 	}
 	return nil
 }
-func (m *MockDeploymentInfoStore) MarkCommandFailed(ctx context.Context, commandID uuid.UUID, errMsg string) error {
-	if m.MarkCommandFailedFn != nil {
-		return m.MarkCommandFailedFn(ctx, commandID, errMsg)
+func (m *MockDeploymentInfoStore) ListQueuedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error) {
+	if m.ListQueuedCommandsByClusterFn != nil {
+		return m.ListQueuedCommandsByClusterFn(ctx, clusterID)
 	}
-	return nil
+	return nil, nil
 }
-func (m *MockDeploymentInfoStore) Requeue(ctx context.Context, commandID uuid.UUID) error {
-	if m.RequeueFn != nil {
-		return m.RequeueFn(ctx, commandID)
-	}
-	return nil
-}
-func (m *MockDeploymentInfoStore) CancelDeployment(ctx context.Context, deploymentID uuid.UUID) error {
-	if m.CancelDeploymentFn != nil {
-		return m.CancelDeploymentFn(ctx, deploymentID)
+func (m *MockDeploymentInfoStore) UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error {
+	if m.UpdateCommandsByDeploymentFn != nil {
+		return m.UpdateCommandsByDeploymentFn(ctx, deploymentID, fromStatus, toStatus)
 	}
 	return nil
 }

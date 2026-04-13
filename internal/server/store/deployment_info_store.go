@@ -153,97 +153,104 @@ func (s *deploymentInfoStore) UpdateStatus(ctx context.Context, id uuid.UUID, st
 	return nil
 }
 
-// ── Command operations ───────────────────────────────────────────────────────
+// ── Command operations (pure CRUD) ───────────────────────────────────────────
 
-func (s *deploymentInfoStore) Enqueue(ctx context.Context, clusterID uuid.UUID, cmd *domain.Command) error {
+func (s *deploymentInfoStore) CreateCommand(ctx context.Context, cmd *domain.Command) error {
 	payload, err := json.Marshal(cmd.Payload)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO commands (id, cluster_id, deployment_id, type, payload, status, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, 'queued', $6, $6)`,
-		cmd.ID, clusterID, cmd.DeploymentID, cmd.Type, payload, cmd.CreatedAt,
+		`INSERT INTO commands (id, cluster_id, deployment_id, type, payload, status, output, error, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		cmd.ID, cmd.ClusterID, cmd.DeploymentID, cmd.Type, payload, cmd.Status,
+		[]byte(cmd.Output), cmd.Error, cmd.CreatedAt, cmd.UpdatedAt,
 	)
 	if err != nil {
-		return fmt.Errorf("enqueue command: %w", err)
+		return fmt.Errorf("create command: %w", err)
 	}
 	return nil
 }
 
-func (s *deploymentInfoStore) Dequeue(ctx context.Context, clusterID uuid.UUID) (*domain.Command, error) {
+func (s *deploymentInfoStore) GetCommand(ctx context.Context, id uuid.UUID) (*domain.Command, error) {
 	var cmd domain.Command
-	var payload []byte
+	var payload, output []byte
+	var errStr sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`UPDATE commands SET status='dispatched', updated_at=NOW()
-		  WHERE id = (
-		        SELECT id FROM commands
-		         WHERE cluster_id = $1
-		           AND status = 'queued'
-		         ORDER BY created_at ASC
-		         LIMIT 1
-		         FOR UPDATE SKIP LOCKED
-		  )
-		  RETURNING id, cluster_id, deployment_id, type, payload, created_at, updated_at`,
-		clusterID,
-	).Scan(&cmd.ID, &cmd.ClusterID, &cmd.DeploymentID, &cmd.Type, &payload, &cmd.CreatedAt, &cmd.UpdatedAt)
+		`SELECT id, cluster_id, deployment_id, type, payload, status, output, error, created_at, updated_at
+		   FROM commands WHERE id = $1`,
+		id,
+	).Scan(&cmd.ID, &cmd.ClusterID, &cmd.DeploymentID, &cmd.Type, &payload, &cmd.Status,
+		&output, &errStr, &cmd.CreatedAt, &cmd.UpdatedAt)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, fmt.Errorf("command: %w", domain.ErrNotFound)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("dequeue command: %w", err)
+		return nil, fmt.Errorf("get command: %w", err)
 	}
 	cmd.Payload = payload
-	cmd.Status = domain.CommandStatusDispatched
+	if output != nil {
+		cmd.Output = output
+	}
+	if errStr.Valid {
+		cmd.Error = errStr.String
+	}
 	return &cmd, nil
 }
 
-func (s *deploymentInfoStore) MarkCommandSucceeded(ctx context.Context, commandID uuid.UUID, output json.RawMessage) error {
+func (s *deploymentInfoStore) UpdateCommand(ctx context.Context, cmd *domain.Command) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET status='succeeded', output=$2, updated_at=$3 WHERE id = $1`,
-		commandID, []byte(output), time.Now(),
+		`UPDATE commands SET status = $2, output = $3, error = $4, updated_at = $5 WHERE id = $1`,
+		cmd.ID, cmd.Status, []byte(cmd.Output), cmd.Error, cmd.UpdatedAt,
 	)
 	if err != nil {
-		return fmt.Errorf("mark command succeeded: %w", err)
+		return fmt.Errorf("update command: %w", err)
 	}
 	return nil
 }
 
-func (s *deploymentInfoStore) MarkCommandFailed(ctx context.Context, commandID uuid.UUID, errMsg string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET status='failed', error=$2, updated_at=$3 WHERE id = $1`,
-		commandID, errMsg, time.Now(),
+func (s *deploymentInfoStore) ListQueuedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, cluster_id, deployment_id, type, payload, status, output, error, created_at, updated_at
+		   FROM commands
+		  WHERE cluster_id = $1 AND status = $2
+		  ORDER BY created_at ASC`,
+		clusterID, domain.CommandStatusQueued,
 	)
 	if err != nil {
-		return fmt.Errorf("mark command failed: %w", err)
+		return nil, fmt.Errorf("list queued commands: %w", err)
 	}
-	return nil
+	defer rows.Close()
+
+	var cmds []*domain.Command
+	for rows.Next() {
+		var cmd domain.Command
+		var payload, output []byte
+		var errStr sql.NullString
+		if err := rows.Scan(&cmd.ID, &cmd.ClusterID, &cmd.DeploymentID, &cmd.Type, &payload, &cmd.Status,
+			&output, &errStr, &cmd.CreatedAt, &cmd.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan command: %w", err)
+		}
+		cmd.Payload = payload
+		if output != nil {
+			cmd.Output = output
+		}
+		if errStr.Valid {
+			cmd.Error = errStr.String
+		}
+		cmds = append(cmds, &cmd)
+	}
+	return cmds, rows.Err()
 }
 
-// Requeue transitions a dispatched command back to queued. The AND status guard
-// ensures already-completed commands cannot be re-queued by a late disconnect.
-func (s *deploymentInfoStore) Requeue(ctx context.Context, commandID uuid.UUID) error {
+func (s *deploymentInfoStore) UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET status='queued', updated_at=NOW()
-		  WHERE id = $1 AND status = 'dispatched'`,
-		commandID,
+		`UPDATE commands SET status = $3, updated_at = NOW()
+		  WHERE deployment_id = $1 AND status = $2`,
+		deploymentID, fromStatus, toStatus,
 	)
 	if err != nil {
-		return fmt.Errorf("requeue command: %w", err)
-	}
-	return nil
-}
-
-// CancelDeployment transitions all queued commands for a deployment to cancelled.
-// Already-dispatched commands are left untouched.
-func (s *deploymentInfoStore) CancelDeployment(ctx context.Context, deploymentID uuid.UUID) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET status='cancelled', updated_at=NOW()
-		  WHERE deployment_id = $1 AND status = 'queued'`,
-		deploymentID,
-	)
-	if err != nil {
-		return fmt.Errorf("cancel deployment commands: %w", err)
+		return fmt.Errorf("update commands by deployment: %w", err)
 	}
 	return nil
 }
