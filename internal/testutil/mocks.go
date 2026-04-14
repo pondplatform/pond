@@ -219,33 +219,6 @@ func (m *MockEnvironmentRepository) Create(ctx context.Context, env *domain.Envi
 	return nil
 }
 
-// --- store.DependencyConfigRepository ---
-
-type MockDependencyConfigRepository struct {
-	GetFn                 func(ctx context.Context, serviceID, envID uuid.UUID, depName string) (*domain.DependencyConfig, error)
-	SetFn                 func(ctx context.Context, cfg *domain.DependencyConfig) error
-	ListByServiceAndEnvFn func(ctx context.Context, serviceID, envID uuid.UUID) ([]domain.DependencyConfig, error)
-}
-
-func (m *MockDependencyConfigRepository) Get(ctx context.Context, serviceID, envID uuid.UUID, depName string) (*domain.DependencyConfig, error) {
-	if m.GetFn != nil {
-		return m.GetFn(ctx, serviceID, envID, depName)
-	}
-	return nil, nil
-}
-func (m *MockDependencyConfigRepository) Set(ctx context.Context, cfg *domain.DependencyConfig) error {
-	if m.SetFn != nil {
-		return m.SetFn(ctx, cfg)
-	}
-	return nil
-}
-func (m *MockDependencyConfigRepository) ListByServiceAndEnv(ctx context.Context, serviceID, envID uuid.UUID) ([]domain.DependencyConfig, error) {
-	if m.ListByServiceAndEnvFn != nil {
-		return m.ListByServiceAndEnvFn(ctx, serviceID, envID)
-	}
-	return nil, nil
-}
-
 // --- store.ClusterRepository ---
 
 type MockClusterRepository struct {

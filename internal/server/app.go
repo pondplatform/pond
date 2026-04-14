@@ -37,7 +37,6 @@ func Run(ctx context.Context, cfg Config) error {
 	deploymentInfoStore := store.NewDeploymentInfoStore(db)
 	envStore := store.NewEnvironmentStore(db)
 	serviceStore := store.NewServiceStore(db)
-	depConfigStore := store.NewDependencyConfigStore(db)
 	clusterStore := store.NewClusterStore(db)
 
 	// Transactor for multi-step atomic writes in services
@@ -50,7 +49,7 @@ func Run(ctx context.Context, cfg Config) error {
 	bus := events.NewMemoryBus()
 
 	// Services
-	depSvc := service.NewDependencyService(depConfigStore, specRegistry)
+	depSvc := service.NewDependencyService(specRegistry)
 	helmGenerator := helmgen.NewGenerator()
 	tmplRenderer := config.NewTemplateRenderer()
 	deploySvc := service.NewDeploymentService(deploymentInfoStore, serviceStore, envStore, depSvc, helmGenerator, tmplRenderer, tx, bus)
@@ -62,7 +61,7 @@ func Run(ctx context.Context, cfg Config) error {
 	agentHandler := api.NewAgentHandler(clusterStore, bus)
 
 	// HTTP router
-	router := api.NewRouter(deploySvc, serviceStore, envStore, depConfigStore, agentHandler)
+	router := api.NewRouter(deploySvc, serviceStore, envStore, agentHandler)
 
 	log.Printf("server listening on %s", cfg.ListenAddr)
 	server := &http.Server{

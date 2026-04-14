@@ -61,7 +61,6 @@ type DependencyService interface {
 	// includes both managed (tofu) and non-managed (user_config) deps.
 	BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
 
-	// Validate checks that all declared dep types are known and each dep is
-	// configured for the given (service, environment) pair.
-	Validate(ctx context.Context, serviceID, envID uuid.UUID, deps map[string]domain.DependencyDeclaration) error
+	// Validate checks that all declared dep types are known.
+	Validate(ctx context.Context, deps map[string]domain.DependencyDeclaration) error
 }

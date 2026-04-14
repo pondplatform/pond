@@ -11,29 +11,15 @@ func NewRouter(
 	deploySvc service.DeploymentService,
 	services store.ServiceRepository,
 	envs store.EnvironmentRepository,
-	depConfigs store.DependencyConfigRepository,
 	agentHandler *AgentHandler,
 ) http.Handler {
 	mux := http.NewServeMux()
 
 	deployHandler := NewDeploymentHandler(deploySvc)
-	depHandler := NewDependencyHandler(depConfigs)
-	envHandler := NewEnvironmentHandler(envs)
-	svcHandler := NewServiceHandler(services)
 
 	// Deployment routes
 	mux.HandleFunc("POST /deployments", deployHandler.Submit)
 	mux.HandleFunc("GET /deployments/{id}", deployHandler.GetStatus)
-
-	// Environment routes
-	mux.HandleFunc("GET /projects/{projectID}/environments", envHandler.ListByProject)
-
-	// Service routes
-	mux.HandleFunc("GET /projects/{projectID}/services", svcHandler.ListByProject)
-
-	// Dependency routes
-	mux.HandleFunc("PUT /services/{serviceID}/environments/{envID}/dependencies/{name}", depHandler.SetConfig)
-	mux.HandleFunc("GET /services/{serviceID}/environments/{envID}/dependencies/{name}", depHandler.GetConfig)
 
 	// Agent WebSocket endpoint — registered before middleware to bypass jsonContentType.
 	mux.HandleFunc("GET /agent/ws", agentHandler.ServeWS)

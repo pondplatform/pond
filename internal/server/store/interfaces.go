@@ -30,7 +30,8 @@ type DeploymentInfoStore interface {
 	AppendLog(ctx context.Context, commandID uuid.UUID, line string) error
 
 	// Dependency config operations (dependency_deployments table)
-	CreateDepConfig(ctx context.Context, deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig) error
+	CreateDepConfig(ctx context.Context, cfg *domain.DeploymentDependencyConfig) error
+	GetDepConfig(ctx context.Context, deploymentID uuid.UUID, depName string) (*domain.DeploymentDependencyConfig, error)
 	// GetDepConfigByCommandID returns the deployment ID and dep config for the given
 	// command. Returns (uuid.Nil, nil, nil) when not found.
 	GetDepConfigByCommandID(ctx context.Context, commandID uuid.UUID) (deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig, err error)
@@ -79,12 +80,5 @@ type ClusterRepository interface {
 	Create(ctx context.Context, cluster *domain.Cluster) error
 	UpdateLastSeen(ctx context.Context, id uuid.UUID, t time.Time) error
 	GetByTokenHash(ctx context.Context, tokenHash string) (*domain.Cluster, error)
-}
-
-// DependencyConfigRepository manages dependency configuration persistence.
-type DependencyConfigRepository interface {
-	Get(ctx context.Context, serviceID, envID uuid.UUID, depName string) (*domain.DependencyConfig, error)
-	Set(ctx context.Context, cfg *domain.DependencyConfig) error
-	ListByServiceAndEnv(ctx context.Context, serviceID, envID uuid.UUID) ([]domain.DependencyConfig, error)
 }
 

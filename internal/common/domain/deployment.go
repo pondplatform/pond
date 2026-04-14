@@ -14,7 +14,6 @@ const (
 	DeploymentStatusRunning       DeploymentStatus = "running"
 	DeploymentStatusSucceeded     DeploymentStatus = "succeeded"
 	DeploymentStatusFailed        DeploymentStatus = "failed"
-	DeploymentStatusAwaitingInput DeploymentStatus = "awaiting_input"
 )
 
 type Deployment struct {
@@ -35,9 +34,10 @@ type DeploymentDependencyConfig struct {
 	ID             uuid.UUID
 	DependencyName string
 	DependencyType string
-	Managed        bool
+	Managed        *bool
 	ProviderInputs map[string]any
 	UserConfig     map[string]any
+	Outputs        map[string]any
 
 	// Execution state
 	Status      DependencyRequestStatus
@@ -50,6 +50,7 @@ type DeploymentDependencyConfig struct {
 type DependencyRequestStatus string
 
 const (
+	DependencyRequestAwaitingInput DependencyRequestStatus = "awaiting_input"
 	DependencyRequestStatusPending   DependencyRequestStatus = "pending"
 	DependencyRequestStatusSucceeded DependencyRequestStatus = "succeeded"
 	DependencyRequestStatusFailed    DependencyRequestStatus = "failed"

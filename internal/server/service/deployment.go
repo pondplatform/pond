@@ -156,7 +156,7 @@ func (s *deploymentService) Validate(ctx context.Context, req SubmitRequest) (*V
 		})
 	}
 
-	if err := s.depSvc.Validate(ctx, uuid.Nil, req.EnvironmentID, req.ServiceConfig.Dependencies); err != nil {
+	if err := s.depSvc.Validate(ctx, req.ServiceConfig.Dependencies); err != nil {
 		result.Valid = false
 		if ve, ok := err.(*domain.ValidationErrors); ok {
 			result.Errors = append(result.Errors, ve.Errors...)

@@ -64,12 +64,21 @@ type AgentDisconnected struct {
 	InFlightCommandID uuid.UUID
 }
 
+
+// CommandLog is published to TopicCommandLogs when the agent streams a log
+// line. Consumers may use it for real-time log tailing.
+type UserInputRequired struct {
+	DeploymentId uuid.UUID
+	DependencyName      string
+}
+
 const (
 	TopicCommandResults    = "command_results"
 	TopicCommandLogs       = "command_logs"
 	TopicAgentReady        = "agent_ready"
 	TopicCommandStarted    = "command_started"
 	TopicAgentDisconnected = "agent_disconnected"
+	TopicUserInputRequired = "user_input_required"
 )
 
 // ClusterTopic returns the per-cluster notification topic string.

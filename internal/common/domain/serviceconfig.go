@@ -46,3 +46,8 @@ type ConfigFileSpec struct {
 	MountDir string         `json:"mountDir" yaml:"mountDir"`
 	Values   map[string]any `json:"values"   yaml:"values"`
 }
+
+type DependencyDeclaration struct {
+	Type           string         `json:"type"           yaml:"type"`
+	Config         map[string]any `json:"config"         yaml:"config"`
+}
