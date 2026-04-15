@@ -35,6 +35,8 @@ func Run(ctx context.Context, cfg Config) error {
 
 	// Repositories
 	deploymentInfoStore := store.NewDeploymentInfoStore(db)
+	orgStore := store.NewOrganizationStore(db)
+	projectStore := store.NewProjectStore(db)
 	envStore := store.NewEnvironmentStore(db)
 	serviceStore := store.NewServiceStore(db)
 	clusterStore := store.NewClusterStore(db)
@@ -52,7 +54,8 @@ func Run(ctx context.Context, cfg Config) error {
 	depSvc := service.NewDependencyService(specRegistry)
 	helmGenerator := helmgen.NewGenerator()
 	tmplRenderer := config.NewTemplateRenderer()
-	deploySvc := service.NewDeploymentService(deploymentInfoStore, serviceStore, envStore, depSvc, helmGenerator, tmplRenderer, tx, bus)
+	resolver := config.NewResolver()
+	deploySvc := service.NewDeploymentService(deploymentInfoStore, serviceStore, envStore, depSvc, helmGenerator, tmplRenderer, resolver, tx, bus)
 
 	// Start the deployment service event loop (subscribes to command.results topic).
 	go deploySvc.Start(ctx)
@@ -61,7 +64,16 @@ func Run(ctx context.Context, cfg Config) error {
 	agentHandler := api.NewAgentHandler(clusterStore, bus)
 
 	// HTTP router
-	router := api.NewRouter(deploySvc, serviceStore, envStore, agentHandler)
+	router := api.NewRouter(api.RouterDeps{
+		DeploySvc:    deploySvc,
+		Orgs:         orgStore,
+		Projects:     projectStore,
+		Envs:         envStore,
+		Services:     serviceStore,
+		Clusters:     clusterStore,
+		SpecRegistry: specRegistry,
+		AgentHandler: agentHandler,
+	})
 
 	log.Printf("server listening on %s", cfg.ListenAddr)
 	server := &http.Server{

@@ -31,22 +31,17 @@ func NewDeployCmd(serverClient client.ServerClient) *cobra.Command {
 				return fmt.Errorf("parse config: %w", err)
 			}
 
-			resolver := config.NewResolver()
-			svcConfig, err := resolver.Resolve(overridable, envName)
-			if err != nil {
-				return fmt.Errorf("resolve config: %w", err)
-			}
-
 			projID, err := uuid.Parse(projectID)
 			if err != nil {
 				return fmt.Errorf("invalid project id: %w", err)
 			}
 
 			req := service.SubmitRequest{
-				ProjectID:     projID,
-				ServiceConfig: *svcConfig,
-				ImageTag:      tag,
-				TriggeredBy:   "cli",
+				ProjectID:         projID,
+				EnvironmentName:   envName,
+				OverridableConfig: *overridable,
+				ImageTag:          tag,
+				TriggeredBy:       "cli",
 			}
 
 			d, err := serverClient.SubmitDeployment(cmd.Context(), req)

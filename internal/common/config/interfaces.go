@@ -8,13 +8,13 @@ import (
 
 // ConfigParser reads and parses a pond.yml file.
 type ConfigParser interface {
-	Parse(r io.Reader) (*OverridableConfig, error)
-	ParseFile(path string) (*OverridableConfig, error)
+	Parse(r io.Reader) (*domain.OverridableConfig, error)
+	ParseFile(path string) (*domain.OverridableConfig, error)
 }
 
 // ConfigResolver applies environment overrides to produce a final ServiceConfig.
 type ConfigResolver interface {
-	Resolve(base *OverridableConfig, envName string) (*domain.ServiceConfig, error)
+	Resolve(base *domain.OverridableConfig, envName string) (*domain.ServiceConfig, error)
 }
 
 // TemplateRenderer interpolates {{var}} placeholders in config file values

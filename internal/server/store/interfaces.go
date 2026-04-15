@@ -14,6 +14,7 @@ type DeploymentInfoStore interface {
 	// Deployment operations
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
 	ListByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error)
+	ListByServiceFiltered(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
 	Create(ctx context.Context, d *domain.Deployment) error
 	UpdateStatus(ctx context.Context, id uuid.UUID, status domain.DeploymentStatus, completedAt *time.Time) error
 	SetHelmCommandID(ctx context.Context, id uuid.UUID, cmdID uuid.UUID) error
@@ -66,12 +67,14 @@ type EnvironmentRepository interface {
 	GetByName(ctx context.Context, projectID uuid.UUID, name string) (*domain.Environment, error)
 	ListByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Environment, error)
 	Create(ctx context.Context, env *domain.Environment) error
+	Update(ctx context.Context, env *domain.Environment) error
 }
 
 // OrganizationRepository manages organization persistence.
 type OrganizationRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Organization, error)
 	GetByName(ctx context.Context, name string) (*domain.Organization, error)
+	List(ctx context.Context, limit int, cursor string) ([]domain.Organization, error)
 	Create(ctx context.Context, org *domain.Organization) error
 }
 
@@ -87,8 +90,10 @@ type ProjectRepository interface {
 // ClusterRepository manages cluster persistence.
 type ClusterRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Cluster, error)
+	GetByName(ctx context.Context, orgID uuid.UUID, name string) (*domain.Cluster, error)
 	ListByOrganization(ctx context.Context, orgID uuid.UUID) ([]domain.Cluster, error)
 	Create(ctx context.Context, cluster *domain.Cluster) error
 	UpdateLastSeen(ctx context.Context, id uuid.UUID, t time.Time) error
+	UpdateTokenHash(ctx context.Context, id uuid.UUID, tokenHash string) error
 	GetByTokenHash(ctx context.Context, tokenHash string) (*domain.Cluster, error)
 }

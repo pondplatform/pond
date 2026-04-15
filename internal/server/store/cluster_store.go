@@ -36,6 +36,25 @@ func (s *ClusterStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Clust
 	return &c, nil
 }
 
+func (s *ClusterStore) GetByName(ctx context.Context, orgID uuid.UUID, name string) (*domain.Cluster, error) {
+	var c domain.Cluster
+	var lastSeen sql.NullTime
+	err := s.db.QueryRowContext(ctx,
+		"SELECT id, organization_id, name, agent_token_hash, last_seen_at, created_at FROM clusters WHERE organization_id = $1 AND name = $2",
+		orgID, name,
+	).Scan(&c.ID, &c.OrganizationID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("cluster %q: %w", name, domain.ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get cluster: %w", err)
+	}
+	if lastSeen.Valid {
+		c.LastSeenAt = &lastSeen.Time
+	}
+	return &c, nil
+}
+
 func (s *ClusterStore) ListByOrganization(ctx context.Context, orgID uuid.UUID) ([]domain.Cluster, error) {
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT id, organization_id, name, agent_token_hash, last_seen_at, created_at FROM clusters WHERE organization_id = $1", orgID,
@@ -77,6 +96,16 @@ func (s *ClusterStore) UpdateLastSeen(ctx context.Context, id uuid.UUID, t time.
 	)
 	if err != nil {
 		return fmt.Errorf("update last seen: %w", err)
+	}
+	return nil
+}
+
+func (s *ClusterStore) UpdateTokenHash(ctx context.Context, id uuid.UUID, tokenHash string) error {
+	_, err := s.db.ExecContext(ctx,
+		"UPDATE clusters SET agent_token_hash = $1 WHERE id = $2", tokenHash, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update token hash: %w", err)
 	}
 	return nil
 }

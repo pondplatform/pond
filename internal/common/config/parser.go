@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/pondplatform/pond/internal/common/domain"
 	"gopkg.in/yaml.v3"
 )
 
@@ -14,8 +15,8 @@ func NewParser() ConfigParser {
 	return &parser{}
 }
 
-func (p *parser) Parse(r io.Reader) (*OverridableConfig, error) {
-	var cfg OverridableConfig
+func (p *parser) Parse(r io.Reader) (*domain.OverridableConfig, error) {
+	var cfg domain.OverridableConfig
 	decoder := yaml.NewDecoder(r)
 	if err := decoder.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("decode pond.yml: %w", err)
@@ -23,7 +24,7 @@ func (p *parser) Parse(r io.Reader) (*OverridableConfig, error) {
 	return &cfg, nil
 }
 
-func (p *parser) ParseFile(path string) (*OverridableConfig, error) {
+func (p *parser) ParseFile(path string) (*domain.OverridableConfig, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)

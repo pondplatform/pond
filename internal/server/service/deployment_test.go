@@ -66,6 +66,24 @@ func (m *mockDependencyService) Validate(ctx context.Context, deps map[string]do
 	return nil
 }
 
+// mockConfigResolver is a simple resolver that returns the base config (ignores overrides).
+type mockConfigResolver struct{}
+
+func (m *mockConfigResolver) Resolve(base *domain.OverridableConfig, envName string) (*domain.ServiceConfig, error) {
+	cfg := base.ServiceConfig
+	// Initialize maps if nil
+	if cfg.Env == nil {
+		cfg.Env = make(map[string]string)
+	}
+	if cfg.Dependencies == nil {
+		cfg.Dependencies = make(map[string]domain.DependencyDeclaration)
+	}
+	if cfg.Configs == nil {
+		cfg.Configs = make(map[string]domain.ConfigFileSpec)
+	}
+	return &cfg, nil
+}
+
 func TestDeploymentService_Submit(t *testing.T) {
 	ctx := context.Background()
 	projectID := uuid.New()
@@ -79,8 +97,8 @@ func TestDeploymentService_Submit(t *testing.T) {
 		},
 	}
 	envRepo := &testutil.MockEnvironmentRepository{
-		GetByIDFn: func(ctx context.Context, id uuid.UUID) (*domain.Environment, error) {
-			return &domain.Environment{ID: id, ClusterID: clusterID}, nil
+		GetByNameFn: func(ctx context.Context, projectID uuid.UUID, name string) (*domain.Environment, error) {
+			return &domain.Environment{ID: envID, Name: name, ClusterID: clusterID}, nil
 		},
 	}
 	infoStore := &testutil.MockDeploymentInfoStore{}
@@ -94,16 +112,19 @@ func TestDeploymentService_Submit(t *testing.T) {
 	}
 
 	tmplRenderer := config.NewTemplateRenderer()
-	s := NewDeploymentService(infoStore, svcRepo, envRepo, depSvc, helmGen, tmplRenderer, tx, bus)
+	resolver := &mockConfigResolver{}
+	s := NewDeploymentService(infoStore, svcRepo, envRepo, depSvc, helmGen, tmplRenderer, resolver, tx, bus)
 
 	t.Run("Submit without managed dependencies", func(t *testing.T) {
 		depSvc.scheduleCommandsFn = nil // returns nil (no managed deps)
 
 		req := SubmitRequest{
-			ProjectID:     projectID,
-			EnvironmentID: envID,
-			ServiceConfig: domain.ServiceConfig{
-				Name: "my-service",
+			ProjectID:       projectID,
+			EnvironmentName: "staging",
+			OverridableConfig: domain.OverridableConfig{
+				ServiceConfig: domain.ServiceConfig{
+					Name: "my-service",
+				},
 			},
 			ImageTag:    "v1",
 			TriggeredBy: "user",
@@ -205,13 +226,15 @@ func TestDeploymentService_Submit(t *testing.T) {
 		}
 
 		req := SubmitRequest{
-			ProjectID:     projectID,
-			EnvironmentID: envID,
-			ServiceConfig: domain.ServiceConfig{
-				Name: "my-service",
-				Dependencies: map[string]domain.DependencyDeclaration{
-					"db":    {Type: "postgres", Config: map[string]any{"version": "13"}},
-					"redis": {Type: "redis"},
+			ProjectID:       projectID,
+			EnvironmentName: "staging",
+			OverridableConfig: domain.OverridableConfig{
+				ServiceConfig: domain.ServiceConfig{
+					Name: "my-service",
+					Dependencies: map[string]domain.DependencyDeclaration{
+						"db":    {Type: "postgres", Config: map[string]any{"version": "13"}},
+						"redis": {Type: "redis"},
+					},
 				},
 			},
 			ImageTag:    "v1",

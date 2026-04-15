@@ -72,12 +72,38 @@ func (s *deploymentInfoStore) scanOneDeployment(ctx context.Context, query strin
 }
 
 func (s *deploymentInfoStore) ListByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, service_id, environment_id, image_tag, service_config_snapshot,
-		        status, triggered_by, helm_command_id, created_at, completed_at
-		   FROM deployments WHERE service_id = $1 ORDER BY created_at DESC`,
-		serviceID,
-	)
+	return s.ListByServiceFiltered(ctx, serviceID, nil, nil, 100, "")
+}
+
+func (s *deploymentInfoStore) ListByServiceFiltered(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error) {
+	query := `SELECT id, service_id, environment_id, image_tag, service_config_snapshot,
+	                 status, triggered_by, helm_command_id, created_at, completed_at
+	            FROM deployments WHERE service_id = $1`
+	args := []any{serviceID}
+	argIdx := 2
+
+	if environmentID != nil {
+		query += fmt.Sprintf(" AND environment_id = $%d", argIdx)
+		args = append(args, *environmentID)
+		argIdx++
+	}
+
+	if status != nil {
+		query += fmt.Sprintf(" AND status = $%d", argIdx)
+		args = append(args, *status)
+		argIdx++
+	}
+
+	if cursor != "" {
+		query += fmt.Sprintf(" AND created_at <= $%d", argIdx)
+		args = append(args, cursor)
+		argIdx++
+	}
+
+	query += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d", argIdx)
+	args = append(args, limit+1) // fetch one extra for pagination
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list deployments: %w", err)
 	}

@@ -91,3 +91,14 @@ func (s *EnvironmentStore) Create(ctx context.Context, env *domain.Environment) 
 	}
 	return nil
 }
+
+func (s *EnvironmentStore) Update(ctx context.Context, env *domain.Environment) error {
+	_, err := s.db.ExecContext(ctx,
+		"UPDATE environments SET parent_environment_id = $1, namespace = $2, default_ingress_base_host = $3, cluster_id = $4 WHERE id = $5",
+		env.ParentEnvironmentID, env.Namespace, env.DefaultIngressBaseHost, env.ClusterID, env.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("update environment: %w", err)
+	}
+	return nil
+}

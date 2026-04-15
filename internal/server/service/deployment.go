@@ -22,6 +22,7 @@ type deploymentService struct {
 	depSvc         DependencyService
 	helmGen        helmgen.HelmValuesGenerator
 	tmplRenderer   config.TemplateRenderer
+	resolver       config.ConfigResolver
 	tx             Transactor
 	bus            events.Bus
 }
@@ -33,6 +34,7 @@ func NewDeploymentService(
 	depSvc DependencyService,
 	helmGen helmgen.HelmValuesGenerator,
 	tmplRenderer config.TemplateRenderer,
+	resolver config.ConfigResolver,
 	tx Transactor,
 	bus events.Bus,
 ) DeploymentService {
@@ -43,6 +45,7 @@ func NewDeploymentService(
 		depSvc:         depSvc,
 		helmGen:        helmGen,
 		tmplRenderer:   tmplRenderer,
+		resolver:       resolver,
 		tx:             tx,
 		bus:            bus,
 	}
@@ -54,25 +57,31 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 	// because the handler does not guarantee Validate was called first, and the
 	// data may have changed between the two calls.
 
-	svc, err := s.services.GetByName(ctx, req.ProjectID, req.ServiceConfig.Name)
+	env, err := s.envs.GetByName(ctx, req.ProjectID, req.EnvironmentName)
+	if err != nil {
+		return nil, fmt.Errorf("lookup environment %q: %w", req.EnvironmentName, err)
+	}
+
+	// Resolve environment-specific overrides to produce final ServiceConfig
+	svcConfig, err := s.resolver.Resolve(&req.OverridableConfig, env.Name)
+	if err != nil {
+		return nil, fmt.Errorf("resolve config for environment %q: %w", env.Name, err)
+	}
+
+	svc, err := s.services.GetByName(ctx, req.ProjectID, svcConfig.Name)
 	if err != nil {
 		if !errors.Is(err, domain.ErrNotFound) || !req.CreateIfNotExists {
-			return nil, fmt.Errorf("lookup service %q: %w", req.ServiceConfig.Name, err)
+			return nil, fmt.Errorf("lookup service %q: %w", svcConfig.Name, err)
 		}
 		svc = &domain.Service{
 			ID:        uuid.New(),
 			ProjectID: req.ProjectID,
-			Name:      req.ServiceConfig.Name,
+			Name:      svcConfig.Name,
 			CreatedAt: time.Now(),
 		}
 		if err := s.services.Create(ctx, svc); err != nil {
-			return nil, fmt.Errorf("create service %q: %w", req.ServiceConfig.Name, err)
+			return nil, fmt.Errorf("create service %q: %w", svcConfig.Name, err)
 		}
-	}
-
-	env, err := s.envs.GetByID(ctx, req.EnvironmentID)
-	if err != nil {
-		return nil, fmt.Errorf("lookup environment: %w", err)
 	}
 
 	// --- writes (all in one transaction) ---
@@ -87,7 +96,7 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 			ServiceID:             svc.ID,
 			EnvironmentID:         env.ID,
 			ImageTag:              req.ImageTag,
-			ServiceConfigSnapshot: req.ServiceConfig,
+			ServiceConfigSnapshot: *svcConfig,
 			Status:                domain.DeploymentStatusPending,
 			TriggeredBy:           req.TriggeredBy,
 			CreatedAt:             now,
@@ -209,34 +218,46 @@ func (s *deploymentService) ProvideUserInput(ctx context.Context, deploymentID u
 func (s *deploymentService) Validate(ctx context.Context, req SubmitRequest) (*ValidationResult, error) {
 	result := &ValidationResult{Valid: true}
 
-	_, err := s.services.GetByName(ctx, req.ProjectID, req.ServiceConfig.Name)
+	env, err := s.envs.GetByName(ctx, req.ProjectID, req.EnvironmentName)
+	if err != nil {
+		result.Valid = false
+		result.Errors = append(result.Errors, domain.ValidationError{
+			Component: "environment",
+			Field:     "name",
+			Message:   fmt.Sprintf("environment %q not found", req.EnvironmentName),
+		})
+		// Can't continue without environment - needed to resolve config
+		return result, nil
+	}
+
+	svcConfig, err := s.resolver.Resolve(&req.OverridableConfig, env.Name)
+	if err != nil {
+		result.Valid = false
+		result.Errors = append(result.Errors, domain.ValidationError{
+			Component: "config",
+			Message:   fmt.Sprintf("resolve config: %s", err),
+		})
+		return result, nil
+	}
+
+	_, err = s.services.GetByName(ctx, req.ProjectID, svcConfig.Name)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) && req.CreateIfNotExists {
 			result.Warnings = append(result.Warnings, domain.ValidationWarning{
 				Component: "service",
-				Message:   fmt.Sprintf("service %q will be created", req.ServiceConfig.Name),
+				Message:   fmt.Sprintf("service %q will be created", svcConfig.Name),
 			})
 		} else {
 			result.Valid = false
 			result.Errors = append(result.Errors, domain.ValidationError{
 				Component: "service",
 				Field:     "name",
-				Message:   fmt.Sprintf("service %q not found", req.ServiceConfig.Name),
+				Message:   fmt.Sprintf("service %q not found", svcConfig.Name),
 			})
 		}
 	}
 
-	_, err = s.envs.GetByID(ctx, req.EnvironmentID)
-	if err != nil {
-		result.Valid = false
-		result.Errors = append(result.Errors, domain.ValidationError{
-			Component: "environment",
-			Field:     "id",
-			Message:   "environment not found",
-		})
-	}
-
-	if err := s.depSvc.Validate(ctx, req.ServiceConfig.Dependencies); err != nil {
+	if err := s.depSvc.Validate(ctx, svcConfig.Dependencies); err != nil {
 		result.Valid = false
 		if ve, ok := err.(*domain.ValidationErrors); ok {
 			result.Errors = append(result.Errors, ve.Errors...)
@@ -244,6 +265,35 @@ func (s *deploymentService) Validate(ctx context.Context, req SubmitRequest) (*V
 	}
 
 	return result, nil
+}
+
+func (s *deploymentService) ListByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error) {
+	return s.deploymentInfo.ListByServiceFiltered(ctx, serviceID, environmentID, status, limit, cursor)
+}
+
+func (s *deploymentService) Cancel(ctx context.Context, deploymentID uuid.UUID) error {
+	d, err := s.deploymentInfo.GetByID(ctx, deploymentID)
+	if err != nil {
+		return fmt.Errorf("get deployment: %w", err)
+	}
+
+	// Check if deployment is already in a terminal state
+	if d.Status == domain.DeploymentStatusSucceeded || d.Status == domain.DeploymentStatusFailed {
+		return fmt.Errorf("deployment is already in terminal state: %s: %w", d.Status, domain.ErrInvalidInput)
+	}
+
+	// Update status to failed
+	now := time.Now()
+	if err := s.deploymentInfo.UpdateStatus(ctx, deploymentID, domain.DeploymentStatusFailed, &now); err != nil {
+		return fmt.Errorf("update deployment status: %w", err)
+	}
+
+	// Cancel any queued commands
+	if err := s.deploymentInfo.UpdateCommandsByDeployment(ctx, deploymentID, domain.CommandStatusQueued, domain.CommandStatusCancelled); err != nil {
+		return fmt.Errorf("cancel queued commands: %w", err)
+	}
+
+	return nil
 }
 
 // Start subscribes to every handler->service topic and drives the deployment

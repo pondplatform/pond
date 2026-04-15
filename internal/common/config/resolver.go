@@ -8,7 +8,7 @@ func NewResolver() ConfigResolver {
 	return &resolver{}
 }
 
-func (r *resolver) Resolve(base *OverridableConfig, envName string) (*domain.ServiceConfig, error) {
+func (r *resolver) Resolve(base *domain.OverridableConfig, envName string) (*domain.ServiceConfig, error) {
 	// Start with a copy of the base config.
 	cfg := base.ServiceConfig
 

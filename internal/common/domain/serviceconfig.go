@@ -48,6 +48,29 @@ type ConfigFileSpec struct {
 }
 
 type DependencyDeclaration struct {
-	Type           string         `json:"type"           yaml:"type"`
-	Config         map[string]any `json:"config"         yaml:"config"`
+	Type   string         `json:"type"   yaml:"type"`
+	Config map[string]any `json:"config" yaml:"config"`
+}
+
+// OverridableConfig is the raw form of a pond.yml: a base ServiceConfig
+// plus a map of per-environment overrides.
+type OverridableConfig struct {
+	ServiceConfig `yaml:",inline" json:",inline"`
+	Overrides     map[string]Override `yaml:"overrides" json:"overrides,omitempty"`
+}
+
+type Override struct {
+	Ingress      *IngressOverride              `yaml:"ingress"      json:"ingress,omitempty"`
+	Service      *ServiceOverride              `yaml:"service"      json:"service,omitempty"`
+	Env          map[string]string             `yaml:"env"          json:"env,omitempty"`
+	Dependencies map[string]DependencyDeclaration `yaml:"dependencies" json:"dependencies,omitempty"`
+	Configs      map[string]ConfigFileSpec    `yaml:"configs"      json:"configs,omitempty"`
+}
+
+type IngressOverride struct {
+	Enabled *bool `yaml:"enabled" json:"enabled,omitempty"`
+}
+
+type ServiceOverride struct {
+	Replicas *int32 `yaml:"replicas" json:"replicas,omitempty"`
 }

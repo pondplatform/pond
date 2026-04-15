@@ -13,6 +13,10 @@ type DeploymentService interface {
 	Submit(ctx context.Context, req SubmitRequest) (*domain.Deployment, error)
 	GetStatus(ctx context.Context, deploymentID uuid.UUID) (*domain.Deployment, error)
 	Validate(ctx context.Context, req SubmitRequest) (*ValidationResult, error)
+	// ListByService returns deployments for a service, optionally filtered by environment and status.
+	ListByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
+	// Cancel cancels an in-progress deployment. Returns an error if the deployment is already in a terminal state.
+	Cancel(ctx context.Context, deploymentID uuid.UUID) error
 	// ProvideUserInput updates a dependency config with user-provided input and
 	// publishes a UserInputProvided event to trigger scheduling.
 	ProvideUserInput(ctx context.Context, deploymentID uuid.UUID, depName string, input UserInputRequest) error
@@ -31,8 +35,8 @@ type UserInputRequest struct {
 
 type SubmitRequest struct {
 	ProjectID         uuid.UUID
-	EnvironmentID     uuid.UUID
-	ServiceConfig     domain.ServiceConfig
+	EnvironmentName   string
+	OverridableConfig domain.OverridableConfig
 	ImageTag          string
 	TriggeredBy       string
 	CreateIfNotExists bool
