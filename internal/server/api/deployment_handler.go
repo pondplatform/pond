@@ -59,3 +59,35 @@ func (h *DeploymentHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(d)
 }
+
+func (h *DeploymentHandler) ProvideUserInput(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid deployment id", http.StatusBadRequest)
+		return
+	}
+
+	depName := r.PathValue("name")
+	if depName == "" {
+		http.Error(w, "missing dependency name", http.StatusBadRequest)
+		return
+	}
+
+	var req service.UserInputRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.svc.ProvideUserInput(r.Context(), id, depName, req); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}

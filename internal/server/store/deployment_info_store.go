@@ -271,6 +271,10 @@ func (s *deploymentInfoStore) AppendLog(ctx context.Context, commandID uuid.UUID
 // ── Dependency config operations ─────────────────────────────────────────────
 
 func (s *deploymentInfoStore) CreateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error {
+	providerInputs, err := json.Marshal(cfg.ProviderInputs)
+	if err != nil {
+		return fmt.Errorf("marshal provider inputs: %w", err)
+	}
 	userConfig, err := json.Marshal(cfg.UserConfig)
 	if err != nil {
 		return fmt.Errorf("marshal user config: %w", err)
@@ -281,9 +285,9 @@ func (s *deploymentInfoStore) CreateDepConfig(ctx context.Context, cfg *domain.D
 	}
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO dependency_deployments
-		        (id, deployment_id, dependency_name, dependency_type, managed, user_config, status, command_id, output)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		cfg.ID, cfg.DeploymentId, cfg.DependencyName, cfg.DependencyType, cfg.Managed, userConfig, cfg.Status, cfg.CommandID, output,
+		        (id, deployment_id, dependency_name, dependency_type, managed, provider_inputs, user_config, status, command_id, output)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		cfg.ID, cfg.DeploymentId, cfg.DependencyName, cfg.DependencyType, cfg.Managed, providerInputs, userConfig, cfg.Status, cfg.CommandID, output,
 	)
 	if err != nil {
 		return fmt.Errorf("create dep config: %w", err)
@@ -293,20 +297,26 @@ func (s *deploymentInfoStore) CreateDepConfig(ctx context.Context, cfg *domain.D
 
 func (s *deploymentInfoStore) GetDepConfig(ctx context.Context, deploymentID uuid.UUID, depName string) (*domain.DependencyDeployment, error) {
 	var cfg domain.DependencyDeployment
+	var providerInputs []byte
 	var userConfig []byte
 	var output []byte
 	var completedAt sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, deployment_id, dependency_name, dependency_type, managed, user_config, status, command_id, output, updated_at
+		`SELECT id, deployment_id, dependency_name, dependency_type, managed, provider_inputs, user_config, status, command_id, output, updated_at
 		   FROM dependency_deployments WHERE deployment_id = $1 AND dependency_name = $2`,
 		deploymentID, depName,
 	).Scan(&cfg.ID, &cfg.DeploymentId, &cfg.DependencyName, &cfg.DependencyType, &cfg.Managed,
-		&userConfig, &cfg.Status, &cfg.CommandID, &output, &completedAt)
+		&providerInputs, &userConfig, &cfg.Status, &cfg.CommandID, &output, &completedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("dep config: %w", domain.ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get dep config: %w", err)
+	}
+	if providerInputs != nil {
+		if err := json.Unmarshal(providerInputs, &cfg.ProviderInputs); err != nil {
+			return nil, fmt.Errorf("unmarshal provider inputs: %w", err)
+		}
 	}
 	if userConfig != nil {
 		if err := json.Unmarshal(userConfig, &cfg.UserConfig); err != nil {
@@ -414,4 +424,38 @@ func (s *deploymentInfoStore) GetDepOutputsByDeployment(ctx context.Context, dep
 		}
 	}
 	return outputs, rows.Err()
+}
+
+func (s *deploymentInfoStore) UpdateDepConfigUserInput(ctx context.Context, deploymentID uuid.UUID, depName string, managed bool, providerInputs map[string]any, userConfig map[string]any) error {
+	providerInputsJSON, err := json.Marshal(providerInputs)
+	if err != nil {
+		return fmt.Errorf("marshal provider inputs: %w", err)
+	}
+	userConfigJSON, err := json.Marshal(userConfig)
+	if err != nil {
+		return fmt.Errorf("marshal user config: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE dependency_deployments
+		    SET managed = $1, provider_inputs = $2, user_config = $3, updated_at = NOW()
+		  WHERE deployment_id = $4 AND dependency_name = $5`,
+		managed, providerInputsJSON, userConfigJSON, deploymentID, depName,
+	)
+	if err != nil {
+		return fmt.Errorf("update dep config user input: %w", err)
+	}
+	return nil
+}
+
+func (s *deploymentInfoStore) SetDepConfigCommand(ctx context.Context, deploymentID uuid.UUID, depName string, commandID uuid.UUID) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE dependency_deployments
+		    SET command_id = $1, status = $2, updated_at = NOW()
+		  WHERE deployment_id = $3 AND dependency_name = $4`,
+		commandID, domain.DependencyDeploymentStatusPending, deploymentID, depName,
+	)
+	if err != nil {
+		return fmt.Errorf("set dep config command: %w", err)
+	}
+	return nil
 }

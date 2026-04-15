@@ -71,12 +71,20 @@ type UserInputRequired struct {
 	DependencyName string
 }
 
+// UserInputProvided is published when a user provides input for a dependency
+// that was blocked in awaiting_input status.
+type UserInputProvided struct {
+	DeploymentID   uuid.UUID
+	DependencyName string
+}
+
 const (
 	TopicCommandResults    = "command.results"
 	TopicCommandLogs       = "command.logs"
 	TopicAgentReady        = "agent.ready"
 	TopicCommandStarted    = "command.started"
 	TopicAgentDisconnected = "agent.disconnected"
+	TopicUserInputProvided = "user_input.provided"
 )
 
 // ClusterCommandQueuedTopic returns the per-cluster topic for CommandQueued events.

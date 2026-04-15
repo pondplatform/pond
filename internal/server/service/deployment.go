@@ -108,12 +108,13 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 	// Notify any idle connected agent for this cluster that commands are ready.
 	if len(pendingDeps) > 0 {
 		for _, p := range pendingDeps {
-			if p.Status == domain.DependencyDeploymentStatusAwaitingInput {
+			switch p.Status {
+			case domain.DependencyDeploymentStatusAwaitingInput:
 				s.bus.Publish(ctx, events.ProjectUserInputRequiredTopic(req.ProjectID), events.UserInputRequired{
 					DeploymentId:   d.ID,
 					DependencyName: p.DependencyName,
 				})
-			} else if p.Status == domain.DependencyDeploymentStatusPending {
+			case domain.DependencyDeploymentStatusPending:
 				s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(env.ClusterID), events.CommandQueued{
 					ClusterID:    env.ClusterID,
 					CommandID:    *p.CommandID,
@@ -139,6 +140,30 @@ func (s *deploymentService) GetStatus(ctx context.Context, deploymentID uuid.UUI
 		return nil, fmt.Errorf("get deployment: %w", err)
 	}
 	return d, nil
+}
+
+func (s *deploymentService) ProvideUserInput(ctx context.Context, deploymentID uuid.UUID, depName string, input UserInputRequest) error {
+	// Validate the dependency exists and is in awaiting_input status
+	cfg, err := s.deploymentInfo.GetDepConfig(ctx, deploymentID, depName)
+	if err != nil {
+		return fmt.Errorf("get dep config: %w", err)
+	}
+	if cfg.Status != domain.DependencyDeploymentStatusAwaitingInput {
+		return fmt.Errorf("dependency %q is not awaiting input (status: %s)", depName, cfg.Status)
+	}
+
+	// Update the dependency config with user-provided input
+	if err := s.deploymentInfo.UpdateDepConfigUserInput(ctx, deploymentID, depName, input.Managed, input.ProviderInputs, input.UserConfig); err != nil {
+		return fmt.Errorf("update dep config: %w", err)
+	}
+
+	// Publish UserInputProvided event to trigger scheduling
+	s.bus.Publish(ctx, events.TopicUserInputProvided, events.UserInputProvided{
+		DeploymentID:   deploymentID,
+		DependencyName: depName,
+	})
+
+	return nil
 }
 
 func (s *deploymentService) Validate(ctx context.Context, req SubmitRequest) (*ValidationResult, error) {
@@ -220,6 +245,14 @@ func (s *deploymentService) Start(ctx context.Context) {
 			}
 			s.handleAgentDisconnected(ctx, e)
 		}),
+		s.bus.Subscribe(events.TopicUserInputProvided, func(v any) {
+			e, ok := v.(events.UserInputProvided)
+			if !ok {
+				log.Printf("deployment service: unexpected event type %T on user_input.provided", v)
+				return
+			}
+			s.handleUserInputProvided(ctx, e)
+		}),
 	}
 	<-ctx.Done()
 	for _, u := range unsubs {
@@ -288,6 +321,55 @@ func (s *deploymentService) handleAgentDisconnected(ctx context.Context, e event
 	cmd.UpdatedAt = time.Now()
 	if err := s.deploymentInfo.UpdateCommand(ctx, cmd); err != nil {
 		log.Printf("deployment service: requeue command %s on disconnect: %v", e.InFlightCommandID, err)
+	}
+}
+
+// handleUserInputProvided schedules the dependency after user input has been provided.
+func (s *deploymentService) handleUserInputProvided(ctx context.Context, e events.UserInputProvided) {
+	dep, err := s.deploymentInfo.GetByID(ctx, e.DeploymentID)
+	if err != nil {
+		log.Printf("deployment service: get deployment %s for user_input.provided: %v", e.DeploymentID, err)
+		return
+	}
+	env, err := s.envs.GetByID(ctx, dep.EnvironmentID)
+	if err != nil {
+		log.Printf("deployment service: get environment for deployment %s: %v", e.DeploymentID, err)
+		return
+	}
+
+	var cfg *domain.DependencyDeployment
+	err = s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
+		var schedErr error
+		cfg, schedErr = s.depSvc.ScheduleAfterInput(ctx, tx, dep, env, e.DependencyName)
+		if schedErr != nil {
+			return schedErr
+		}
+
+		// For non-managed deps (already succeeded), check if all deps are complete
+		if cfg.Status == domain.DependencyDeploymentStatusSucceeded {
+			allSucceeded, anyFailed, err := tx.DeploymentInfo.AllDepConfigsComplete(ctx, e.DeploymentID)
+			if err != nil {
+				return fmt.Errorf("check all complete: %w", err)
+			}
+			if anyFailed || !allSucceeded {
+				return nil
+			}
+			return s.enqueueHelm(ctx, tx, dep, env)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("deployment service: schedule after input for %s/%s: %v", e.DeploymentID, e.DependencyName, err)
+		return
+	}
+
+	// For managed deps, publish CommandQueued event
+	if cfg.Status == domain.DependencyDeploymentStatusPending && cfg.CommandID != nil {
+		s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(env.ClusterID), events.CommandQueued{
+			ClusterID:    env.ClusterID,
+			CommandID:    *cfg.CommandID,
+			DeploymentID: e.DeploymentID,
+		})
 	}
 }
 

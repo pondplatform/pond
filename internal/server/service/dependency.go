@@ -143,6 +143,79 @@ func (s *dependencyService) BuildContexts(rawOutputs map[string]json.RawMessage)
 	return contexts, nil
 }
 
+// ScheduleAfterInput processes a dependency after user input is provided.
+// For managed deps, creates tofu.apply command and returns it.
+// For non-managed deps, marks succeeded immediately with user config as outputs.
+func (s *dependencyService) ScheduleAfterInput(ctx context.Context, tx TxRepos, deployment *domain.Deployment, env *domain.Environment, depName string) (*domain.DependencyDeployment, error) {
+	cfg, err := tx.DeploymentInfo.GetDepConfig(ctx, deployment.ID, depName)
+	if err != nil {
+		return nil, fmt.Errorf("get dep config: %w", err)
+	}
+
+	dep := deployment.ServiceConfigSnapshot.Dependencies[depName]
+
+	if !*cfg.Managed {
+		// Non-managed: mark succeeded immediately with user_config as output
+		outputJSON, err := json.Marshal(cfg.UserConfig)
+		if err != nil {
+			return nil, fmt.Errorf("marshal user config as output: %w", err)
+		}
+		if err := tx.DeploymentInfo.MarkDepConfigSucceeded(ctx, deployment.ID, depName, outputJSON); err != nil {
+			return nil, fmt.Errorf("mark dep config succeeded: %w", err)
+		}
+		cfg.Status = domain.DependencyDeploymentStatusSucceeded
+		cfg.Output = outputJSON
+		return cfg, nil
+	}
+
+	// Managed: create tofu.apply command
+	payload, err := json.Marshal(struct {
+		WorkDir   string         `json:"workDir"`
+		StatePath string         `json:"statePath"`
+		Vars      map[string]any `json:"vars"`
+	}{
+		WorkDir:   fmt.Sprintf("providers/%s/terraform.tfstate", dep.Type),
+		StatePath: fmt.Sprintf("states/%s/%s/terraform.tfstate", deployment.ServiceConfigSnapshot.Name, depName),
+		Vars: map[string]any{
+			"service_name":        deployment.ServiceConfigSnapshot.Name,
+			"dependency_name":     depName,
+			"dependency_config":   dep.Config,
+			"provider_user_input": cfg.ProviderInputs,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal tofu payload for %q: %w", depName, err)
+	}
+
+	now := time.Now()
+	cmd := &domain.Command{
+		ID:           uuid.New(),
+		ClusterID:    env.ClusterID,
+		DeploymentID: deployment.ID,
+		Type:         "tofu.apply",
+		Payload:      payload,
+		Status:       domain.CommandStatusQueued,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	if err := tx.DeploymentInfo.CreateCommand(ctx, cmd); err != nil {
+		return nil, fmt.Errorf("create tofu command for dep %q: %w", depName, err)
+	}
+
+	// Update the dep config with the command ID and set status to pending
+	cfg.CommandID = &cmd.ID
+	cfg.Status = domain.DependencyDeploymentStatusPending
+
+	// Note: We need a method to update just the command_id and status
+	// For now, we'll use a direct update approach
+	if err := tx.DeploymentInfo.SetDepConfigCommand(ctx, deployment.ID, depName, cmd.ID); err != nil {
+		return nil, fmt.Errorf("set dep config command: %w", err)
+	}
+
+	return cfg, nil
+}
+
 // Validate checks that all declared dependency types are known.
 func (s *dependencyService) Validate(ctx context.Context, deps map[string]domain.DependencyDeclaration) error {
 	var errs domain.ValidationErrors

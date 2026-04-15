@@ -39,6 +39,13 @@ type DeploymentInfoStore interface {
 	MarkDepConfigFailed(ctx context.Context, deploymentID uuid.UUID, depName string) error
 	AllDepConfigsComplete(ctx context.Context, deploymentID uuid.UUID) (allSucceeded bool, anyFailed bool, err error)
 	GetDepOutputsByDeployment(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error)
+
+	// UpdateDepConfigUserInput updates a dependency config with user-provided input.
+	// Does not change status - that is handled by the service layer after scheduling.
+	UpdateDepConfigUserInput(ctx context.Context, deploymentID uuid.UUID, depName string, managed bool, providerInputs map[string]any, userConfig map[string]any) error
+
+	// SetDepConfigCommand updates the command_id and sets status to pending for a dependency config.
+	SetDepConfigCommand(ctx context.Context, deploymentID uuid.UUID, depName string, commandID uuid.UUID) error
 }
 
 // ServiceRepository manages service persistence.

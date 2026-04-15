@@ -66,12 +66,13 @@ CREATE TABLE dependency_deployments (
     deployment_id UUID NOT NULL REFERENCES deployments(id),
     dependency_name TEXT NOT NULL,
     dependency_type TEXT NOT NULL,
-    managed BOOLEAN NOT NULL DEFAULT false,
+    managed BOOLEAN,  -- NULL while awaiting_input
+    provider_inputs JSONB,
     user_config JSONB,
     status TEXT NOT NULL,
     command_id UUID,
     output JSONB,
-    -- status: queued | dispatched | succeeded | failed | cancelled | timed_out | waiting_for_user_input
+    -- status: awaiting_input | pending | succeeded | failed
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

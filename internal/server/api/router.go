@@ -20,6 +20,7 @@ func NewRouter(
 	// Deployment routes
 	mux.HandleFunc("POST /deployments", deployHandler.Submit)
 	mux.HandleFunc("GET /deployments/{id}", deployHandler.GetStatus)
+	mux.HandleFunc("POST /deployments/{id}/dependencies/{name}/input", deployHandler.ProvideUserInput)
 
 	// Agent WebSocket endpoint — registered before middleware to bypass jsonContentType.
 	mux.HandleFunc("GET /agent/ws", agentHandler.ServeWS)

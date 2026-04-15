@@ -24,14 +24,22 @@ func (m *MockTransactor) RunInTx(ctx context.Context, fn func(ctx context.Contex
 }
 
 type mockDependencyService struct {
-	scheduleCommandsFn func(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error)
-	buildContextsFn    func(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
-	validateFn         func(ctx context.Context, deps map[string]domain.DependencyDeclaration) error
+	scheduleCommandsFn   func(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error)
+	scheduleAfterInputFn func(ctx context.Context, tx TxRepos, deployment *domain.Deployment, env *domain.Environment, depName string) (*domain.DependencyDeployment, error)
+	buildContextsFn      func(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
+	validateFn           func(ctx context.Context, deps map[string]domain.DependencyDeclaration) error
 }
 
 func (m *mockDependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error) {
 	if m.scheduleCommandsFn != nil {
 		return m.scheduleCommandsFn(ctx, tx, service, environment, dep)
+	}
+	return nil, nil
+}
+
+func (m *mockDependencyService) ScheduleAfterInput(ctx context.Context, tx TxRepos, deployment *domain.Deployment, env *domain.Environment, depName string) (*domain.DependencyDeployment, error) {
+	if m.scheduleAfterInputFn != nil {
+		return m.scheduleAfterInputFn(ctx, tx, deployment, env, depName)
 	}
 	return nil, nil
 }
