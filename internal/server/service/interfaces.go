@@ -30,11 +30,12 @@ type UserInputRequest struct {
 }
 
 type SubmitRequest struct {
-	ProjectID     uuid.UUID
-	EnvironmentID uuid.UUID
-	ServiceConfig domain.ServiceConfig
-	ImageTag      string
-	TriggeredBy   string
+	ProjectID         uuid.UUID
+	EnvironmentID     uuid.UUID
+	ServiceConfig     domain.ServiceConfig
+	ImageTag          string
+	TriggeredBy       string
+	CreateIfNotExists bool
 }
 
 type ValidationResult struct {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -55,7 +56,18 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 
 	svc, err := s.services.GetByName(ctx, req.ProjectID, req.ServiceConfig.Name)
 	if err != nil {
-		return nil, fmt.Errorf("lookup service %q: %w", req.ServiceConfig.Name, err)
+		if !errors.Is(err, domain.ErrNotFound) || !req.CreateIfNotExists {
+			return nil, fmt.Errorf("lookup service %q: %w", req.ServiceConfig.Name, err)
+		}
+		svc = &domain.Service{
+			ID:        uuid.New(),
+			ProjectID: req.ProjectID,
+			Name:      req.ServiceConfig.Name,
+			CreatedAt: time.Now(),
+		}
+		if err := s.services.Create(ctx, svc); err != nil {
+			return nil, fmt.Errorf("create service %q: %w", req.ServiceConfig.Name, err)
+		}
 	}
 
 	env, err := s.envs.GetByID(ctx, req.EnvironmentID)
@@ -199,12 +211,19 @@ func (s *deploymentService) Validate(ctx context.Context, req SubmitRequest) (*V
 
 	_, err := s.services.GetByName(ctx, req.ProjectID, req.ServiceConfig.Name)
 	if err != nil {
-		result.Valid = false
-		result.Errors = append(result.Errors, domain.ValidationError{
-			Component: "service",
-			Field:     "name",
-			Message:   fmt.Sprintf("service %q not found", req.ServiceConfig.Name),
-		})
+		if errors.Is(err, domain.ErrNotFound) && req.CreateIfNotExists {
+			result.Warnings = append(result.Warnings, domain.ValidationWarning{
+				Component: "service",
+				Message:   fmt.Sprintf("service %q will be created", req.ServiceConfig.Name),
+			})
+		} else {
+			result.Valid = false
+			result.Errors = append(result.Errors, domain.ValidationError{
+				Component: "service",
+				Field:     "name",
+				Message:   fmt.Sprintf("service %q not found", req.ServiceConfig.Name),
+			})
+		}
 	}
 
 	_, err = s.envs.GetByID(ctx, req.EnvironmentID)
