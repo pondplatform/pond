@@ -108,7 +108,7 @@ func TestAgentHandler_EventFlow(t *testing.T) {
 		if cmd == nil {
 			return
 		}
-		bus.Publish(context.Background(), events.ClusterTopic(ready.ClusterID), events.CommandDispatch{Cmd: cmd})
+		bus.Publish(context.Background(), events.ClusterCommandDispatchTopic(ready.ClusterID), events.CommandDispatch{Cmd: cmd})
 	})
 
 	var (

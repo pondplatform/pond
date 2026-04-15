@@ -106,28 +106,35 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Cluster topic subscriber: the only bridge from the bus into this
-	// connection's goroutine. Never touches handler-local state directly.
-	unsub := h.bus.Subscribe(events.ClusterTopic(cluster.ID), func(v any) {
-		switch e := v.(type) {
-		case events.CommandDispatch:
-			select {
-			case dispatchCh <- e.Cmd:
-			default:
-				// A dispatch is already queued for the main loop to
-				// consume. The service only dispatches in response to
-				// AgentReady (one outstanding credit), so this path
-				// should be unreachable — log if we ever hit it.
-				log.Printf("agent ws: dropped duplicate CommandDispatch for cluster %s", cluster.ID)
-			}
-		case events.CommandQueued:
-			select {
-			case wakeCh <- struct{}{}:
-			default:
-			}
+	// Per-event-type cluster subscribers: the only bridge from the bus into
+	// this connection's goroutine. Never touch handler-local state directly.
+	unsubDispatch := h.bus.Subscribe(events.ClusterCommandDispatchTopic(cluster.ID), func(v any) {
+		e, ok := v.(events.CommandDispatch)
+		if !ok {
+			return
+		}
+		select {
+		case dispatchCh <- e.Cmd:
+		default:
+			// A dispatch is already queued for the main loop to
+			// consume. The service only dispatches in response to
+			// AgentReady (one outstanding credit), so this path
+			// should be unreachable — log if we ever hit it.
+			log.Printf("agent ws: dropped duplicate CommandDispatch for cluster %s", cluster.ID)
 		}
 	})
-	defer unsub()
+	defer unsubDispatch()
+
+	unsubQueued := h.bus.Subscribe(events.ClusterCommandQueuedTopic(cluster.ID), func(v any) {
+		if _, ok := v.(events.CommandQueued); !ok {
+			return
+		}
+		select {
+		case wakeCh <- struct{}{}:
+		default:
+		}
+	})
+	defer unsubQueued()
 
 	// Connection state — only mutated on the main goroutine below.
 	var activeCommandID uuid.UUID

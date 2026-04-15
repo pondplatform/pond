@@ -13,8 +13,8 @@ type DeploymentService interface {
 	Submit(ctx context.Context, req SubmitRequest) (*domain.Deployment, error)
 	GetStatus(ctx context.Context, deploymentID uuid.UUID) (*domain.Deployment, error)
 	Validate(ctx context.Context, req SubmitRequest) (*ValidationResult, error)
-	// Start registers subscriptions on the event bus (agent_ready,
-	// command_started, command_results, command_logs, agent_disconnected)
+	// Start registers subscriptions on the event bus (agent.ready,
+	// command.started, command.results, command.logs, agent.disconnected)
 	// and drives the deployment state machine in response. Blocks until ctx
 	// is cancelled.
 	Start(ctx context.Context)
@@ -47,14 +47,14 @@ type Transactor interface {
 // PendingDep groups a queued tofu.apply command with its dependency config row.
 type PendingDep struct {
 	Cmd    *domain.Command
-	DepCfg *domain.DeploymentDependencyConfig
+	DepCfg *domain.DependencyDeployment
 }
 
 // DependencyService handles dependency command scheduling and context resolution.
 type DependencyService interface {
 	// ScheduleCommands queues tofu.apply commands for all managed deps in the
 	// deployment and creates DependencyDeploymentRequest rows inside tx.
-	ScheduleCommands(ctx context.Context, tx TxRepos, dep *domain.Deployment, clusterID uuid.UUID) ([]PendingDep, error)
+	ScheduleCommands(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error)
 
 	// BuildContexts unmarshals raw dependency outputs into a name→values map for
 	// helm value generation. rawOutputs comes from GetDepOutputsByDeployment and

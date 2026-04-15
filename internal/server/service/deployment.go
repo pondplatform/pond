@@ -68,7 +68,7 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 	// --- writes (all in one transaction) ---
 
 	var d *domain.Deployment
-	var pendingDeps []PendingDep
+	var pendingDeps []domain.DependencyDeployment
 
 	err = s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
 		now := time.Now()
@@ -88,7 +88,7 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 		}
 
 		var schedErr error
-		pendingDeps, schedErr = s.depSvc.ScheduleCommands(ctx, tx, d, env.ClusterID)
+		pendingDeps, schedErr = s.depSvc.ScheduleCommands(ctx, tx, svc, env, d)
 		if schedErr != nil {
 			return schedErr
 		}
@@ -108,14 +108,22 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 	// Notify any idle connected agent for this cluster that commands are ready.
 	if len(pendingDeps) > 0 {
 		for _, p := range pendingDeps {
-			s.bus.Publish(ctx, events.ClusterTopic(env.ClusterID), events.CommandQueued{
-				ClusterID:    env.ClusterID,
-				CommandID:    p.Cmd.ID,
-				DeploymentID: d.ID,
-			})
+			if p.Status == domain.DependencyDeploymentStatusAwaitingInput {
+				s.bus.Publish(ctx, events.ProjectUserInputRequiredTopic(req.ProjectID), events.UserInputRequired{
+					DeploymentId:   d.ID,
+					DependencyName: p.DependencyName,
+				})
+			} else if p.Status == domain.DependencyDeploymentStatusPending {
+				s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(env.ClusterID), events.CommandQueued{
+					ClusterID:    env.ClusterID,
+					CommandID:    *p.CommandID,
+					DeploymentID: d.ID,
+				})
+			}
+
 		}
 	} else {
-		s.bus.Publish(ctx, events.ClusterTopic(env.ClusterID), events.CommandQueued{
+		s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(env.ClusterID), events.CommandQueued{
 			ClusterID:    env.ClusterID,
 			CommandID:    *d.HelmCommandID,
 			DeploymentID: d.ID,
@@ -236,7 +244,7 @@ func (s *deploymentService) handleAgentReady(ctx context.Context, e events.Agent
 		log.Printf("deployment service: update command %s to dispatched: %v", cmd.ID, err)
 		return
 	}
-	s.bus.Publish(ctx, events.ClusterTopic(e.ClusterID), events.CommandDispatch{Cmd: cmd})
+	s.bus.Publish(ctx, events.ClusterCommandDispatchTopic(e.ClusterID), events.CommandDispatch{Cmd: cmd})
 }
 
 // handleCommandStarted transitions a deployment from pending → running when
@@ -339,7 +347,7 @@ func (s *deploymentService) advance(ctx context.Context, tx TxRepos, cmd *domain
 	}
 }
 
-func (s *deploymentService) advanceDependency(ctx context.Context, tx TxRepos, deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig, result events.CommandResult) error {
+func (s *deploymentService) advanceDependency(ctx context.Context, tx TxRepos, deploymentID uuid.UUID, cfg *domain.DependencyDeployment, result events.CommandResult) error {
 	if !result.Success {
 		if err := tx.DeploymentInfo.MarkDepConfigFailed(ctx, deploymentID, cfg.DependencyName); err != nil {
 			return fmt.Errorf("mark dep config failed: %w", err)

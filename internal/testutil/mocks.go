@@ -34,11 +34,12 @@ type MockDeploymentInfoStore struct {
 	// Command log operations
 	AppendLogFn func(ctx context.Context, commandID uuid.UUID, line string) error
 	// Dependency config operations
-	CreateDepConfigFn          func(ctx context.Context, deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig) error
-	GetDepConfigByCommandIDFn  func(ctx context.Context, commandID uuid.UUID) (uuid.UUID, *domain.DeploymentDependencyConfig, error)
-	MarkDepConfigSucceededFn   func(ctx context.Context, deploymentID uuid.UUID, depName string, output json.RawMessage) error
-	MarkDepConfigFailedFn      func(ctx context.Context, deploymentID uuid.UUID, depName string) error
-	AllDepConfigsCompleteFn    func(ctx context.Context, deploymentID uuid.UUID) (bool, bool, error)
+	CreateDepConfigFn           func(ctx context.Context, cfg *domain.DependencyDeployment) error
+	GetDepConfigFn              func(ctx context.Context, deploymentID uuid.UUID, depName string) (*domain.DependencyDeployment, error)
+	GetDepConfigByCommandIDFn   func(ctx context.Context, commandID uuid.UUID) (uuid.UUID, *domain.DependencyDeployment, error)
+	MarkDepConfigSucceededFn    func(ctx context.Context, deploymentID uuid.UUID, depName string, output json.RawMessage) error
+	MarkDepConfigFailedFn       func(ctx context.Context, deploymentID uuid.UUID, depName string) error
+	AllDepConfigsCompleteFn     func(ctx context.Context, deploymentID uuid.UUID) (bool, bool, error)
 	GetDepOutputsByDeploymentFn func(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error)
 }
 
@@ -114,13 +115,19 @@ func (m *MockDeploymentInfoStore) AppendLog(ctx context.Context, commandID uuid.
 	}
 	return nil
 }
-func (m *MockDeploymentInfoStore) CreateDepConfig(ctx context.Context, deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig) error {
+func (m *MockDeploymentInfoStore) CreateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error {
 	if m.CreateDepConfigFn != nil {
-		return m.CreateDepConfigFn(ctx, deploymentID, cfg)
+		return m.CreateDepConfigFn(ctx, cfg)
 	}
 	return nil
 }
-func (m *MockDeploymentInfoStore) GetDepConfigByCommandID(ctx context.Context, commandID uuid.UUID) (uuid.UUID, *domain.DeploymentDependencyConfig, error) {
+func (m *MockDeploymentInfoStore) GetDepConfig(ctx context.Context, deploymentID uuid.UUID, depName string) (*domain.DependencyDeployment, error) {
+	if m.GetDepConfigFn != nil {
+		return m.GetDepConfigFn(ctx, deploymentID, depName)
+	}
+	return nil, nil
+}
+func (m *MockDeploymentInfoStore) GetDepConfigByCommandID(ctx context.Context, commandID uuid.UUID) (uuid.UUID, *domain.DependencyDeployment, error) {
 	if m.GetDepConfigByCommandIDFn != nil {
 		return m.GetDepConfigByCommandIDFn(ctx, commandID)
 	}

@@ -54,14 +54,13 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 	deploymentInfoStore := store.NewDeploymentInfoStore(db)
 	envStore := store.NewEnvironmentStore(db)
 	serviceStore := store.NewServiceStore(db)
-	depConfigStore := store.NewDependencyConfigStore(db)
 	clusterStore := store.NewClusterStore(db)
 
 	tx := newTestTransactor(db)
 	specRegistry := dependency.NewSpecRegistry()
 	bus := events.NewMemoryBus()
 
-	depSvc := service.NewDependencyService(depConfigStore, specRegistry)
+	depSvc := service.NewDependencyService(specRegistry)
 	helmGenerator := helmgen.NewGenerator()
 	tmplRenderer := config.NewTemplateRenderer()
 	deploySvc := service.NewDeploymentService(
@@ -80,7 +79,7 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 
 	// Create the agent handler and router
 	agentHandler := api.NewAgentHandler(clusterStore, bus)
-	router := api.NewRouter(deploySvc, serviceStore, envStore, depConfigStore, agentHandler)
+	router := api.NewRouter(deploySvc, serviceStore, envStore, agentHandler)
 
 	// Start the test server
 	server := httptest.NewServer(router)

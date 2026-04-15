@@ -270,7 +270,7 @@ func (s *deploymentInfoStore) AppendLog(ctx context.Context, commandID uuid.UUID
 
 // ── Dependency config operations ─────────────────────────────────────────────
 
-func (s *deploymentInfoStore) CreateDepConfig(ctx context.Context, deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig) error {
+func (s *deploymentInfoStore) CreateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error {
 	userConfig, err := json.Marshal(cfg.UserConfig)
 	if err != nil {
 		return fmt.Errorf("marshal user config: %w", err)
@@ -283,7 +283,7 @@ func (s *deploymentInfoStore) CreateDepConfig(ctx context.Context, deploymentID 
 		`INSERT INTO dependency_deployments
 		        (id, deployment_id, dependency_name, dependency_type, managed, user_config, status, command_id, output)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		cfg.ID, deploymentID, cfg.DependencyName, cfg.DependencyType, cfg.Managed, userConfig, cfg.Status, cfg.CommandID, output,
+		cfg.ID, cfg.DeploymentId, cfg.DependencyName, cfg.DependencyType, cfg.Managed, userConfig, cfg.Status, cfg.CommandID, output,
 	)
 	if err != nil {
 		return fmt.Errorf("create dep config: %w", err)
@@ -291,8 +291,39 @@ func (s *deploymentInfoStore) CreateDepConfig(ctx context.Context, deploymentID 
 	return nil
 }
 
-func (s *deploymentInfoStore) GetDepConfigByCommandID(ctx context.Context, commandID uuid.UUID) (uuid.UUID, *domain.DeploymentDependencyConfig, error) {
-	var cfg domain.DeploymentDependencyConfig
+func (s *deploymentInfoStore) GetDepConfig(ctx context.Context, deploymentID uuid.UUID, depName string) (*domain.DependencyDeployment, error) {
+	var cfg domain.DependencyDeployment
+	var userConfig []byte
+	var output []byte
+	var completedAt sql.NullTime
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, deployment_id, dependency_name, dependency_type, managed, user_config, status, command_id, output, updated_at
+		   FROM dependency_deployments WHERE deployment_id = $1 AND dependency_name = $2`,
+		deploymentID, depName,
+	).Scan(&cfg.ID, &cfg.DeploymentId, &cfg.DependencyName, &cfg.DependencyType, &cfg.Managed,
+		&userConfig, &cfg.Status, &cfg.CommandID, &output, &completedAt)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("dep config: %w", domain.ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get dep config: %w", err)
+	}
+	if userConfig != nil {
+		if err := json.Unmarshal(userConfig, &cfg.UserConfig); err != nil {
+			return nil, fmt.Errorf("unmarshal user config: %w", err)
+		}
+	}
+	if output != nil {
+		cfg.Output = json.RawMessage(output)
+	}
+	if completedAt.Valid {
+		cfg.CompletedAt = &completedAt.Time
+	}
+	return &cfg, nil
+}
+
+func (s *deploymentInfoStore) GetDepConfigByCommandID(ctx context.Context, commandID uuid.UUID) (uuid.UUID, *domain.DependencyDeployment, error) {
+	var cfg domain.DependencyDeployment
 	var deploymentID uuid.UUID
 	var output []byte
 	var completedAt sql.NullTime
@@ -321,7 +352,7 @@ func (s *deploymentInfoStore) MarkDepConfigSucceeded(ctx context.Context, deploy
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE dependency_deployments SET status = $1, output = $2, updated_at = NOW()
 		  WHERE deployment_id = $3 AND dependency_name = $4`,
-		domain.DependencyRequestStatusSucceeded, []byte(output), deploymentID, depName,
+		domain.DependencyDeploymentStatusSucceeded, []byte(output), deploymentID, depName,
 	)
 	if err != nil {
 		return fmt.Errorf("mark dep config succeeded: %w", err)
@@ -333,7 +364,7 @@ func (s *deploymentInfoStore) MarkDepConfigFailed(ctx context.Context, deploymen
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE dependency_deployments SET status = $1, updated_at = NOW()
 		  WHERE deployment_id = $2 AND dependency_name = $3`,
-		domain.DependencyRequestStatusFailed, deploymentID, depName,
+		domain.DependencyDeploymentStatusFailed, deploymentID, depName,
 	)
 	if err != nil {
 		return fmt.Errorf("mark dep config failed: %w", err)
@@ -351,8 +382,8 @@ func (s *deploymentInfoStore) AllDepConfigsComplete(ctx context.Context, deploym
 		   FROM dependency_deployments
 		  WHERE deployment_id = $1 AND managed = true`,
 		deploymentID,
-		domain.DependencyRequestStatusSucceeded,
-		domain.DependencyRequestStatusFailed,
+		domain.DependencyDeploymentStatusSucceeded,
+		domain.DependencyDeploymentStatusFailed,
 	).Scan(&total, &succeeded, &failed)
 	if err != nil {
 		return false, false, fmt.Errorf("count dep config statuses: %w", err)
@@ -364,7 +395,7 @@ func (s *deploymentInfoStore) GetDepOutputsByDeployment(ctx context.Context, dep
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT dependency_name, output FROM dependency_deployments
 		  WHERE deployment_id = $1 AND status = $2`,
-		deploymentID, domain.DependencyRequestStatusSucceeded,
+		deploymentID, domain.DependencyDeploymentStatusSucceeded,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get dep outputs: %w", err)

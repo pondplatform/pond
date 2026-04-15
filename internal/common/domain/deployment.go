@@ -10,10 +10,10 @@ import (
 type DeploymentStatus string
 
 const (
-	DeploymentStatusPending       DeploymentStatus = "pending"
-	DeploymentStatusRunning       DeploymentStatus = "running"
-	DeploymentStatusSucceeded     DeploymentStatus = "succeeded"
-	DeploymentStatusFailed        DeploymentStatus = "failed"
+	DeploymentStatusPending   DeploymentStatus = "pending"
+	DeploymentStatusRunning   DeploymentStatus = "running"
+	DeploymentStatusSucceeded DeploymentStatus = "succeeded"
+	DeploymentStatusFailed    DeploymentStatus = "failed"
 )
 
 type Deployment struct {
@@ -22,7 +22,7 @@ type Deployment struct {
 	EnvironmentID         uuid.UUID
 	ImageTag              string
 	ServiceConfigSnapshot ServiceConfig
-	DependencyConfigs     map[string]DeploymentDependencyConfig
+	DependencyConfigs     map[string]DependencyDeployment
 	Status                DeploymentStatus
 	TriggeredBy           string
 	HelmCommandID         *uuid.UUID
@@ -30,8 +30,9 @@ type Deployment struct {
 	CompletedAt           *time.Time
 }
 
-type DeploymentDependencyConfig struct {
+type DependencyDeployment struct {
 	ID             uuid.UUID
+	DeploymentId   uuid.UUID
 	DependencyName string
 	DependencyType string
 	Managed        *bool
@@ -40,20 +41,18 @@ type DeploymentDependencyConfig struct {
 	Outputs        map[string]any
 
 	// Execution state
-	Status      DependencyRequestStatus
+	Status      DependencyDeploymentStatus
 	CommandID   *uuid.UUID
 	Output      json.RawMessage
 	CompletedAt *time.Time
 }
 
-// DependencyRequestStatus represents the lifecycle of a tofu.apply command.
-type DependencyRequestStatus string
+// DependencyDeploymentStatus represents the lifecycle of a tofu.apply command.
+type DependencyDeploymentStatus string
 
 const (
-	DependencyRequestAwaitingInput DependencyRequestStatus = "awaiting_input"
-	DependencyRequestStatusPending   DependencyRequestStatus = "pending"
-	DependencyRequestStatusSucceeded DependencyRequestStatus = "succeeded"
-	DependencyRequestStatusFailed    DependencyRequestStatus = "failed"
+	DependencyDeploymentStatusAwaitingInput DependencyDeploymentStatus = "awaiting_input"
+	DependencyDeploymentStatusPending       DependencyDeploymentStatus = "pending"
+	DependencyDeploymentStatusSucceeded     DependencyDeploymentStatus = "succeeded"
+	DependencyDeploymentStatusFailed        DependencyDeploymentStatus = "failed"
 )
-
-

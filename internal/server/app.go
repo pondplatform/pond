@@ -54,7 +54,7 @@ func Run(ctx context.Context, cfg Config) error {
 	tmplRenderer := config.NewTemplateRenderer()
 	deploySvc := service.NewDeploymentService(deploymentInfoStore, serviceStore, envStore, depSvc, helmGenerator, tmplRenderer, tx, bus)
 
-	// Start the deployment service event loop (subscribes to command_results topic).
+	// Start the deployment service event loop (subscribes to command.results topic).
 	go deploySvc.Start(ctx)
 
 	// Agent handler

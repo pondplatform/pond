@@ -7,9 +7,9 @@ import (
 	"github.com/pondplatform/pond/internal/common/domain"
 )
 
-// CommandQueued is published to the per-cluster topic after a command is
-// inserted into the commands table with status=queued. The agent handler
-// subscribes to this topic to dispatch commands to connected agents.
+// CommandQueued is published to the per-cluster command.queued topic after a
+// command is inserted into the commands table with status=queued. The agent
+// handler subscribes to this topic to wake an idle connection.
 type CommandQueued struct {
 	ClusterID    uuid.UUID
 	CommandID    uuid.UUID
@@ -34,9 +34,9 @@ type CommandLog struct {
 	Line      string
 }
 
-// CommandDispatch is published to ClusterTopic(clusterID) by the deployment
-// service when a specific command should be forwarded to a connected agent.
-// The agent handler subscribes and writes it to the WebSocket.
+// CommandDispatch is published to ClusterCommandDispatchTopic(clusterID) by
+// the deployment service when a specific command should be forwarded to a
+// connected agent. The agent handler subscribes and writes it to the WebSocket.
 type CommandDispatch struct {
 	Cmd *domain.Command
 }
@@ -64,24 +64,32 @@ type AgentDisconnected struct {
 	InFlightCommandID uuid.UUID
 }
 
-
-// CommandLog is published to TopicCommandLogs when the agent streams a log
-// line. Consumers may use it for real-time log tailing.
+// UserInputRequired is published to ProjectUserInputRequiredTopic(projectID)
+// when a dependency is blocked waiting for user-provided input.
 type UserInputRequired struct {
-	DeploymentId uuid.UUID
-	DependencyName      string
+	DeploymentId   uuid.UUID
+	DependencyName string
 }
 
 const (
-	TopicCommandResults    = "command_results"
-	TopicCommandLogs       = "command_logs"
-	TopicAgentReady        = "agent_ready"
-	TopicCommandStarted    = "command_started"
-	TopicAgentDisconnected = "agent_disconnected"
-	TopicUserInputRequired = "user_input_required"
+	TopicCommandResults    = "command.results"
+	TopicCommandLogs       = "command.logs"
+	TopicAgentReady        = "agent.ready"
+	TopicCommandStarted    = "command.started"
+	TopicAgentDisconnected = "agent.disconnected"
 )
 
-// ClusterTopic returns the per-cluster notification topic string.
-func ClusterTopic(clusterID uuid.UUID) string {
-	return "cluster/" + clusterID.String()
+// ClusterCommandQueuedTopic returns the per-cluster topic for CommandQueued events.
+func ClusterCommandQueuedTopic(clusterID uuid.UUID) string {
+	return "cluster." + clusterID.String() + ".command.queued"
+}
+
+// ClusterCommandDispatchTopic returns the per-cluster topic for CommandDispatch events.
+func ClusterCommandDispatchTopic(clusterID uuid.UUID) string {
+	return "cluster." + clusterID.String() + ".command.dispatch"
+}
+
+// ProjectUserInputRequiredTopic returns the per-project topic for UserInputRequired events.
+func ProjectUserInputRequiredTopic(projectID uuid.UUID) string {
+	return "project." + projectID.String() + ".user_input.required"
 }

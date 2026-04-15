@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/common/domain"
 	"github.com/pondplatform/pond/internal/server/dependency"
-	"github.com/pondplatform/pond/internal/server/events"
 )
 
 type dependencyService struct {
@@ -25,14 +24,14 @@ func NewDependencyService(specs dependency.SpecRegistry) DependencyService {
 // corresponding dependency_deployments rows — all within the provided transaction.
 // Non-managed deps are also recorded with status=succeeded and output=user_config
 // so that GetDepOutputsByDeployment returns all dep outputs uniformly.
-func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, service *domain.Service,  environment *domain.Environment, dep *domain.Deployment) ([]domain.DeploymentDependencyConfig, error) {
-	var pending []domain.DeploymentDependencyConfig
+func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error) {
+	var pending []domain.DependencyDeployment
 
 	for depName, _ := range dep.ServiceConfigSnapshot.Dependencies {
-		dependency, err := s.scheduleDependency(ctx, tx, service,environment, dep, depName)
+		dependency, err := s.scheduleDependency(ctx, tx, service, environment, dep, depName)
 		if err != nil {
-			return  nil, err
-		} else if dependency!= nil{
+			return nil, err
+		} else if dependency != nil {
 
 		}
 	}
@@ -40,42 +39,43 @@ func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, se
 	return pending, nil
 }
 
-func (s *dependencyService) scheduleDependency(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, deployment *domain.Deployment, dependencyName string) (*domain.DeploymentDependencyConfig, error) {
-	var previousConfig *domain.DeploymentDependencyConfig = nil
+func (s *dependencyService) scheduleDependency(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, deployment *domain.Deployment, dependencyName string) (*domain.DependencyDeployment, error) {
+	var previousConfig *domain.DependencyDeployment = nil
 	var err error
 	if service.CurrentDeploymentID != nil {
 		previousConfig, err = tx.DeploymentInfo.GetDepConfig(ctx, *service.CurrentDeploymentID, dependencyName)
-		if err!= nil {
+		if err != nil {
 			return nil, err
 		}
 	}
 
-
 	dep := deployment.ServiceConfigSnapshot.Dependencies[dependencyName]
-	var cfg domain.DeploymentDependencyConfig
+	var cfg domain.DependencyDeployment
 	if previousConfig == nil {
-		cfg = domain.DeploymentDependencyConfig {
+		cfg = domain.DependencyDeployment{
 			ID:             uuid.New(),
+			DeploymentId:   deployment.ID,
 			DependencyName: dependencyName,
 			DependencyType: dep.Type,
 			Managed:        nil,
 			ProviderInputs: map[string]any{},
 			UserConfig:     map[string]any{},
 			Outputs:        map[string]any{},
-			Status:         domain.DependencyRequestAwaitingInput,
+			Status:         domain.DependencyDeploymentStatusAwaitingInput,
 			CommandID:      nil,
 			Output:         nil,
 			CompletedAt:    nil,
 		}
 
 	} else if !*previousConfig.Managed {
-		cfg = domain.DeploymentDependencyConfig{
+		cfg = domain.DependencyDeployment{
 			ID:             uuid.New(),
+			DeploymentId:   deployment.ID,
 			DependencyName: dependencyName,
 			DependencyType: dep.Type,
 			Managed:        previousConfig.Managed,
 			UserConfig:     previousConfig.UserConfig,
-			Status:         domain.DependencyRequestStatusPending,
+			Status:         domain.DependencyDeploymentStatusPending,
 			CommandID:      nil,
 		}
 	} else {
@@ -109,13 +109,14 @@ func (s *dependencyService) scheduleDependency(ctx context.Context, tx TxRepos, 
 			UpdatedAt:    now,
 		}
 		managed := true
-		cfg = domain.DeploymentDependencyConfig{
+		cfg = domain.DependencyDeployment{
 			ID:             uuid.New(),
+			DeploymentId:   deployment.ID,
 			DependencyName: dependencyName,
 			DependencyType: dep.Type,
 			Managed:        &managed,
 			UserConfig:     previousConfig.UserConfig,
-			Status:         domain.DependencyRequestStatusPending,
+			Status:         domain.DependencyDeploymentStatusPending,
 			CommandID:      &cmd.ID,
 		}
 

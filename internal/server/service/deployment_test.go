@@ -24,14 +24,14 @@ func (m *MockTransactor) RunInTx(ctx context.Context, fn func(ctx context.Contex
 }
 
 type mockDependencyService struct {
-	scheduleCommandsFn func(ctx context.Context, tx TxRepos, dep *domain.Deployment, clusterID uuid.UUID) ([]PendingDep, error)
+	scheduleCommandsFn func(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error)
 	buildContextsFn    func(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
 	validateFn         func(ctx context.Context, deps map[string]domain.DependencyDeclaration) error
 }
 
-func (m *mockDependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, dep *domain.Deployment, clusterID uuid.UUID) ([]PendingDep, error) {
+func (m *mockDependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error) {
 	if m.scheduleCommandsFn != nil {
-		return m.scheduleCommandsFn(ctx, tx, dep, clusterID)
+		return m.scheduleCommandsFn(ctx, tx, service, environment, dep)
 	}
 	return nil, nil
 }
@@ -152,39 +152,40 @@ func TestDeploymentService_Submit(t *testing.T) {
 			return nil
 		}
 
-		var createdDepCfgs []*domain.DeploymentDependencyConfig
-		infoStore.CreateDepConfigFn = func(ctx context.Context, deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig) error {
+		var createdDepCfgs []*domain.DependencyDeployment
+		infoStore.CreateDepConfigFn = func(ctx context.Context, cfg *domain.DependencyDeployment) error {
 			createdDepCfgs = append(createdDepCfgs, cfg)
 			return nil
 		}
 
 		// ScheduleCommands creates the tofu command and dep config inside the tx.
-		depSvc.scheduleCommandsFn = func(ctx context.Context, tx TxRepos, dep *domain.Deployment, clusterID uuid.UUID) ([]PendingDep, error) {
+		depSvc.scheduleCommandsFn = func(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error) {
 			now := time.Now()
+			managed := true
 			cmd := &domain.Command{
 				ID:           uuid.New(),
-				ClusterID:    clusterID,
+				ClusterID:    environment.ClusterID,
 				DeploymentID: dep.ID,
 				Type:         "tofu.apply",
 				Status:       domain.CommandStatusQueued,
 				CreatedAt:    now,
 				UpdatedAt:    now,
 			}
-			depCfg := &domain.DeploymentDependencyConfig{
+			depCfg := domain.DependencyDeployment{
 				ID:             uuid.New(),
 				DependencyName: "db",
 				DependencyType: "postgres",
-				Managed:        true,
-				Status:         domain.DependencyRequestStatusPending,
+				Managed:        &managed,
+				Status:         domain.DependencyDeploymentStatusPending,
 				CommandID:      &cmd.ID,
 			}
 			if err := tx.DeploymentInfo.CreateCommand(ctx, cmd); err != nil {
 				return nil, err
 			}
-			if err := tx.DeploymentInfo.CreateDepConfig(ctx, dep.ID, depCfg); err != nil {
+			if err := tx.DeploymentInfo.CreateDepConfig(ctx, &depCfg); err != nil {
 				return nil, err
 			}
-			return []PendingDep{{Cmd: cmd, DepCfg: depCfg}}, nil
+			return []domain.DependencyDeployment{depCfg}, nil
 		}
 
 		req := SubmitRequest{

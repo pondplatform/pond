@@ -30,11 +30,11 @@ type DeploymentInfoStore interface {
 	AppendLog(ctx context.Context, commandID uuid.UUID, line string) error
 
 	// Dependency config operations (dependency_deployments table)
-	CreateDepConfig(ctx context.Context, cfg *domain.DeploymentDependencyConfig) error
-	GetDepConfig(ctx context.Context, deploymentID uuid.UUID, depName string) (*domain.DeploymentDependencyConfig, error)
+	CreateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error
+	GetDepConfig(ctx context.Context, deploymentID uuid.UUID, depName string) (*domain.DependencyDeployment, error)
 	// GetDepConfigByCommandID returns the deployment ID and dep config for the given
 	// command. Returns (uuid.Nil, nil, nil) when not found.
-	GetDepConfigByCommandID(ctx context.Context, commandID uuid.UUID) (deploymentID uuid.UUID, cfg *domain.DeploymentDependencyConfig, err error)
+	GetDepConfigByCommandID(ctx context.Context, commandID uuid.UUID) (deploymentID uuid.UUID, cfg *domain.DependencyDeployment, err error)
 	MarkDepConfigSucceeded(ctx context.Context, deploymentID uuid.UUID, depName string, output json.RawMessage) error
 	MarkDepConfigFailed(ctx context.Context, deploymentID uuid.UUID, depName string) error
 	AllDepConfigsComplete(ctx context.Context, deploymentID uuid.UUID) (allSucceeded bool, anyFailed bool, err error)
@@ -81,4 +81,3 @@ type ClusterRepository interface {
 	UpdateLastSeen(ctx context.Context, id uuid.UUID, t time.Time) error
 	GetByTokenHash(ctx context.Context, tokenHash string) (*domain.Cluster, error)
 }
-

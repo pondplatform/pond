@@ -60,18 +60,6 @@ CREATE TABLE deployments (
     completed_at TIMESTAMPTZ
 );
 
-CREATE TABLE dependency_configs (
-    id UUID PRIMARY KEY,
-    service_id UUID NOT NULL REFERENCES services(id),
-    environment_id UUID NOT NULL REFERENCES environments(id),
-    dependency_name TEXT NOT NULL,
-    dependency_type TEXT NOT NULL,
-    managed BOOLEAN NOT NULL DEFAULT false,
-    provider_inputs JSONB,
-    user_config JSONB,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(service_id, environment_id, dependency_name)
-);
 
 CREATE TABLE dependency_deployments (
     id UUID PRIMARY KEY,
