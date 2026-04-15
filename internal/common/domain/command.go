@@ -18,6 +18,12 @@ const (
 	CommandStatusTimedOut   CommandStatus = "timed_out"
 )
 
+// Command types
+const (
+	CommandTypeTofuApply   = "tofu.apply"
+	CommandTypeHelmUpgrade = "helm.upgrade"
+)
+
 type Command struct {
 	ID           uuid.UUID
 	ClusterID    uuid.UUID

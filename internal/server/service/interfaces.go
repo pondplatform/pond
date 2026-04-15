@@ -70,6 +70,10 @@ type DependencyService interface {
 	// For non-managed deps, marks succeeded immediately with user config as outputs.
 	ScheduleAfterInput(ctx context.Context, tx TxRepos, deployment *domain.Deployment, env *domain.Environment, depName string) (*domain.DependencyDeployment, error)
 
+	// AdvanceOnResult handles a tofu.apply result: marks the dep succeeded/failed,
+	// cancels sibling commands on failure, and returns whether all deps are now complete.
+	AdvanceOnResult(ctx context.Context, tx TxRepos, deploymentID uuid.UUID, cfg *domain.DependencyDeployment, success bool, output json.RawMessage) (allComplete bool, err error)
+
 	// BuildContexts unmarshals raw dependency outputs into a name→values map for
 	// helm value generation. rawOutputs comes from GetDepOutputsByDeployment and
 	// includes both managed (tofu) and non-managed (user_config) deps.

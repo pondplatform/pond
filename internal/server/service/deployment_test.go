@@ -26,6 +26,7 @@ func (m *MockTransactor) RunInTx(ctx context.Context, fn func(ctx context.Contex
 type mockDependencyService struct {
 	scheduleCommandsFn   func(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error)
 	scheduleAfterInputFn func(ctx context.Context, tx TxRepos, deployment *domain.Deployment, env *domain.Environment, depName string) (*domain.DependencyDeployment, error)
+	advanceOnResultFn    func(ctx context.Context, tx TxRepos, deploymentID uuid.UUID, cfg *domain.DependencyDeployment, success bool, output json.RawMessage) (bool, error)
 	buildContextsFn      func(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
 	validateFn           func(ctx context.Context, deps map[string]domain.DependencyDeclaration) error
 }
@@ -42,6 +43,13 @@ func (m *mockDependencyService) ScheduleAfterInput(ctx context.Context, tx TxRep
 		return m.scheduleAfterInputFn(ctx, tx, deployment, env, depName)
 	}
 	return nil, nil
+}
+
+func (m *mockDependencyService) AdvanceOnResult(ctx context.Context, tx TxRepos, deploymentID uuid.UUID, cfg *domain.DependencyDeployment, success bool, output json.RawMessage) (bool, error) {
+	if m.advanceOnResultFn != nil {
+		return m.advanceOnResultFn(ctx, tx, deploymentID, cfg, success, output)
+	}
+	return false, nil
 }
 
 func (m *mockDependencyService) BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error) {
@@ -145,7 +153,7 @@ func TestDeploymentService_Submit(t *testing.T) {
 		if createdCmd == nil {
 			t.Fatal("expected created command, got nil")
 		}
-		if createdCmd.Type != "helm.upgrade" {
+		if createdCmd.Type != domain.CommandTypeHelmUpgrade {
 			t.Errorf("expected command type helm.upgrade, got %s", createdCmd.Type)
 		}
 		if createdCmd.Status != domain.CommandStatusQueued {
@@ -174,7 +182,7 @@ func TestDeploymentService_Submit(t *testing.T) {
 				ID:           uuid.New(),
 				ClusterID:    environment.ClusterID,
 				DeploymentID: dep.ID,
-				Type:         "tofu.apply",
+				Type:         domain.CommandTypeTofuApply,
 				Status:       domain.CommandStatusQueued,
 				CreatedAt:    now,
 				UpdatedAt:    now,
@@ -222,8 +230,8 @@ func TestDeploymentService_Submit(t *testing.T) {
 		// Helm upgrade is NOT created yet — it waits for managed deps.
 		if len(createdCmds) != 1 {
 			t.Errorf("expected 1 created command, got %d", len(createdCmds))
-		} else if createdCmds[0].Type != "tofu.apply" {
-			t.Errorf("expected command type tofu.apply, got %s", createdCmds[0].Type)
+		} else if createdCmds[0].Type != domain.CommandTypeTofuApply {
+			t.Errorf("expected command type %s, got %s", domain.CommandTypeTofuApply, createdCmds[0].Type)
 		}
 
 		if len(createdDepCfgs) != 1 {
