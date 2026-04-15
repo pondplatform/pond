@@ -68,7 +68,7 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 	// --- writes (all in one transaction) ---
 
 	var d *domain.Deployment
-	var pendingDeps []domain.DependencyDeployment
+	var deps []domain.DependencyDeployment
 
 	err = s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
 		now := time.Now()
@@ -88,16 +88,30 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 		}
 
 		var schedErr error
-		pendingDeps, schedErr = s.depSvc.ScheduleCommands(ctx, tx, svc, env, d)
+		deps, schedErr = s.depSvc.ScheduleCommands(ctx, tx, svc, env, d)
 		if schedErr != nil {
 			return schedErr
 		}
 
-		if len(pendingDeps) == 0 {
-			// No managed deps: resolve contexts and enqueue helm now.
+		// Check if any dependency requires user input
+		anyAwaitingInput := false
+		for _, dep := range deps {
+			if dep.Status == domain.DependencyDeploymentStatusAwaitingInput {
+				anyAwaitingInput = true
+				break
+			}
+		}
+
+		// Only enqueue helm if there are no dependencies at all
+		// If there are dependencies but none awaiting input, commands will be dispatched below
+		if len(deps) == 0 {
 			if err := s.enqueueHelm(ctx, tx, d, env); err != nil {
 				return err
 			}
+		} else if anyAwaitingInput {
+			// If any dependency needs input, don't enqueue anything yet.
+			// Wait for all inputs to be provided before scheduling.
+			return nil
 		}
 		return nil
 	})
@@ -105,30 +119,47 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 		return nil, err
 	}
 
-	// Notify any idle connected agent for this cluster that commands are ready.
-	if len(pendingDeps) > 0 {
-		for _, p := range pendingDeps {
-			switch p.Status {
-			case domain.DependencyDeploymentStatusAwaitingInput:
-				s.bus.Publish(ctx, events.ProjectUserInputRequiredTopic(req.ProjectID), events.UserInputRequired{
-					DeploymentId:   d.ID,
-					DependencyName: p.DependencyName,
-				})
-			case domain.DependencyDeploymentStatusPending:
-				s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(env.ClusterID), events.CommandQueued{
-					ClusterID:    env.ClusterID,
-					CommandID:    *p.CommandID,
-					DeploymentID: d.ID,
-				})
-			}
-
-		}
-	} else {
+	// Publish events based on dependency state
+	if len(deps) == 0 {
+		// No dependencies: helm command was enqueued, notify agent
 		s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(env.ClusterID), events.CommandQueued{
 			ClusterID:    env.ClusterID,
 			CommandID:    *d.HelmCommandID,
 			DeploymentID: d.ID,
 		})
+	} else {
+		// Check if any dependency is awaiting input
+		anyAwaitingInput := false
+		for _, dep := range deps {
+			if dep.Status == domain.DependencyDeploymentStatusAwaitingInput {
+				anyAwaitingInput = true
+				break
+			}
+		}
+
+		if anyAwaitingInput {
+			// Some dependencies need input - only publish UserInputRequired events
+			// Do NOT dispatch any commands until all inputs are provided
+			for _, dep := range deps {
+				if dep.Status == domain.DependencyDeploymentStatusAwaitingInput {
+					s.bus.Publish(ctx, events.ProjectUserInputRequiredTopic(req.ProjectID), events.UserInputRequired{
+						DeploymentId:   d.ID,
+						DependencyName: dep.DependencyName,
+					})
+				}
+			}
+		} else {
+			// All dependencies have config from previous deployments - dispatch commands
+			for _, dep := range deps {
+				if dep.Status == domain.DependencyDeploymentStatusPending && dep.CommandID != nil {
+					s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(env.ClusterID), events.CommandQueued{
+						ClusterID:    env.ClusterID,
+						CommandID:    *dep.CommandID,
+						DeploymentID: d.ID,
+					})
+				}
+			}
+		}
 	}
 
 	return d, nil
@@ -324,7 +355,8 @@ func (s *deploymentService) handleAgentDisconnected(ctx context.Context, e event
 	}
 }
 
-// handleUserInputProvided schedules the dependency after user input has been provided.
+// handleUserInputProvided checks if all dependencies now have their input provided.
+// Only when ALL dependencies have input will it schedule ALL of them at once.
 func (s *deploymentService) handleUserInputProvided(ctx context.Context, e events.UserInputProvided) {
 	dep, err := s.deploymentInfo.GetByID(ctx, e.DeploymentID)
 	if err != nil {
@@ -337,39 +369,72 @@ func (s *deploymentService) handleUserInputProvided(ctx context.Context, e event
 		return
 	}
 
-	var cfg *domain.DependencyDeployment
+	// Check if any dependencies still need input
+	stillAwaiting, err := s.deploymentInfo.AnyDepConfigAwaitingInput(ctx, e.DeploymentID)
+	if err != nil {
+		log.Printf("deployment service: check awaiting input for %s: %v", e.DeploymentID, err)
+		return
+	}
+
+	if stillAwaiting {
+		// Not all inputs provided yet - wait for the rest
+		return
+	}
+
+	// All inputs provided - schedule ALL dependencies at once
+	var scheduledDeps []domain.DependencyDeployment
 	err = s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
-		var schedErr error
-		cfg, schedErr = s.depSvc.ScheduleAfterInput(ctx, tx, dep, env, e.DependencyName)
-		if schedErr != nil {
-			return schedErr
+		// Get all dependency configs for this deployment
+		depConfigs, err := tx.DeploymentInfo.ListDepConfigs(ctx, e.DeploymentID)
+		if err != nil {
+			return fmt.Errorf("list dep configs: %w", err)
 		}
 
-		// For non-managed deps (already succeeded), check if all deps are complete
-		if cfg.Status == domain.DependencyDeploymentStatusSucceeded {
-			allSucceeded, anyFailed, err := tx.DeploymentInfo.AllDepConfigsComplete(ctx, e.DeploymentID)
-			if err != nil {
-				return fmt.Errorf("check all complete: %w", err)
+		for _, cfg := range depConfigs {
+			// Skip deps that are not in a state where they need scheduling
+			// (they might already be pending/succeeded from previous runs or non-managed)
+			if cfg.Status != domain.DependencyDeploymentStatusAwaitingInput &&
+				cfg.Status != domain.DependencyDeploymentStatusPending {
+				// Non-awaiting, non-pending deps (e.g., succeeded) - keep track for helm check
+				scheduledDeps = append(scheduledDeps, cfg)
+				continue
 			}
-			if anyFailed || !allSucceeded {
-				return nil
+
+			// Schedule this dependency
+			scheduled, schedErr := s.depSvc.ScheduleAfterInput(ctx, tx, dep, env, cfg.DependencyName)
+			if schedErr != nil {
+				return fmt.Errorf("schedule dep %q: %w", cfg.DependencyName, schedErr)
 			}
+			scheduledDeps = append(scheduledDeps, *scheduled)
+		}
+
+		// Check if all deps are already complete (all non-managed)
+		allSucceeded := true
+		for _, d := range scheduledDeps {
+			if d.Status != domain.DependencyDeploymentStatusSucceeded {
+				allSucceeded = false
+				break
+			}
+		}
+		if allSucceeded && len(scheduledDeps) > 0 {
 			return s.enqueueHelm(ctx, tx, dep, env)
 		}
 		return nil
 	})
 	if err != nil {
-		log.Printf("deployment service: schedule after input for %s/%s: %v", e.DeploymentID, e.DependencyName, err)
+		log.Printf("deployment service: schedule all deps for %s: %v", e.DeploymentID, err)
 		return
 	}
 
-	// For managed deps, publish CommandQueued event
-	if cfg.Status == domain.DependencyDeploymentStatusPending && cfg.CommandID != nil {
-		s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(env.ClusterID), events.CommandQueued{
-			ClusterID:    env.ClusterID,
-			CommandID:    *cfg.CommandID,
-			DeploymentID: e.DeploymentID,
-		})
+	// Publish CommandQueued events for all pending managed deps
+	for _, cfg := range scheduledDeps {
+		if cfg.Status == domain.DependencyDeploymentStatusPending && cfg.CommandID != nil {
+			s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(env.ClusterID), events.CommandQueued{
+				ClusterID:    env.ClusterID,
+				CommandID:    *cfg.CommandID,
+				DeploymentID: e.DeploymentID,
+			})
+		}
 	}
 }
 

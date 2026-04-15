@@ -401,6 +401,59 @@ func (s *deploymentInfoStore) AllDepConfigsComplete(ctx context.Context, deploym
 	return total > 0 && succeeded == total, failed > 0, nil
 }
 
+func (s *deploymentInfoStore) AnyDepConfigAwaitingInput(ctx context.Context, deploymentID uuid.UUID) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM dependency_deployments
+		  WHERE deployment_id = $1 AND status = $2`,
+		deploymentID, domain.DependencyDeploymentStatusAwaitingInput,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("count awaiting input: %w", err)
+	}
+	return count > 0, nil
+}
+
+func (s *deploymentInfoStore) ListDepConfigs(ctx context.Context, deploymentID uuid.UUID) ([]domain.DependencyDeployment, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, deployment_id, dependency_name, dependency_type, managed, provider_inputs, user_config, output, status, command_id, completed_at
+		   FROM dependency_deployments
+		  WHERE deployment_id = $1`,
+		deploymentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list dep configs: %w", err)
+	}
+	defer rows.Close()
+
+	var configs []domain.DependencyDeployment
+	for rows.Next() {
+		var cfg domain.DependencyDeployment
+		var providerInputs, userConfig, output []byte
+		if err := rows.Scan(
+			&cfg.ID, &cfg.DeploymentId, &cfg.DependencyName, &cfg.DependencyType,
+			&cfg.Managed, &providerInputs, &userConfig, &output, &cfg.Status, &cfg.CommandID, &cfg.CompletedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan dep config: %w", err)
+		}
+		if providerInputs != nil {
+			if err := json.Unmarshal(providerInputs, &cfg.ProviderInputs); err != nil {
+				return nil, fmt.Errorf("unmarshal provider inputs: %w", err)
+			}
+		}
+		if userConfig != nil {
+			if err := json.Unmarshal(userConfig, &cfg.UserConfig); err != nil {
+				return nil, fmt.Errorf("unmarshal user config: %w", err)
+			}
+		}
+		if output != nil {
+			cfg.Output = output
+		}
+		configs = append(configs, cfg)
+	}
+	return configs, rows.Err()
+}
+
 func (s *deploymentInfoStore) GetDepOutputsByDeployment(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT dependency_name, output FROM dependency_deployments

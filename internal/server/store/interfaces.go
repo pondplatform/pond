@@ -38,6 +38,10 @@ type DeploymentInfoStore interface {
 	MarkDepConfigSucceeded(ctx context.Context, deploymentID uuid.UUID, depName string, output json.RawMessage) error
 	MarkDepConfigFailed(ctx context.Context, deploymentID uuid.UUID, depName string) error
 	AllDepConfigsComplete(ctx context.Context, deploymentID uuid.UUID) (allSucceeded bool, anyFailed bool, err error)
+	// AnyDepConfigAwaitingInput returns true if any dependency config for the deployment is in awaiting_input status.
+	AnyDepConfigAwaitingInput(ctx context.Context, deploymentID uuid.UUID) (bool, error)
+	// ListDepConfigs returns all dependency configs for the given deployment.
+	ListDepConfigs(ctx context.Context, deploymentID uuid.UUID) ([]domain.DependencyDeployment, error)
 	GetDepOutputsByDeployment(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error)
 
 	// UpdateDepConfigUserInput updates a dependency config with user-provided input.

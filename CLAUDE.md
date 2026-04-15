@@ -32,6 +32,145 @@ CLI (pond)
 
 Deployments with no managed dependencies skip straight to step 4.
 
+## Deployment State Machine
+
+The deployment orchestration is event-driven, implemented in `internal/server/service/deployment.go`. The `DeploymentService.Start()` method subscribes to events and drives transitions.
+
+### Dependency Resolution Flow
+
+Each dependency declared in `pond.yml` goes through resolution before helm can run. The flow depends on whether the dependency was previously configured (`scheduleDependency` in `dependency.go`):
+
+```
+                                    ┌─────────────────┐
+                                    │ New dependency  │
+                                    │ (no prev config)│
+                                    └────────┬────────┘
+                                             │
+                                             ▼
+                                    ┌─────────────────┐
+                                    │ awaiting_input  │◄── User must provide:
+                                    │                 │    • managed (bool)
+                                    └────────┬────────┘    • provider_inputs
+                                             │
+                          ┌──────────────────┴──────────────────┐
+                          │                                     │
+                          ▼                                     ▼
+               ┌─────────────────┐                   ┌─────────────────┐
+               │ managed = true  │                   │ managed = false │
+               │                 │                   │ (manual dep)    │
+               └────────┬────────┘                   └────────┬────────┘
+                        │                                     │
+                        ▼                                     │
+               ┌─────────────────┐                            │
+               │ pending         │                            │
+               │ + tofu.apply    │                            │
+               │   command       │                            │
+               └────────┬────────┘                            │
+                        │                                     │
+                        ▼                                     │
+               ┌─────────────────┐                            │
+               │ Agent executes  │                            │
+               │ tofu apply      │                            │
+               └────────┬────────┘                            │
+                        │                                     │
+           ┌────────────┴────────────┐                        │
+           ▼                         ▼                        │
+    ┌────────────┐           ┌────────────┐                   │
+    │ succeeded  │           │  failed    │                   │
+    │ (outputs   │           │            │                   │
+    │  stored)   │           └─────┬──────┘                   │
+    └─────┬──────┘                 │                          │
+          │                        ▼                          │
+          │               ┌─────────────────┐                 │
+          │               │ Cancel siblings │                 │
+          │               │ Deployment fails│                 │
+          │               └─────────────────┘                 │
+          │                                                   │
+          └───────────────────────┬───────────────────────────┘
+                                  │
+                                  ▼
+                         ┌─────────────────┐
+                         │ All deps done?  │
+                         └────────┬────────┘
+                                  │ yes
+                                  ▼
+                         ┌─────────────────┐
+                         │ Enqueue         │
+                         │ helm.upgrade    │
+                         └─────────────────┘
+```
+
+**Three dependency paths:**
+
+1. **First-time dependency** — No previous config exists. Status set to `awaiting_input`. Deployment blocks until user provides `managed` flag and `provider_inputs` via API. Publishes `UserInputRequired` event.
+
+2. **Managed dependency** — Previous config has `managed=true`. Enqueues `tofu.apply` command with vars from `provider_inputs`. Agent runs tofu, outputs stored on success.
+
+3. **Manual (non-managed) dependency** — Previous config has `managed=false`. No tofu command. Uses `user_config` directly as outputs. Immediately considered complete.
+
+### Batch Input Collection
+
+When a deployment has dependencies requiring user input, the system waits for **all** inputs before scheduling **any** commands:
+
+```
+Deployment submitted
+        │
+        ▼
+┌─────────────────────┐
+│ Create all dep      │
+│ configs             │
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│ Any awaiting input? │
+└─────────┬───────────┘
+          │
+    yes   │   no
+    ┌─────┴─────┐
+    │           │
+    ▼           ▼
+Publish      Dispatch all
+UserInput    CommandQueued
+Required     events
+events
+    │
+    ▼
+Wait for ALL inputs
+    │
+    ▼
+All inputs provided?
+    │ yes
+    ▼
+Schedule ALL deps at once
+(dispatch all CommandQueued)
+```
+
+This ensures deployments with multiple first-time dependencies don't partially execute while waiting for remaining inputs. The `handleUserInputProvided` handler in `deployment.go` checks `AnyDepConfigAwaitingInput()` after each input is provided — only when all return false does it call `ScheduleAfterInput()` for every dependency and dispatch their commands together.
+
+### Deployment Status Transitions
+
+```
+pending → running → succeeded
+                  ↘ failed
+```
+
+- **pending** — created, waiting for agent to pick up first command
+- **running** — agent acknowledged command start
+- **succeeded** — helm upgrade completed successfully
+- **failed** — any tofu or helm command failed
+
+### Event Handlers
+
+| Event | Handler | Effect |
+|-------|---------|--------|
+| `AgentReady` | `handleAgentReady` | Dispatches next queued command for cluster |
+| `CommandStarted` | `handleCommandStarted` | Deployment pending → running |
+| `CommandResult` | `processResult` → `advance` | Routes to `advanceDependency` or `advanceHelm` |
+| `AgentDisconnected` | `handleAgentDisconnected` | Requeues in-flight command |
+
+All state transitions run in database transactions to prevent races between concurrent dependency completions.
+
 ## Key Packages
 
 | Path | Purpose |

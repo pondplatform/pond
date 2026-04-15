@@ -19,24 +19,28 @@ func NewDependencyService(specs dependency.SpecRegistry) DependencyService {
 	return &dependencyService{specs: specs}
 }
 
-// ScheduleCommands queues a tofu.apply command for every managed dependency
-// declared in the deployment's service config snapshot and creates the
-// corresponding dependency_deployments rows — all within the provided transaction.
-// Non-managed deps are also recorded with status=succeeded and output=user_config
-// so that GetDepOutputsByDeployment returns all dep outputs uniformly.
+// ScheduleCommands creates dependency_deployments rows for every dependency
+// declared in the deployment's service config snapshot. Depending on whether
+// previous config exists and the managed flag, deps are created in different states:
+// - awaiting_input: new dependency with no previous config
+// - pending: managed dependency with tofu.apply command queued
+// - succeeded: non-managed dependency (user_config used as output)
+//
+// Returns all created dependency deployments for the caller to decide what events to publish.
 func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error) {
-	var pending []domain.DependencyDeployment
+	var deps []domain.DependencyDeployment
 
-	for depName, _ := range dep.ServiceConfigSnapshot.Dependencies {
-		dependency, err := s.scheduleDependency(ctx, tx, service, environment, dep, depName)
+	for depName := range dep.ServiceConfigSnapshot.Dependencies {
+		depCfg, err := s.scheduleDependency(ctx, tx, service, environment, dep, depName)
 		if err != nil {
 			return nil, err
-		} else if dependency != nil {
-
+		}
+		if depCfg != nil {
+			deps = append(deps, *depCfg)
 		}
 	}
 
-	return pending, nil
+	return deps, nil
 }
 
 func (s *dependencyService) scheduleDependency(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, deployment *domain.Deployment, dependencyName string) (*domain.DependencyDeployment, error) {
