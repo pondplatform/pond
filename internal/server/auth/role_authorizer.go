@@ -18,6 +18,11 @@ func NewRoleAuthorizer() *RoleAuthorizer {
 
 // Authorize checks if the identity has permission to perform the action on the org.
 func (a *RoleAuthorizer) Authorize(identity *domain.Identity, action Action, orgID uuid.UUID) error {
+	// Admin key bypasses all org membership and permission checks.
+	if identity.IsAdminKey {
+		return nil
+	}
+
 	// Check org membership - identity must belong to the target org
 	if identity.OrganizationID != orgID {
 		return domain.ErrForbidden

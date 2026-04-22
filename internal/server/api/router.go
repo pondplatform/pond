@@ -17,7 +17,7 @@ type RouterDeps struct {
 	Envs          store.EnvironmentRepository
 	Services      store.ServiceRepository
 	Clusters      store.ClusterRepository
-	Tokens        store.APITokenRepository
+	JWTSecret     []byte
 	SpecRegistry  dependency.SpecRegistry
 	AgentHandler  *AgentHandler
 	Authenticator auth.Authenticator
@@ -35,7 +35,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	envHandler := NewEnvironmentHandler(deps.Envs, deps.Projects, deps.Clusters)
 	serviceHandler := NewServiceHandler(deps.Services, deps.Projects)
 	depSpecHandler := NewDependencySpecHandler(deps.SpecRegistry)
-	tokenHandler := NewTokenHandler(deps.Tokens, deps.Orgs)
+	tokenHandler := NewTokenHandler(deps.JWTSecret)
 
 	// Auth middleware helpers
 	authed := func(action auth.Action, pathParam string, h http.HandlerFunc) http.HandlerFunc {
@@ -82,8 +82,6 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 	// API Tokens (scoped under org, admin-only)
 	mux.HandleFunc("POST /api/v1/organizations/{orgId}/tokens", authed(auth.Action{Resource: auth.ResourceToken, Verb: auth.VerbManage}, "orgId", tokenHandler.Create))
-	mux.HandleFunc("GET /api/v1/organizations/{orgId}/tokens", authed(auth.Action{Resource: auth.ResourceToken, Verb: auth.VerbManage}, "orgId", tokenHandler.List))
-	mux.HandleFunc("POST /api/v1/organizations/{orgId}/tokens/{id}/revoke", authed(auth.Action{Resource: auth.ResourceToken, Verb: auth.VerbManage}, "orgId", tokenHandler.Revoke))
 
 	// Projects (scoped under org)
 	mux.HandleFunc("POST /api/v1/organizations/{orgId}/projects", authed(auth.Action{Resource: auth.ResourceProject, Verb: auth.VerbWrite}, "orgId", projectHandler.Create))

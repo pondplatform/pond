@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	"github.com/pondplatform/pond/internal/cli/client"
@@ -26,13 +27,15 @@ import (
 	"github.com/pondplatform/pond/internal/server/store"
 )
 
+const testJWTSecret = "test-secret-for-integration-tests-only"
+
 // TestHarness owns a running server, its database connection, and test URLs.
 type TestHarness struct {
 	DB         *sql.DB
 	BaseURL    string    // "http://127.0.0.1:<port>"
 	WsAddr     string    // "127.0.0.1:<port>" (without ws:// prefix, for agent connection)
 	OrgID      uuid.UUID // bootstrapped org for this harness
-	AdminToken string    // plaintext admin API token for this harness
+	AdminToken string    // JWT admin token for this harness
 
 	server *httptest.Server
 	cancel context.CancelFunc
@@ -62,9 +65,9 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 	clusterStore := store.NewClusterStore(db)
 	orgStore := store.NewOrganizationStore(db)
 	projectStore := store.NewProjectStore(db)
-	apiTokenStore := store.NewAPITokenStore(db)
 
-	authenticator := auth.NewTokenAuthenticator(apiTokenStore)
+	jwtSecret := []byte(testJWTSecret)
+	authenticator := auth.NewJWTAuthenticator(jwtSecret)
 	authorizer := auth.NewRoleAuthorizer()
 
 	tx := newTestTransactor(db)
@@ -99,7 +102,7 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 		Envs:          envStore,
 		Services:      serviceStore,
 		Clusters:      clusterStore,
-		Tokens:        apiTokenStore,
+		JWTSecret:     jwtSecret,
 		SpecRegistry:  specRegistry,
 		AgentHandler:  agentHandler,
 		Authenticator: authenticator,
@@ -112,8 +115,9 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 	// Extract host:port for WebSocket connections
 	wsAddr := strings.TrimPrefix(server.URL, "http://")
 
-	// Bootstrap org + admin token directly in DB (chicken-and-egg: HTTP endpoints
-	// for org creation require a token, but tokens require an org).
+	// Bootstrap org and mint an admin JWT directly (chicken-and-egg: HTTP endpoints
+	// for org creation require a token, but token creation requires an org that was
+	// created by an admin).
 	orgID, adminToken := bootstrapOrgAndToken(t, db)
 
 	h := &TestHarness{
@@ -168,16 +172,14 @@ func (t *testTransactor) RunInTx(ctx context.Context, fn func(ctx context.Contex
 	return sqlTx.Commit()
 }
 
-// bootstrapOrgAndToken inserts a minimal org and admin API token directly in the DB.
-// This bypasses the HTTP API to avoid the chicken-and-egg problem where every endpoint
-// requires a token, but token creation requires an org that was created by an admin.
-func bootstrapOrgAndToken(t *testing.T, db *sql.DB) (orgID uuid.UUID, plainToken string) {
+// bootstrapOrgAndToken inserts a minimal org directly in the DB and mints an
+// admin JWT. This bypasses the HTTP API to avoid the chicken-and-egg problem
+// where every endpoint requires a token, but token creation requires an org
+// that was created by an admin.
+func bootstrapOrgAndToken(t *testing.T, db *sql.DB) (orgID uuid.UUID, adminJWT string) {
 	t.Helper()
 
 	orgID = uuid.New()
-	plainToken = uuid.New().String()
-	tokenHash := auth.SHA256Hex(plainToken)
-	tokenID := uuid.New()
 	now := time.Now().UTC()
 
 	_, err := db.Exec(
@@ -188,16 +190,17 @@ func bootstrapOrgAndToken(t *testing.T, db *sql.DB) (orgID uuid.UUID, plainToken
 		t.Fatalf("bootstrap org: %v", err)
 	}
 
-	_, err = db.Exec(
-		`INSERT INTO api_tokens (id, organization_id, token_hash, role, description, created_at)
-		 VALUES ($1, $2, $3, 'admin', 'test-harness', $4)`,
-		tokenID, orgID, tokenHash, now,
-	)
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"org_id":      orgID.String(),
+		"role":        "admin",
+		"description": "test-harness",
+	})
+	signed, err := tok.SignedString([]byte(testJWTSecret))
 	if err != nil {
-		t.Fatalf("bootstrap token: %v", err)
+		t.Fatalf("sign bootstrap jwt: %v", err)
 	}
 
-	return orgID, plainToken
+	return orgID, signed
 }
 
 // RunSchema applies the database schema from db/schema.sql.

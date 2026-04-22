@@ -21,9 +21,17 @@ import (
 type Config struct {
 	DatabaseURL string
 	ListenAddr  string
+	// AdminKey grants unrestricted access to all API endpoints when set.
+	// Configured via the POND_ADMIN_KEY environment variable.
+	AdminKey  string
+	JWTSecret string
 }
 
 func Run(ctx context.Context, cfg Config) error {
+	if cfg.JWTSecret == "" {
+		return fmt.Errorf("POND_JWT_SECRET must be set")
+	}
+
 	db, err := sql.Open("postgres", cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
@@ -41,7 +49,6 @@ func Run(ctx context.Context, cfg Config) error {
 	envStore := store.NewEnvironmentStore(db)
 	serviceStore := store.NewServiceStore(db)
 	clusterStore := store.NewClusterStore(db)
-	apiTokenStore := store.NewAPITokenStore(db)
 
 	// Transactor for multi-step atomic writes in services
 	tx := newTransactor(db)
@@ -66,7 +73,8 @@ func Run(ctx context.Context, cfg Config) error {
 	agentHandler := api.NewAgentHandler(clusterStore, bus)
 
 	// Auth components
-	authenticator := auth.NewTokenAuthenticator(apiTokenStore)
+	jwtSecret := []byte(cfg.JWTSecret)
+	authenticator := auth.NewAdminKeyAuthenticator(cfg.AdminKey, auth.NewJWTAuthenticator(jwtSecret))
 	authorizer := auth.NewRoleAuthorizer()
 
 	// HTTP router
@@ -77,7 +85,7 @@ func Run(ctx context.Context, cfg Config) error {
 		Envs:          envStore,
 		Services:      serviceStore,
 		Clusters:      clusterStore,
-		Tokens:        apiTokenStore,
+		JWTSecret:     jwtSecret,
 		SpecRegistry:  specRegistry,
 		AgentHandler:  agentHandler,
 		Authenticator: authenticator,
