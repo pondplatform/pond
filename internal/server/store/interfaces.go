@@ -45,9 +45,8 @@ type DeploymentInfoStore interface {
 	ListDepConfigs(ctx context.Context, deploymentID uuid.UUID) ([]domain.DependencyDeployment, error)
 	GetDepOutputsByDeployment(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error)
 
-	// UpdateDepConfigUserInput updates a dependency config with user-provided input.
-	// Does not change status - that is handled by the service layer after scheduling.
-	UpdateDepConfigUserInput(ctx context.Context, deploymentID uuid.UUID, depName string, managed bool, providerInputs map[string]any, userConfig map[string]any) error
+	// UpdateDepConfig persists all mutable fields of a dependency deployment row.
+	UpdateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error
 
 	// SetDepConfigCommand updates the command_id and sets status to pending for a dependency config.
 	SetDepConfigCommand(ctx context.Context, deploymentID uuid.UUID, depName string, commandID uuid.UUID) error

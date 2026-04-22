@@ -235,3 +235,7 @@ Environment variables:
 - **Server:** `DATABASE_URL`, `LISTEN_ADDR`
 - **Agent:** `POND_SERVER_ADDR`, `POND_AGENT_TOKEN`
 - **CLI:** `POND_SERVER_URL` (default `localhost:8080`)
+
+## Building Code for Claude
+
+After doing large changes, always verify with `make test-integration`

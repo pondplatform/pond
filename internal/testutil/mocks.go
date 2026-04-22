@@ -42,7 +42,7 @@ type MockDeploymentInfoStore struct {
 	MarkDepConfigFailedFn       func(ctx context.Context, deploymentID uuid.UUID, depName string) error
 	AllDepConfigsCompleteFn     func(ctx context.Context, deploymentID uuid.UUID) (bool, bool, error)
 	GetDepOutputsByDeploymentFn func(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error)
-	UpdateDepConfigUserInputFn  func(ctx context.Context, deploymentID uuid.UUID, depName string, managed bool, providerInputs map[string]any, userConfig map[string]any) error
+	UpdateDepConfigFn           func(ctx context.Context, cfg *domain.DependencyDeployment) error
 	SetDepConfigCommandFn       func(ctx context.Context, deploymentID uuid.UUID, depName string, commandID uuid.UUID) error
 	AnyDepConfigAwaitingInputFn func(ctx context.Context, deploymentID uuid.UUID) (bool, error)
 	ListDepConfigsFn            func(ctx context.Context, deploymentID uuid.UUID) ([]domain.DependencyDeployment, error)
@@ -168,9 +168,9 @@ func (m *MockDeploymentInfoStore) GetDepOutputsByDeployment(ctx context.Context,
 	}
 	return nil, nil
 }
-func (m *MockDeploymentInfoStore) UpdateDepConfigUserInput(ctx context.Context, deploymentID uuid.UUID, depName string, managed bool, providerInputs map[string]any, userConfig map[string]any) error {
-	if m.UpdateDepConfigUserInputFn != nil {
-		return m.UpdateDepConfigUserInputFn(ctx, deploymentID, depName, managed, providerInputs, userConfig)
+func (m *MockDeploymentInfoStore) UpdateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error {
+	if m.UpdateDepConfigFn != nil {
+		return m.UpdateDepConfigFn(ctx, cfg)
 	}
 	return nil
 }

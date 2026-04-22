@@ -201,8 +201,14 @@ func (s *deploymentService) ProvideUserInput(ctx context.Context, deploymentID u
 		return fmt.Errorf("dependency %q is not awaiting input (status: %s)", depName, cfg.Status)
 	}
 
-	// Update the dependency config with user-provided input
-	if err := s.deploymentInfo.UpdateDepConfigUserInput(ctx, deploymentID, depName, input.Managed, input.ProviderInputs, input.UserConfig); err != nil {
+	// Apply user input and transition status to pending so AnyDepConfigAwaitingInput
+	// no longer counts this row as blocking.
+	managed := input.Managed
+	cfg.Managed = &managed
+	cfg.ProviderInputs = input.ProviderInputs
+	cfg.UserConfig = input.UserConfig
+	cfg.Status = domain.DependencyDeploymentStatusPending
+	if err := s.deploymentInfo.UpdateDepConfig(ctx, cfg); err != nil {
 		return fmt.Errorf("update dep config: %w", err)
 	}
 

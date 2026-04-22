@@ -442,7 +442,7 @@ func (s *deploymentInfoStore) AnyDepConfigAwaitingInput(ctx context.Context, dep
 
 func (s *deploymentInfoStore) ListDepConfigs(ctx context.Context, deploymentID uuid.UUID) ([]domain.DependencyDeployment, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, deployment_id, dependency_name, dependency_type, managed, provider_inputs, user_config, output, status, command_id, completed_at
+		`SELECT id, deployment_id, dependency_name, dependency_type, managed, provider_inputs, user_config, output, status, command_id
 		   FROM dependency_deployments
 		  WHERE deployment_id = $1`,
 		deploymentID,
@@ -458,7 +458,7 @@ func (s *deploymentInfoStore) ListDepConfigs(ctx context.Context, deploymentID u
 		var providerInputs, userConfig, output []byte
 		if err := rows.Scan(
 			&cfg.ID, &cfg.DeploymentId, &cfg.DependencyName, &cfg.DependencyType,
-			&cfg.Managed, &providerInputs, &userConfig, &output, &cfg.Status, &cfg.CommandID, &cfg.CompletedAt,
+			&cfg.Managed, &providerInputs, &userConfig, &output, &cfg.Status, &cfg.CommandID,
 		); err != nil {
 			return nil, fmt.Errorf("scan dep config: %w", err)
 		}
@@ -505,23 +505,23 @@ func (s *deploymentInfoStore) GetDepOutputsByDeployment(ctx context.Context, dep
 	return outputs, rows.Err()
 }
 
-func (s *deploymentInfoStore) UpdateDepConfigUserInput(ctx context.Context, deploymentID uuid.UUID, depName string, managed bool, providerInputs map[string]any, userConfig map[string]any) error {
-	providerInputsJSON, err := json.Marshal(providerInputs)
+func (s *deploymentInfoStore) UpdateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error {
+	providerInputsJSON, err := json.Marshal(cfg.ProviderInputs)
 	if err != nil {
 		return fmt.Errorf("marshal provider inputs: %w", err)
 	}
-	userConfigJSON, err := json.Marshal(userConfig)
+	userConfigJSON, err := json.Marshal(cfg.UserConfig)
 	if err != nil {
 		return fmt.Errorf("marshal user config: %w", err)
 	}
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE dependency_deployments
-		    SET managed = $1, provider_inputs = $2, user_config = $3, updated_at = NOW()
-		  WHERE deployment_id = $4 AND dependency_name = $5`,
-		managed, providerInputsJSON, userConfigJSON, deploymentID, depName,
+		    SET managed = $1, provider_inputs = $2, user_config = $3, status = $4, updated_at = NOW()
+		  WHERE deployment_id = $5 AND dependency_name = $6`,
+		cfg.Managed, providerInputsJSON, userConfigJSON, cfg.Status, cfg.DeploymentId, cfg.DependencyName,
 	)
 	if err != nil {
-		return fmt.Errorf("update dep config user input: %w", err)
+		return fmt.Errorf("update dep config: %w", err)
 	}
 	return nil
 }
