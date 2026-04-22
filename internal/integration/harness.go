@@ -11,11 +11,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	"github.com/pondplatform/pond/internal/cli/client"
 	"github.com/pondplatform/pond/internal/common/config"
 	"github.com/pondplatform/pond/internal/server/api"
+	"github.com/pondplatform/pond/internal/server/auth"
 	"github.com/pondplatform/pond/internal/server/dependency"
 	"github.com/pondplatform/pond/internal/server/events"
 	"github.com/pondplatform/pond/internal/server/helmgen"
@@ -25,9 +28,11 @@ import (
 
 // TestHarness owns a running server, its database connection, and test URLs.
 type TestHarness struct {
-	DB      *sql.DB
-	BaseURL string // "http://127.0.0.1:<port>"
-	WsAddr  string // "127.0.0.1:<port>" (without ws:// prefix, for agent connection)
+	DB         *sql.DB
+	BaseURL    string    // "http://127.0.0.1:<port>"
+	WsAddr     string    // "127.0.0.1:<port>" (without ws:// prefix, for agent connection)
+	OrgID      uuid.UUID // bootstrapped org for this harness
+	AdminToken string    // plaintext admin API token for this harness
 
 	server *httptest.Server
 	cancel context.CancelFunc
@@ -55,6 +60,12 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 	envStore := store.NewEnvironmentStore(db)
 	serviceStore := store.NewServiceStore(db)
 	clusterStore := store.NewClusterStore(db)
+	orgStore := store.NewOrganizationStore(db)
+	projectStore := store.NewProjectStore(db)
+	apiTokenStore := store.NewAPITokenStore(db)
+
+	authenticator := auth.NewTokenAuthenticator(apiTokenStore)
+	authorizer := auth.NewRoleAuthorizer()
 
 	tx := newTestTransactor(db)
 	specRegistry := dependency.NewSpecRegistry()
@@ -63,6 +74,7 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 	depSvc := service.NewDependencyService(specRegistry)
 	helmGenerator := helmgen.NewGenerator()
 	tmplRenderer := config.NewTemplateRenderer()
+	resolver := config.NewResolver()
 	deploySvc := service.NewDeploymentService(
 		deploymentInfoStore,
 		serviceStore,
@@ -70,6 +82,7 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 		depSvc,
 		helmGenerator,
 		tmplRenderer,
+		resolver,
 		tx,
 		bus,
 	)
@@ -79,7 +92,19 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 
 	// Create the agent handler and router
 	agentHandler := api.NewAgentHandler(clusterStore, bus)
-	router := api.NewRouter(deploySvc, serviceStore, envStore, agentHandler)
+	router := api.NewRouter(api.RouterDeps{
+		DeploySvc:     deploySvc,
+		Orgs:          orgStore,
+		Projects:      projectStore,
+		Envs:          envStore,
+		Services:      serviceStore,
+		Clusters:      clusterStore,
+		Tokens:        apiTokenStore,
+		SpecRegistry:  specRegistry,
+		AgentHandler:  agentHandler,
+		Authenticator: authenticator,
+		Authorizer:    authorizer,
+	})
 
 	// Start the test server
 	server := httptest.NewServer(router)
@@ -87,12 +112,18 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 	// Extract host:port for WebSocket connections
 	wsAddr := strings.TrimPrefix(server.URL, "http://")
 
+	// Bootstrap org + admin token directly in DB (chicken-and-egg: HTTP endpoints
+	// for org creation require a token, but tokens require an org).
+	orgID, adminToken := bootstrapOrgAndToken(t, db)
+
 	h := &TestHarness{
-		DB:      db,
-		BaseURL: server.URL,
-		WsAddr:  wsAddr,
-		server:  server,
-		cancel:  cancel,
+		DB:         db,
+		BaseURL:    server.URL,
+		WsAddr:     wsAddr,
+		OrgID:      orgID,
+		AdminToken: adminToken,
+		server:     server,
+		cancel:     cancel,
 	}
 
 	t.Cleanup(h.Cleanup)
@@ -101,8 +132,9 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 }
 
 // Client returns a ServerClient configured to talk to this harness's server.
+// The client carries the harness admin token on every request.
 func (h *TestHarness) Client() client.ServerClient {
-	return client.NewHTTPClient(h.BaseURL)
+	return client.NewHTTPClientWithToken(h.BaseURL, h.AdminToken)
 }
 
 // Cleanup stops the server and closes the database connection.
@@ -134,6 +166,38 @@ func (t *testTransactor) RunInTx(ctx context.Context, fn func(ctx context.Contex
 		return err
 	}
 	return sqlTx.Commit()
+}
+
+// bootstrapOrgAndToken inserts a minimal org and admin API token directly in the DB.
+// This bypasses the HTTP API to avoid the chicken-and-egg problem where every endpoint
+// requires a token, but token creation requires an org that was created by an admin.
+func bootstrapOrgAndToken(t *testing.T, db *sql.DB) (orgID uuid.UUID, plainToken string) {
+	t.Helper()
+
+	orgID = uuid.New()
+	plainToken = uuid.New().String()
+	tokenHash := auth.SHA256Hex(plainToken)
+	tokenID := uuid.New()
+	now := time.Now().UTC()
+
+	_, err := db.Exec(
+		`INSERT INTO organizations (id, name, created_at) VALUES ($1, $2, $3)`,
+		orgID, "test-org-"+orgID.String()[:8], now,
+	)
+	if err != nil {
+		t.Fatalf("bootstrap org: %v", err)
+	}
+
+	_, err = db.Exec(
+		`INSERT INTO api_tokens (id, organization_id, token_hash, role, description, created_at)
+		 VALUES ($1, $2, $3, 'admin', 'test-harness', $4)`,
+		tokenID, orgID, tokenHash, now,
+	)
+	if err != nil {
+		t.Fatalf("bootstrap token: %v", err)
+	}
+
+	return orgID, plainToken
 }
 
 // RunSchema applies the database schema from db/schema.sql.

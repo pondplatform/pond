@@ -227,9 +227,8 @@ make build          # build all three binaries
 make server         # start server (needs DATABASE_URL)
 make agent          # start agent (needs POND_SERVER_ADDR, POND_AGENT_TOKEN)
 make cli            # build CLI binary
-make migrate        # run DB migrations
 make test           # run tests
-make e2e            # run end-to-end tests
+make test-integration # run integration tests
 ```
 
 Environment variables:

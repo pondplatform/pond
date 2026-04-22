@@ -2,17 +2,15 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/auth"
 	"github.com/pondplatform/pond/internal/server/events"
 	"github.com/pondplatform/pond/internal/server/store"
 )
@@ -55,13 +53,13 @@ func NewAgentHandler(clusters store.ClusterRepository, bus events.Bus) *AgentHan
 }
 
 func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
-	token := bearerToken(r)
+	token := auth.BearerToken(r)
 	if token == "" {
 		http.Error(w, "missing authorization", http.StatusUnauthorized)
 		return
 	}
 
-	hash := sha256hex(token)
+	hash := auth.SHA256Hex(token)
 	cluster, err := h.clusters.GetByTokenHash(r.Context(), hash)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -270,15 +268,3 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func bearerToken(r *http.Request) string {
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return ""
-	}
-	return strings.TrimPrefix(auth, "Bearer ")
-}
-
-func sha256hex(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
-}

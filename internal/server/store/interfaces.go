@@ -97,3 +97,18 @@ type ClusterRepository interface {
 	UpdateTokenHash(ctx context.Context, id uuid.UUID, tokenHash string) error
 	GetByTokenHash(ctx context.Context, tokenHash string) (*domain.Cluster, error)
 }
+
+// APITokenRepository manages API token persistence for RBAC.
+type APITokenRepository interface {
+	// GetByTokenHash looks up an active (non-revoked) token by its SHA-256 hash.
+	// Returns ErrNotFound if no active token matches.
+	GetByTokenHash(ctx context.Context, tokenHash string) (*domain.APIToken, error)
+	// Create persists a new token.
+	Create(ctx context.Context, token *domain.APIToken) error
+	// ListByOrganization returns all tokens for an org (including revoked).
+	ListByOrganization(ctx context.Context, orgID uuid.UUID) ([]domain.APIToken, error)
+	// Revoke sets revoked_at = now for the given token ID.
+	Revoke(ctx context.Context, id uuid.UUID) error
+	// UpdateLastUsed bumps last_used_at.
+	UpdateLastUsed(ctx context.Context, id uuid.UUID, t time.Time) error
+}

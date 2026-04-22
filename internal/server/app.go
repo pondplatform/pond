@@ -10,6 +10,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/pondplatform/pond/internal/common/config"
 	"github.com/pondplatform/pond/internal/server/api"
+	"github.com/pondplatform/pond/internal/server/auth"
 	"github.com/pondplatform/pond/internal/server/dependency"
 	"github.com/pondplatform/pond/internal/server/events"
 	"github.com/pondplatform/pond/internal/server/helmgen"
@@ -40,6 +41,7 @@ func Run(ctx context.Context, cfg Config) error {
 	envStore := store.NewEnvironmentStore(db)
 	serviceStore := store.NewServiceStore(db)
 	clusterStore := store.NewClusterStore(db)
+	apiTokenStore := store.NewAPITokenStore(db)
 
 	// Transactor for multi-step atomic writes in services
 	tx := newTransactor(db)
@@ -63,16 +65,23 @@ func Run(ctx context.Context, cfg Config) error {
 	// Agent handler
 	agentHandler := api.NewAgentHandler(clusterStore, bus)
 
+	// Auth components
+	authenticator := auth.NewTokenAuthenticator(apiTokenStore)
+	authorizer := auth.NewRoleAuthorizer()
+
 	// HTTP router
 	router := api.NewRouter(api.RouterDeps{
-		DeploySvc:    deploySvc,
-		Orgs:         orgStore,
-		Projects:     projectStore,
-		Envs:         envStore,
-		Services:     serviceStore,
-		Clusters:     clusterStore,
-		SpecRegistry: specRegistry,
-		AgentHandler: agentHandler,
+		DeploySvc:     deploySvc,
+		Orgs:          orgStore,
+		Projects:      projectStore,
+		Envs:          envStore,
+		Services:      serviceStore,
+		Clusters:      clusterStore,
+		Tokens:        apiTokenStore,
+		SpecRegistry:  specRegistry,
+		AgentHandler:  agentHandler,
+		Authenticator: authenticator,
+		Authorizer:    authorizer,
 	})
 
 	log.Printf("server listening on %s", cfg.ListenAddr)

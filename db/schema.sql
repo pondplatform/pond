@@ -102,3 +102,17 @@ CREATE INDEX command_logs_command on command_logs (command_id, logged_at);
 -- Add FK constraint for helm_command_id after commands table exists
 ALTER TABLE deployments ADD CONSTRAINT deployments_helm_command_id_fkey
     FOREIGN KEY (helm_command_id) REFERENCES commands(id);
+
+-- API tokens for RBAC
+CREATE TABLE api_tokens (
+    id              UUID PRIMARY KEY,
+    organization_id UUID NOT NULL REFERENCES organizations(id),
+    token_hash      TEXT NOT NULL UNIQUE,
+    role            TEXT NOT NULL,  -- 'admin' | 'member' | 'viewer'
+    description     TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at    TIMESTAMPTZ,
+    revoked_at      TIMESTAMPTZ
+);
+
+CREATE INDEX api_tokens_org_id ON api_tokens (organization_id);

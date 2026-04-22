@@ -21,6 +21,7 @@ type ServerClient interface {
 
 type httpClient struct {
 	baseURL    string
+	token      string
 	httpClient *http.Client
 }
 
@@ -31,13 +32,21 @@ func NewHTTPClient(baseURL string) ServerClient {
 	}
 }
 
+func NewHTTPClientWithToken(baseURL, token string) ServerClient {
+	return &httpClient{
+		baseURL:    baseURL,
+		token:      token,
+		httpClient: &http.Client{},
+	}
+}
+
 func (c *httpClient) SubmitDeployment(ctx context.Context, req service.SubmitRequest) (*domain.Deployment, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := c.do(ctx, http.MethodPost, "/deployments", bytes.NewReader(body))
+	resp, err := c.do(ctx, http.MethodPost, "/api/v1/deployments", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +64,7 @@ func (c *httpClient) SubmitDeployment(ctx context.Context, req service.SubmitReq
 }
 
 func (c *httpClient) GetDeployment(ctx context.Context, id uuid.UUID) (*domain.Deployment, error) {
-	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/deployments/%s", id), nil)
+	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/deployments/%s", id), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +88,9 @@ func (c *httpClient) do(ctx context.Context, method, path string, body io.Reader
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
 	resp, err := c.httpClient.Do(req)

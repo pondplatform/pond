@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/server/auth"
 	"github.com/pondplatform/pond/internal/server/events"
 	"github.com/pondplatform/pond/internal/testutil"
 )
@@ -33,7 +34,7 @@ func TestAgentHandler_ServeWS_Auth(t *testing.T) {
 
 	t.Run("Unauthorized - invalid token", func(t *testing.T) {
 		token := "my-token"
-		hash := sha256hex(token)
+		hash := auth.SHA256Hex(token)
 		clusterRepo.GetByTokenHashFn = func(ctx context.Context, h string) (*domain.Cluster, error) {
 			if h == hash {
 				return nil, domain.ErrNotFound
@@ -65,7 +66,7 @@ func TestAgentHandler_EventFlow(t *testing.T) {
 	handler := NewAgentHandler(clusterRepo, bus)
 
 	token := "my-token"
-	hash := sha256hex(token)
+	hash := auth.SHA256Hex(token)
 	clusterID := uuid.New()
 	clusterRepo.GetByTokenHashFn = func(ctx context.Context, h string) (*domain.Cluster, error) {
 		if h == hash {

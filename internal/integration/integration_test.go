@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -87,14 +86,13 @@ func applySchema(db *sql.DB) error {
 	schemaPath := findSchemaPath()
 	schema, err := os.ReadFile(schemaPath)
 	if err != nil {
-		return fmt.Errorf("read schema: %w", err)
+		return err
 	}
 	_, err = db.Exec(string(schema))
 	return err
 }
 
 func findSchemaPath() string {
-	// Try common paths
 	paths := []string{
 		"../../db/schema.sql",
 		"db/schema.sql",
@@ -104,7 +102,6 @@ func findSchemaPath() string {
 			return p
 		}
 	}
-	// Fallback: assume we're in project root
 	return "db/schema.sql"
 }
 
@@ -113,12 +110,10 @@ func TestDeployment_SimpleSucceeds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Create harness and seed data
 	h := NewTestHarness(t, testConnStr)
-	seed := SeedFixtures(t, h.DB)
+	scenario := BuildScenario(ctx, t, h)
 
-	// Start fake agent
-	fa := NewFakeAgent(h.WsAddr, seed.AgentToken, DefaultBehavior)
+	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, DefaultBehavior)
 	if err := fa.Connect(ctx); err != nil {
 		t.Fatalf("connect fake agent: %v", err)
 	}
@@ -129,10 +124,9 @@ func TestDeployment_SimpleSucceeds(t *testing.T) {
 	}()
 	defer fa.Stop()
 
-	// Submit deployment
 	c := h.Client()
 	cfg := MinimalServiceConfig("test-service")
-	req := SubmitRequest(seed, cfg, "v1.0.0")
+	req := SubmitRequest(scenario, cfg, "v1.0.0")
 
 	deployment, err := c.SubmitDeployment(ctx, req)
 	if err != nil {
@@ -143,14 +137,12 @@ func TestDeployment_SimpleSucceeds(t *testing.T) {
 		t.Errorf("expected initial status 'pending', got %q", deployment.Status)
 	}
 
-	// Poll until deployment completes or times out
 	finalStatus := pollDeploymentStatus(ctx, t, c, deployment.ID, 10*time.Second)
 
 	if finalStatus != "succeeded" {
 		t.Errorf("expected final status 'succeeded', got %q", finalStatus)
 	}
 
-	// Verify agent received exactly one helm.upgrade command
 	commands := fa.ReceivedCommands()
 	if len(commands) != 1 {
 		t.Errorf("expected 1 command, got %d", len(commands))
@@ -159,7 +151,6 @@ func TestDeployment_SimpleSucceeds(t *testing.T) {
 		t.Errorf("expected command type %q, got %q", agent.CommandHelmUpgrade, commands[0].Type)
 	}
 
-	// Verify DB state
 	var dbStatus string
 	err = h.DB.QueryRow("SELECT status FROM deployments WHERE id = $1", deployment.ID).Scan(&dbStatus)
 	if err != nil {
@@ -176,10 +167,9 @@ func TestDeployment_HelmFails(t *testing.T) {
 	defer cancel()
 
 	h := NewTestHarness(t, testConnStr)
-	seed := SeedFixtures(t, h.DB)
+	scenario := BuildScenario(ctx, t, h)
 
-	// Use failing behavior
-	fa := NewFakeAgent(h.WsAddr, seed.AgentToken, FailingBehavior("helm upgrade failed: release not found"))
+	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, FailingBehavior("helm upgrade failed: release not found"))
 	if err := fa.Connect(ctx); err != nil {
 		t.Fatalf("connect fake agent: %v", err)
 	}
@@ -192,7 +182,7 @@ func TestDeployment_HelmFails(t *testing.T) {
 
 	c := h.Client()
 	cfg := MinimalServiceConfig("test-service")
-	req := SubmitRequest(seed, cfg, "v1.0.0")
+	req := SubmitRequest(scenario, cfg, "v1.0.0")
 
 	deployment, err := c.SubmitDeployment(ctx, req)
 	if err != nil {
@@ -205,7 +195,6 @@ func TestDeployment_HelmFails(t *testing.T) {
 		t.Errorf("expected final status 'failed', got %q", finalStatus)
 	}
 
-	// Verify command was received
 	commands := fa.ReceivedCommands()
 	if len(commands) != 1 {
 		t.Errorf("expected 1 command, got %d", len(commands))
@@ -218,26 +207,15 @@ func TestDeployment_WithTofuDep(t *testing.T) {
 	defer cancel()
 
 	h := NewTestHarness(t, testConnStr)
-	seed := SeedFixtures(t, h.DB)
+	scenario := BuildScenario(ctx, t, h)
 
-	// Insert dependency config to mark postgres as managed
-	_, err := h.DB.Exec(`
-		INSERT INTO dependency_configs (id, service_id, environment_id, dependency_name, dependency_type, managed, provider_inputs)
-		VALUES ($1, $2, $3, 'postgres', 'postgres', true, '{}')
-	`, newUUID(), seed.ServiceID, seed.EnvID)
-	if err != nil {
-		// If the table doesn't exist or has different schema, skip this test
-		t.Skipf("could not insert dependency config (may need schema update): %v", err)
-	}
-
-	// Behavior: succeed tofu with output, then succeed helm
 	behavior := TofuOutputBehavior(map[string]any{
 		"host":     "db.test.local",
 		"port":     5432,
 		"database": "testdb",
 	})
 
-	fa := NewFakeAgent(h.WsAddr, seed.AgentToken, behavior)
+	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, behavior)
 	if err := fa.Connect(ctx); err != nil {
 		t.Fatalf("connect fake agent: %v", err)
 	}
@@ -250,11 +228,18 @@ func TestDeployment_WithTofuDep(t *testing.T) {
 
 	c := h.Client()
 	cfg := ServiceConfigWithDep("test-service")
-	req := SubmitRequest(seed, cfg, "v1.0.0")
+	req := SubmitRequest(scenario, cfg, "v1.0.0")
 
+	// Submit — dep created in awaiting_input
 	deployment, err := c.SubmitDeployment(ctx, req)
 	if err != nil {
 		t.Fatalf("submit deployment: %v", err)
+	}
+
+	// Provide input: managed=true triggers tofu.apply
+	sc := newScenarioClient(h.BaseURL, h.AdminToken)
+	if err := sc.provideDepInput(ctx, deployment.ID, "postgres", true, map[string]any{}); err != nil {
+		t.Fatalf("provide dep input: %v", err)
 	}
 
 	finalStatus := pollDeploymentStatus(ctx, t, c, deployment.ID, 15*time.Second)
@@ -263,7 +248,6 @@ func TestDeployment_WithTofuDep(t *testing.T) {
 		t.Errorf("expected final status 'succeeded', got %q", finalStatus)
 	}
 
-	// Verify agent received tofu.apply then helm.upgrade
 	commands := fa.ReceivedCommands()
 	if len(commands) < 2 {
 		t.Errorf("expected at least 2 commands, got %d", len(commands))
@@ -283,18 +267,8 @@ func TestDeployment_TofuFails(t *testing.T) {
 	defer cancel()
 
 	h := NewTestHarness(t, testConnStr)
-	seed := SeedFixtures(t, h.DB)
+	scenario := BuildScenario(ctx, t, h)
 
-	// Insert dependency config
-	_, err := h.DB.Exec(`
-		INSERT INTO dependency_configs (id, service_id, environment_id, dependency_name, dependency_type, managed, provider_inputs)
-		VALUES ($1, $2, $3, 'postgres', 'postgres', true, '{}')
-	`, newUUID(), seed.ServiceID, seed.EnvID)
-	if err != nil {
-		t.Skipf("could not insert dependency config: %v", err)
-	}
-
-	// Fail tofu commands
 	behavior := PerCommandBehavior(map[agent.CommandType]func(*agent.Command) *agent.CommandResult{
 		agent.CommandTofuApply: func(cmd *agent.Command) *agent.CommandResult {
 			return &agent.CommandResult{
@@ -305,7 +279,7 @@ func TestDeployment_TofuFails(t *testing.T) {
 		},
 	})
 
-	fa := NewFakeAgent(h.WsAddr, seed.AgentToken, behavior)
+	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, behavior)
 	if err := fa.Connect(ctx); err != nil {
 		t.Fatalf("connect fake agent: %v", err)
 	}
@@ -318,11 +292,18 @@ func TestDeployment_TofuFails(t *testing.T) {
 
 	c := h.Client()
 	cfg := ServiceConfigWithDep("test-service")
-	req := SubmitRequest(seed, cfg, "v1.0.0")
+	req := SubmitRequest(scenario, cfg, "v1.0.0")
 
+	// Submit — dep created in awaiting_input
 	deployment, err := c.SubmitDeployment(ctx, req)
 	if err != nil {
 		t.Fatalf("submit deployment: %v", err)
+	}
+
+	// Provide input: managed=true triggers tofu.apply (which will fail)
+	sc := newScenarioClient(h.BaseURL, h.AdminToken)
+	if err := sc.provideDepInput(ctx, deployment.ID, "postgres", true, map[string]any{}); err != nil {
+		t.Fatalf("provide dep input: %v", err)
 	}
 
 	finalStatus := pollDeploymentStatus(ctx, t, c, deployment.ID, 10*time.Second)
@@ -331,7 +312,6 @@ func TestDeployment_TofuFails(t *testing.T) {
 		t.Errorf("expected final status 'failed', got %q", finalStatus)
 	}
 
-	// Verify only tofu command was received (no helm after failure)
 	commands := fa.ReceivedCommands()
 	if len(commands) != 1 {
 		t.Errorf("expected 1 command (only tofu), got %d", len(commands))
@@ -342,8 +322,6 @@ func TestDeployment_TofuFails(t *testing.T) {
 }
 
 // TestDeployment_AgentDisconnectRequeues tests that agent disconnect causes command requeue.
-// This test is skipped by default as it's inherently racy - the disconnect timing is hard
-// to control reliably without more sophisticated synchronization primitives.
 func TestDeployment_AgentDisconnectRequeues(t *testing.T) {
 	t.Skip("skipping: disconnect requeue test is inherently racy and needs more sophisticated mocking")
 }
@@ -354,15 +332,14 @@ func TestDeployment_WithLogs(t *testing.T) {
 	defer cancel()
 
 	h := NewTestHarness(t, testConnStr)
-	seed := SeedFixtures(t, h.DB)
+	scenario := BuildScenario(ctx, t, h)
 
-	// Behavior with logs
 	behavior := Behavior{
 		Handler: DefaultBehavior.Handler,
 		Logs:    []string{"Starting helm upgrade...", "Waiting for pods...", "Upgrade complete"},
 	}
 
-	fa := NewFakeAgent(h.WsAddr, seed.AgentToken, behavior)
+	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, behavior)
 	if err := fa.Connect(ctx); err != nil {
 		t.Fatalf("connect fake agent: %v", err)
 	}
@@ -375,7 +352,7 @@ func TestDeployment_WithLogs(t *testing.T) {
 
 	c := h.Client()
 	cfg := MinimalServiceConfig("test-service")
-	req := SubmitRequest(seed, cfg, "v1.0.0")
+	req := SubmitRequest(scenario, cfg, "v1.0.0")
 
 	deployment, err := c.SubmitDeployment(ctx, req)
 	if err != nil {
@@ -388,7 +365,6 @@ func TestDeployment_WithLogs(t *testing.T) {
 		t.Errorf("expected final status 'succeeded', got %q", finalStatus)
 	}
 
-	// Verify logs were stored (query command_logs table)
 	var logCount int
 	err = h.DB.QueryRow(`
 		SELECT COUNT(*) FROM command_logs cl
@@ -403,8 +379,6 @@ func TestDeployment_WithLogs(t *testing.T) {
 		t.Errorf("expected 3 log entries, got %d", logCount)
 	}
 }
-
-// Helper functions
 
 func pollDeploymentStatus(ctx context.Context, t *testing.T, c client.ServerClient, id uuid.UUID, timeout time.Duration) string {
 	t.Helper()
@@ -450,10 +424,3 @@ func waitForCommands(t *testing.T, fa *FakeAgent, count int, timeout time.Durati
 		time.Sleep(50 * time.Millisecond)
 	}
 }
-
-func newUUID() string {
-	return uuid.New().String()
-}
-
-// Suppress unused fmt import warning
-var _ = fmt.Sprintf
