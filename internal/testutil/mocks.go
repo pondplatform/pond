@@ -326,15 +326,22 @@ func (m *MockClusterRepository) UpdateTokenHash(ctx context.Context, id uuid.UUI
 // --- events.Bus ---
 
 type MockBus struct {
-	SubscribeFn func(topic string, handler events.Handler) func()
-	PublishFn   func(ctx context.Context, topic string, v any)
+	SubscribeWorkFn   func(topic string, handler events.Handler) (func(), error)
+	SubscribeFanoutFn func(topic string, handler events.Handler) (func(), error)
+	PublishFn         func(ctx context.Context, topic string, v any)
 }
 
-func (m *MockBus) Subscribe(topic string, handler events.Handler) func() {
-	if m.SubscribeFn != nil {
-		return m.SubscribeFn(topic, handler)
+func (m *MockBus) SubscribeWork(topic string, handler events.Handler) (func(), error) {
+	if m.SubscribeWorkFn != nil {
+		return m.SubscribeWorkFn(topic, handler)
 	}
-	return func() {}
+	return func() {}, nil
+}
+func (m *MockBus) SubscribeFanout(topic string, handler events.Handler) (func(), error) {
+	if m.SubscribeFanoutFn != nil {
+		return m.SubscribeFanoutFn(topic, handler)
+	}
+	return func() {}, nil
 }
 func (m *MockBus) Publish(ctx context.Context, topic string, v any) {
 	if m.PublishFn != nil {

@@ -115,7 +115,7 @@ func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*dom
 		// Only enqueue helm if there are no dependencies at all
 		// If there are dependencies but none awaiting input, commands will be dispatched below
 		if len(deps) == 0 {
-			if err := s.enqueueHelm(ctx, tx, d, env); err != nil {
+			if _, err := s.enqueueHelm(ctx, tx, d, env); err != nil {
 				return err
 			}
 		} else if anyDepAwaitingInput(deps) {
@@ -303,62 +303,93 @@ func (s *deploymentService) Cancel(ctx context.Context, deploymentID uuid.UUID) 
 }
 
 // Start subscribes to every handler->service topic and drives the deployment
-// state machine in response. Blocks until ctx is cancelled.
-func (s *deploymentService) Start(ctx context.Context) {
-	unsubs := []func(){
-		s.bus.Subscribe(events.TopicCommandResults, func(v any) {
-			res, ok := v.(events.CommandResult)
-			if !ok {
-				log.Printf("deployment service: unexpected event type %T on command_results", v)
-				return
-			}
-			if err := s.processResult(ctx, res); err != nil {
-				log.Printf("deployment service: processResult for command %s: %v", res.CommandID, err)
-			}
-		}),
-		s.bus.Subscribe(events.TopicAgentReady, func(v any) {
-			e, ok := v.(events.AgentReady)
-			if !ok {
-				log.Printf("deployment service: unexpected event type %T on agent_ready", v)
-				return
-			}
-			s.handleAgentReady(ctx, e)
-		}),
-		s.bus.Subscribe(events.TopicCommandStarted, func(v any) {
-			e, ok := v.(events.CommandStarted)
-			if !ok {
-				log.Printf("deployment service: unexpected event type %T on command_started", v)
-				return
-			}
-			s.handleCommandStarted(ctx, e)
-		}),
-		s.bus.Subscribe(events.TopicCommandLogs, func(v any) {
-			e, ok := v.(events.CommandLog)
-			if !ok {
-				log.Printf("deployment service: unexpected event type %T on command_logs", v)
-				return
-			}
-			s.handleCommandLog(ctx, e)
-		}),
-		s.bus.Subscribe(events.TopicAgentDisconnected, func(v any) {
-			e, ok := v.(events.AgentDisconnected)
-			if !ok {
-				log.Printf("deployment service: unexpected event type %T on agent_disconnected", v)
-				return
-			}
-			s.handleAgentDisconnected(ctx, e)
-		}),
-		s.bus.Subscribe(events.TopicUserInputProvided, func(v any) {
-			e, ok := v.(events.UserInputProvided)
-			if !ok {
-				log.Printf("deployment service: unexpected event type %T on user_input.provided", v)
-				return
-			}
-			s.handleUserInputProvided(ctx, e)
-		}),
+// state machine in response. Returns an error if any subscription fails.
+// Blocks until ctx is cancelled.
+func (s *deploymentService) Start(ctx context.Context) error {
+	type sub struct {
+		topic string
+		fn    func() (func(), error)
 	}
+	subs := []sub{
+		{events.TopicCommandResults, func() (func(), error) {
+			return s.bus.SubscribeWork(events.TopicCommandResults, func(v any) {
+				res, ok := v.(events.CommandResult)
+				if !ok {
+					log.Printf("deployment service: unexpected event type %T on command_results", v)
+					return
+				}
+				if err := s.processResult(ctx, res); err != nil {
+					log.Printf("deployment service: processResult for command %s: %v", res.CommandID, err)
+				}
+			})
+		}},
+		{events.TopicAgentReady, func() (func(), error) {
+			return s.bus.SubscribeWork(events.TopicAgentReady, func(v any) {
+				e, ok := v.(events.AgentReady)
+				if !ok {
+					log.Printf("deployment service: unexpected event type %T on agent_ready", v)
+					return
+				}
+				s.handleAgentReady(ctx, e)
+			})
+		}},
+		{events.TopicCommandStarted, func() (func(), error) {
+			return s.bus.SubscribeWork(events.TopicCommandStarted, func(v any) {
+				e, ok := v.(events.CommandStarted)
+				if !ok {
+					log.Printf("deployment service: unexpected event type %T on command_started", v)
+					return
+				}
+				s.handleCommandStarted(ctx, e)
+			})
+		}},
+		{events.TopicCommandLogs, func() (func(), error) {
+			return s.bus.SubscribeFanout(events.TopicCommandLogs, func(v any) {
+				e, ok := v.(events.CommandLog)
+				if !ok {
+					log.Printf("deployment service: unexpected event type %T on command_logs", v)
+					return
+				}
+				s.handleCommandLog(ctx, e)
+			})
+		}},
+		{events.TopicAgentDisconnected, func() (func(), error) {
+			return s.bus.SubscribeWork(events.TopicAgentDisconnected, func(v any) {
+				e, ok := v.(events.AgentDisconnected)
+				if !ok {
+					log.Printf("deployment service: unexpected event type %T on agent_disconnected", v)
+					return
+				}
+				s.handleAgentDisconnected(ctx, e)
+			})
+		}},
+		{events.TopicUserInputProvided, func() (func(), error) {
+			return s.bus.SubscribeWork(events.TopicUserInputProvided, func(v any) {
+				e, ok := v.(events.UserInputProvided)
+				if !ok {
+					log.Printf("deployment service: unexpected event type %T on user_input.provided", v)
+					return
+				}
+				s.handleUserInputProvided(ctx, e)
+			})
+		}},
+	}
+
+	var unsubs []func()
+	for _, s := range subs {
+		unsub, err := s.fn()
+		if err != nil {
+			for _, u := range unsubs {
+				u()
+			}
+			return fmt.Errorf("subscribe %s: %w", s.topic, err)
+		}
+		unsubs = append(unsubs, unsub)
+	}
+
 	<-ctx.Done()
 	for _, u := range unsubs {
 		u()
 	}
+	return nil
 }

@@ -23,8 +23,8 @@ type DeploymentService interface {
 	// Start registers subscriptions on the event bus (agent.ready,
 	// command.started, command.results, command.logs, agent.disconnected,
 	// user_input.provided) and drives the deployment state machine in response.
-	// Blocks until ctx is cancelled.
-	Start(ctx context.Context)
+	// Returns an error if any subscription fails. Blocks until ctx is cancelled.
+	Start(ctx context.Context) error
 }
 
 type UserInputRequest struct {

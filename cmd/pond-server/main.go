@@ -17,6 +17,7 @@ func main() {
 	cfg := server.Config{
 		DatabaseURL: envOrDefault("DATABASE_URL", "postgres://localhost:5432/pond?sslmode=disable"),
 		ListenAddr:  envOrDefault("LISTEN_ADDR", ":8080"),
+		RabbitMQURL: envOrDefault("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
 		AdminKey:    os.Getenv("POND_ADMIN_KEY"),
 		JWTSecret:   os.Getenv("POND_JWT_SECRET"),
 	}

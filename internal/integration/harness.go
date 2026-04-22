@@ -42,8 +42,9 @@ type TestHarness struct {
 }
 
 // NewTestHarness creates a new test harness with a running server.
-// The server uses the database at the given connection string.
-func NewTestHarness(t *testing.T, connStr string) *TestHarness {
+// The server uses the database at the given connection string and the given
+// RabbitMQ AMQP URL.
+func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 	t.Helper()
 
 	db, err := sql.Open("postgres", connStr)
@@ -72,7 +73,13 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 
 	tx := newTestTransactor(db)
 	specRegistry := dependency.NewSpecRegistry()
-	bus := events.NewMemoryBus()
+	bus, closeBus, err := events.NewRabbitMQBus(amqpURL)
+	if err != nil {
+		cancel()
+		db.Close()
+		t.Fatalf("new rabbitmq bus: %v", err)
+	}
+	t.Cleanup(closeBus)
 
 	depSvc := service.NewDependencyService(specRegistry)
 	helmGenerator := helmgen.NewGenerator()

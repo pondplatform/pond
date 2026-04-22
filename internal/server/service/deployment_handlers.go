@@ -102,7 +102,7 @@ func (s *deploymentService) handleUserInputProvided(ctx context.Context, e event
 	}
 
 	// All inputs provided - schedule ALL dependencies at once
-	scheduledDeps, err := s.scheduleAllDepsAfterInput(ctx, dep, env)
+	scheduledDeps, helmCmd, err := s.scheduleAllDepsAfterInput(ctx, dep, env)
 	if err != nil {
 		log.Printf("deployment service: schedule all deps for %s: %v", e.DeploymentID, err)
 		return
@@ -110,12 +110,23 @@ func (s *deploymentService) handleUserInputProvided(ctx context.Context, e event
 
 	// Publish CommandQueued events for all pending managed deps
 	s.publishScheduledDepEvents(ctx, scheduledDeps, env.ClusterID, e.DeploymentID)
+
+	// If all deps were non-managed, helm was enqueued directly — notify the agent
+	if helmCmd != nil {
+		s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(helmCmd.ClusterID), events.CommandQueued{
+			ClusterID:    helmCmd.ClusterID,
+			CommandID:    helmCmd.ID,
+			DeploymentID: e.DeploymentID,
+		})
+	}
 }
 
 // scheduleAllDepsAfterInput schedules all dependencies after user input is provided.
-// Returns the list of scheduled dependencies for event publishing.
-func (s *deploymentService) scheduleAllDepsAfterInput(ctx context.Context, dep *domain.Deployment, env *domain.Environment) ([]domain.DependencyDeployment, error) {
+// Returns the list of scheduled dependencies for event publishing, and the helm
+// command if one was enqueued (all-non-managed case).
+func (s *deploymentService) scheduleAllDepsAfterInput(ctx context.Context, dep *domain.Deployment, env *domain.Environment) ([]domain.DependencyDeployment, *domain.Command, error) {
 	var scheduledDeps []domain.DependencyDeployment
+	var helmCmd *domain.Command
 
 	err := s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
 		depConfigs, err := tx.DeploymentInfo.ListDepConfigs(ctx, dep.ID)
@@ -150,12 +161,13 @@ func (s *deploymentService) scheduleAllDepsAfterInput(ctx context.Context, dep *
 			}
 		}
 		if allSucceeded && len(scheduledDeps) > 0 {
-			return s.enqueueHelm(ctx, tx, dep, env)
+			helmCmd, err = s.enqueueHelm(ctx, tx, dep, env)
+			return err
 		}
 		return nil
 	})
 
-	return scheduledDeps, err
+	return scheduledDeps, helmCmd, err
 }
 
 // publishScheduledDepEvents publishes CommandQueued events for pending managed deps.

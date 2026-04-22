@@ -21,6 +21,7 @@ import (
 type Config struct {
 	DatabaseURL string
 	ListenAddr  string
+	RabbitMQURL string
 	// AdminKey grants unrestricted access to all API endpoints when set.
 	// Configured via the POND_ADMIN_KEY environment variable.
 	AdminKey  string
@@ -57,7 +58,11 @@ func Run(ctx context.Context, cfg Config) error {
 	specRegistry := dependency.NewSpecRegistry()
 
 	// Event bus
-	bus := events.NewMemoryBus()
+	bus, closeBus, err := events.NewRabbitMQBus(cfg.RabbitMQURL)
+	if err != nil {
+		return fmt.Errorf("rabbitmq: %w", err)
+	}
+	defer closeBus()
 
 	// Services
 	depSvc := service.NewDependencyService(specRegistry)
@@ -66,8 +71,9 @@ func Run(ctx context.Context, cfg Config) error {
 	resolver := config.NewResolver()
 	deploySvc := service.NewDeploymentService(deploymentInfoStore, serviceStore, envStore, depSvc, helmGenerator, tmplRenderer, resolver, tx, bus)
 
-	// Start the deployment service event loop (subscribes to command.results topic).
-	go deploySvc.Start(ctx)
+	// Start the deployment service event loop (subscribes to all state-machine topics).
+	svcErr := make(chan error, 1)
+	go func() { svcErr <- deploySvc.Start(ctx) }()
 
 	// Agent handler
 	agentHandler := api.NewAgentHandler(clusterStore, bus)
@@ -99,12 +105,21 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	go func() {
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case err := <-svcErr:
+			if err != nil {
+				log.Printf("deployment service: %v", err)
+			}
+		}
 		server.Shutdown(context.Background())
 	}()
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("listen: %w", err)
+	}
+	if err := <-svcErr; err != nil {
+		return fmt.Errorf("deployment service: %w", err)
 	}
 	return nil
 }

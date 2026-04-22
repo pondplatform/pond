@@ -106,7 +106,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	// Per-event-type cluster subscribers: the only bridge from the bus into
 	// this connection's goroutine. Never touch handler-local state directly.
-	unsubDispatch := h.bus.Subscribe(events.ClusterCommandDispatchTopic(cluster.ID), func(v any) {
+	unsubDispatch, err := h.bus.SubscribeWork(events.ClusterCommandDispatchTopic(cluster.ID), func(v any) {
 		e, ok := v.(events.CommandDispatch)
 		if !ok {
 			return
@@ -121,9 +121,13 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			log.Printf("agent ws: dropped duplicate CommandDispatch for cluster %s", cluster.ID)
 		}
 	})
+	if err != nil {
+		log.Printf("agent ws: subscribe dispatch for cluster %s: %v", cluster.ID, err)
+		return
+	}
 	defer unsubDispatch()
 
-	unsubQueued := h.bus.Subscribe(events.ClusterCommandQueuedTopic(cluster.ID), func(v any) {
+	unsubQueued, err := h.bus.SubscribeWork(events.ClusterCommandQueuedTopic(cluster.ID), func(v any) {
 		if _, ok := v.(events.CommandQueued); !ok {
 			return
 		}
@@ -132,16 +136,18 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 	})
+	if err != nil {
+		log.Printf("agent ws: subscribe queued for cluster %s: %v", cluster.ID, err)
+		return
+	}
 	defer unsubQueued()
 
 	// Connection state — only mutated on the main goroutine below.
 	var activeCommandID uuid.UUID
 
-	// requestNext publishes AgentReady and, because the in-memory bus
-	// delivers synchronously, any CommandDispatch the service emits in
-	// response will already be sitting on dispatchCh by the time Publish
-	// returns. We pull it (non-blocking) and either send a command frame
-	// or fall back to an "idle" frame.
+	// requestNext publishes AgentReady and waits briefly for the service to
+	// respond with a CommandDispatch. Falls back to "idle" if no command
+	// arrives within the window.
 	requestNext := func() {
 		h.bus.Publish(ctx, events.TopicAgentReady, events.AgentReady{ClusterID: cluster.ID})
 		select {
@@ -155,7 +161,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			if err := conn.WriteJSON(wsEnvelope{Type: "command", Data: data}); err != nil {
 				log.Printf("agent ws write command: %v", err)
 			}
-		default:
+		case <-time.After(200 * time.Millisecond):
 			if err := conn.WriteJSON(wsEnvelope{Type: "idle"}); err != nil {
 				log.Printf("agent ws write idle: %v", err)
 			}

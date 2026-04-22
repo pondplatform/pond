@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -20,6 +21,7 @@ import (
 )
 
 var testConnStr string
+var testAMQPURL string
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
@@ -45,6 +47,28 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		log.Fatalf("get connection string: %v", err)
 	}
+
+	// Start RabbitMQ container
+	rmqContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:        "rabbitmq:4-alpine",
+			ExposedPorts: []string{"5672/tcp"},
+			WaitingFor:   wait.ForLog("Server startup complete").WithStartupTimeout(60 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		log.Fatalf("start rabbitmq container: %v", err)
+	}
+	rmqHost, err := rmqContainer.Host(ctx)
+	if err != nil {
+		log.Fatalf("rabbitmq host: %v", err)
+	}
+	rmqPort, err := rmqContainer.MappedPort(ctx, "5672")
+	if err != nil {
+		log.Fatalf("rabbitmq port: %v", err)
+	}
+	testAMQPURL = fmt.Sprintf("amqp://guest:guest@%s:%s/", rmqHost, rmqPort.Port())
 
 	// Apply schema with retry
 	var db *sql.DB
@@ -78,6 +102,9 @@ func TestMain(m *testing.M) {
 	if err := pgContainer.Terminate(ctx); err != nil {
 		log.Printf("terminate postgres container: %v", err)
 	}
+	if err := rmqContainer.Terminate(ctx); err != nil {
+		log.Printf("terminate rabbitmq container: %v", err)
+	}
 
 	os.Exit(code)
 }
@@ -110,7 +137,7 @@ func TestDeployment_SimpleSucceeds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr)
+	h := NewTestHarness(t, testConnStr, testAMQPURL)
 	scenario := BuildScenario(ctx, t, h)
 
 	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, DefaultBehavior)
@@ -166,7 +193,7 @@ func TestDeployment_HelmFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr)
+	h := NewTestHarness(t, testConnStr, testAMQPURL)
 	scenario := BuildScenario(ctx, t, h)
 
 	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, FailingBehavior("helm upgrade failed: release not found"))
@@ -206,7 +233,7 @@ func TestDeployment_WithTofuDep(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr)
+	h := NewTestHarness(t, testConnStr, testAMQPURL)
 	scenario := BuildScenario(ctx, t, h)
 
 	behavior := TofuOutputBehavior(map[string]any{
@@ -266,7 +293,7 @@ func TestDeployment_TofuFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr)
+	h := NewTestHarness(t, testConnStr, testAMQPURL)
 	scenario := BuildScenario(ctx, t, h)
 
 	behavior := PerCommandBehavior(map[agent.CommandType]func(*agent.Command) *agent.CommandResult{
@@ -331,7 +358,7 @@ func TestDeployment_WithLogs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr)
+	h := NewTestHarness(t, testConnStr, testAMQPURL)
 	scenario := BuildScenario(ctx, t, h)
 
 	behavior := Behavior{

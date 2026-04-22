@@ -16,6 +16,16 @@ services:
       timeout: 5s
       retries: 10
 
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    ports:
+      - "5672:5672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
   pond-server:
     build:
       context: .
@@ -23,10 +33,13 @@ services:
     environment:
       DATABASE_URL: postgres://pond:pond@postgres:5432/pond?sslmode=disable
       LISTEN_ADDR: ":8080"
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     ports:
       - "8080:8080"
     depends_on:
       postgres:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
 networks:
