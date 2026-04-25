@@ -26,16 +26,16 @@ func NewEnvironmentHandler(envs store.EnvironmentRepository, projects store.Proj
 type createEnvironmentRequest struct {
 	Name                   string     `json:"name"`
 	Namespace              string     `json:"namespace"`
-	ClusterID              uuid.UUID  `json:"cluster_id"`
-	ParentEnvironmentID    *uuid.UUID `json:"parent_environment_id"`
-	DefaultIngressBaseHost string     `json:"default_ingress_base_host"`
+	ClusterID              uuid.UUID  `json:"clusterId"`
+	ParentEnvironmentID    *uuid.UUID `json:"parentEnvironmentId"`
+	DefaultIngressBaseHost string     `json:"defaultIngressBaseHost"`
 }
 
 type updateEnvironmentRequest struct {
-	ClusterID              *uuid.UUID `json:"cluster_id"`
+	ClusterID              *uuid.UUID `json:"clusterId"`
 	Namespace              *string    `json:"namespace"`
-	ParentEnvironmentID    *uuid.UUID `json:"parent_environment_id"`
-	DefaultIngressBaseHost *string    `json:"default_ingress_base_host"`
+	ParentEnvironmentID    *uuid.UUID `json:"parentEnvironmentId"`
+	DefaultIngressBaseHost *string    `json:"defaultIngressBaseHost"`
 }
 
 func (h *EnvironmentHandler) Create(w http.ResponseWriter, r *http.Request) {

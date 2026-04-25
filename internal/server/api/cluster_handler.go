@@ -33,11 +33,11 @@ type createClusterRequest struct {
 // It omits the token hash and optionally includes the plaintext token (only at creation).
 type clusterResponse struct {
 	ID             uuid.UUID  `json:"id"`
-	OrganizationID uuid.UUID  `json:"organization_id"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
 	Name           string     `json:"name"`
-	AgentToken     string     `json:"agent_token,omitempty"`
-	LastSeenAt     *time.Time `json:"last_seen_at"`
-	CreatedAt      time.Time  `json:"created_at"`
+	AgentToken     string     `json:"agentToken,omitempty"`
+	LastSeenAt     *time.Time `json:"lastSeenAt"`
+	CreatedAt      time.Time  `json:"createdAt"`
 }
 
 func clusterToResponse(c *domain.Cluster, token string) clusterResponse {
@@ -52,7 +52,7 @@ func clusterToResponse(c *domain.Cluster, token string) clusterResponse {
 }
 
 type rotateTokenResponse struct {
-	AgentToken string `json:"agent_token"`
+	AgentToken string `json:"agentToken"`
 }
 
 func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {

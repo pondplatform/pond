@@ -7,13 +7,13 @@ import (
 )
 
 type Environment struct {
-	ID                     uuid.UUID
-	ProjectID              uuid.UUID
-	ParentEnvironmentID    *uuid.UUID
-	Name                   string
-	Namespace              string
-	DefaultIngressBaseHost string
-	ClusterID              uuid.UUID
-	CreatedAt              time.Time
+	ID                     uuid.UUID  `json:"id"`
+	ProjectID              uuid.UUID  `json:"projectId"`
+	ParentEnvironmentID    *uuid.UUID `json:"parentEnvironmentId"`
+	Name                   string     `json:"name"`
+	Namespace              string     `json:"namespace"`
+	DefaultIngressBaseHost string     `json:"defaultIngressBaseHost"`
+	ClusterID              uuid.UUID  `json:"clusterId"`
+	CreatedAt              time.Time  `json:"createdAt"`
 }
 

@@ -1,0 +1,11 @@
+ALTER TABLE deployments DROP CONSTRAINT IF EXISTS deployments_helm_command_id_fkey;
+DROP INDEX IF EXISTS command_logs_command;
+DROP TABLE IF EXISTS command_logs;
+DROP TABLE IF EXISTS commands;
+DROP TABLE IF EXISTS dependency_deployments;
+DROP TABLE IF EXISTS deployments;
+DROP TABLE IF EXISTS services;
+DROP TABLE IF EXISTS environments;
+DROP TABLE IF EXISTS projects;
+DROP TABLE IF EXISTS clusters;
+DROP TABLE IF EXISTS organizations;

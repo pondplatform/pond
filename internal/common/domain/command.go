@@ -25,14 +25,14 @@ const (
 )
 
 type Command struct {
-	ID           uuid.UUID
-	ClusterID    uuid.UUID
-	DeploymentID uuid.UUID
-	Type         string
-	Payload      json.RawMessage
-	Status       CommandStatus
-	Output       json.RawMessage
-	Error        string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID           uuid.UUID       `json:"id"`
+	ClusterID    uuid.UUID       `json:"clusterId"`
+	DeploymentID uuid.UUID       `json:"deploymentId"`
+	Type         string          `json:"type"`
+	Payload      json.RawMessage `json:"payload"`
+	Status       CommandStatus   `json:"status"`
+	Output       json.RawMessage `json:"output"`
+	Error        string          `json:"error"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
 }

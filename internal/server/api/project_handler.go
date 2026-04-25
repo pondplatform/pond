@@ -27,7 +27,7 @@ type createProjectRequest struct {
 }
 
 type updateProjectRequest struct {
-	RootEnvironmentID *uuid.UUID `json:"root_environment_id"`
+	RootEnvironmentID *uuid.UUID `json:"rootEnvironmentId"`
 }
 
 func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {

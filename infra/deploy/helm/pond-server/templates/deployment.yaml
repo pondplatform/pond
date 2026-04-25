@@ -32,5 +32,9 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: jwt-secret
+            {{- if .Values.adminKey }}
+            - name: POND_ADMIN_KEY
+              value: {{ .Values.adminKey | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

@@ -2,17 +2,17 @@ package domain
 
 // DependencySpec describes a built-in dependency type's schema.
 type DependencySpec struct {
-	Type         string
-	Description  string
-	ConfigFields []FieldSpec
-	OutputFields []FieldSpec
+	Type         string      `json:"type"`
+	Description  string      `json:"description"`
+	ConfigFields []FieldSpec `json:"configFields"`
+	OutputFields []FieldSpec `json:"outputFields"`
 }
 
 type FieldSpec struct {
-	Name        string
-	Description string
-	Required    bool
-	Sensitive   bool
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Required    bool   `json:"required"`
+	Sensitive   bool   `json:"sensitive"`
 }
 
 

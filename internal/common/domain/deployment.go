@@ -17,34 +17,32 @@ const (
 )
 
 type Deployment struct {
-	ID                    uuid.UUID
-	ServiceID             uuid.UUID
-	EnvironmentID         uuid.UUID
-	ImageTag              string
-	ServiceConfigSnapshot ServiceConfig
-	DependencyConfigs     map[string]DependencyDeployment
-	Status                DeploymentStatus
-	TriggeredBy           string
-	HelmCommandID         *uuid.UUID
-	CreatedAt             time.Time
-	CompletedAt           *time.Time
+	ID                    uuid.UUID                       `json:"id"`
+	ServiceID             uuid.UUID                       `json:"serviceId"`
+	EnvironmentID         uuid.UUID                       `json:"environmentId"`
+	ImageTag              string                          `json:"imageTag"`
+	ServiceConfigSnapshot ServiceConfig                   `json:"serviceConfigSnapshot"`
+	DependencyConfigs     map[string]DependencyDeployment `json:"dependencyConfigs"`
+	Status                DeploymentStatus                `json:"status"`
+	TriggeredBy           string                          `json:"triggeredBy"`
+	HelmCommandID         *uuid.UUID                      `json:"helmCommandId"`
+	CreatedAt             time.Time                       `json:"createdAt"`
+	CompletedAt           *time.Time                      `json:"completedAt"`
 }
 
 type DependencyDeployment struct {
-	ID             uuid.UUID
-	DeploymentId   uuid.UUID
-	DependencyName string
-	DependencyType string
-	Managed        *bool
-	ProviderInputs map[string]any
-	UserConfig     map[string]any
-	Outputs        map[string]any
-
-	// Execution state
-	Status      DependencyDeploymentStatus
-	CommandID   *uuid.UUID
-	Output      json.RawMessage
-	CompletedAt *time.Time
+	ID             uuid.UUID                  `json:"id"`
+	DeploymentId   uuid.UUID                  `json:"deploymentId"`
+	DependencyName string                     `json:"dependencyName"`
+	DependencyType string                     `json:"dependencyType"`
+	Managed        *bool                      `json:"managed"`
+	ProviderInputs map[string]any             `json:"providerInputs"`
+	UserConfig     map[string]any             `json:"userConfig"`
+	Outputs        map[string]any             `json:"outputs"`
+	Status         DependencyDeploymentStatus `json:"status"`
+	CommandID      *uuid.UUID                 `json:"commandId"`
+	Output         json.RawMessage            `json:"output"`
+	CompletedAt    *time.Time                 `json:"completedAt"`
 }
 
 // DependencyDeploymentStatus represents the lifecycle of a tofu.apply command.

@@ -9,7 +9,7 @@ import (
 // ListResponse wraps paginated list results.
 type ListResponse[T any] struct {
 	Items      []T     `json:"items"`
-	NextCursor *string `json:"next_cursor"`
+	NextCursor *string `json:"nextCursor"`
 }
 
 // Pagination holds parsed pagination query parameters.

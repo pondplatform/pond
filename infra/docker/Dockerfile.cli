@@ -1,9 +1,19 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -o /pond-cli ./cmd/pond-cli
+RUN --mount=type=cache,target=/root/go/pkg/mod \
+    go mod download
+COPY cmd/pond-cli/ cmd/pond-cli/
+COPY internal/cli/ internal/cli/
+COPY internal/common/ internal/common/
+COPY internal/server/service/ internal/server/service/
+COPY internal/server/dependency/ internal/server/dependency/
+COPY internal/server/events/ internal/server/events/
+COPY internal/server/helmgen/ internal/server/helmgen/
+COPY internal/server/store/ internal/server/store/
+RUN --mount=type=cache,target=/root/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -o /pond-cli ./cmd/pond-cli
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates

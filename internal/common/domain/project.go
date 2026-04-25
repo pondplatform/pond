@@ -7,10 +7,10 @@ import (
 )
 
 type Project struct {
-	ID                uuid.UUID
-	OrganizationID    uuid.UUID
-	Name              string
-	RootEnvironmentID *uuid.UUID
-	CreatedAt         time.Time
+	ID                uuid.UUID  `json:"id"`
+	OrganizationID    uuid.UUID  `json:"organizationId"`
+	Name              string     `json:"name"`
+	RootEnvironmentID *uuid.UUID `json:"rootEnvironmentId"`
+	CreatedAt         time.Time  `json:"createdAt"`
 }
 

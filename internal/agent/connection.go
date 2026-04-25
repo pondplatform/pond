@@ -88,8 +88,8 @@ func (c *connection) SendReady(ctx context.Context) error {
 
 func (c *connection) SendAck(ctx context.Context, cmd *Command) error {
 	return c.send("ack", struct {
-		CommandID    any `json:"command_id"`
-		DeploymentID any `json:"deployment_id"`
+		CommandID    any `json:"commandId"`
+		DeploymentID any `json:"deploymentId"`
 	}{
 		CommandID:    cmd.ID,
 		DeploymentID: cmd.DeploymentID,

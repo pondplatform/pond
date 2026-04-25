@@ -1,0 +1,21 @@
+version: 1
+name: postgres-demo
+image: ghcr.io/pondplatform/postgres-demo
+
+service:
+  port: 3000
+
+dependencies:
+  db:
+    type: postgres
+
+configs:
+  .env:
+    format: .env
+    mountDir: /app/
+    values:
+      DB_HOST: "{{db.host}}"
+      DB_PORT: "{{db.port}}"
+      DB_USER: "{{db.username}}"
+      DB_PASSWORD: "{{db.password}}"
+      DB_NAME: "{{db.database}}"

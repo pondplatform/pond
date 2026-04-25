@@ -27,8 +27,8 @@ type wsEnvelope struct {
 
 // wsAck is the payload of an "ack" message from the agent.
 type wsAck struct {
-	CommandID    uuid.UUID `json:"command_id"`
-	DeploymentID uuid.UUID `json:"deployment_id"`
+	CommandID    uuid.UUID `json:"commandId"`
+	DeploymentID uuid.UUID `json:"deploymentId"`
 }
 
 // wsLog is the payload of a "log" message from the agent.

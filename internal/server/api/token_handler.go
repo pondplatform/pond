@@ -25,11 +25,11 @@ type createTokenRequest struct {
 }
 
 type tokenResponse struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
+	OrganizationID uuid.UUID `json:"organizationId"`
 	Role           string    `json:"role"`
 	Description    string    `json:"description"`
 	Token          string    `json:"token,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 func (h *TokenHandler) Create(w http.ResponseWriter, r *http.Request) {

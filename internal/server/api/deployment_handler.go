@@ -98,13 +98,13 @@ func (h *DeploymentHandler) ProvideUserInput(w http.ResponseWriter, r *http.Requ
 // deploymentListItem is a reduced view of a deployment for list responses.
 type deploymentListItem struct {
 	ID            uuid.UUID  `json:"id"`
-	ServiceID     uuid.UUID  `json:"service_id"`
-	EnvironmentID uuid.UUID  `json:"environment_id"`
-	ImageTag      string     `json:"image_tag"`
+	ServiceID     uuid.UUID  `json:"serviceId"`
+	EnvironmentID uuid.UUID  `json:"environmentId"`
+	ImageTag      string     `json:"imageTag"`
 	Status        string     `json:"status"`
-	TriggeredBy   string     `json:"triggered_by"`
-	CreatedAt     time.Time  `json:"created_at"`
-	CompletedAt   *time.Time `json:"completed_at"`
+	TriggeredBy   string     `json:"triggeredBy"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	CompletedAt   *time.Time `json:"completedAt"`
 }
 
 func (h *DeploymentHandler) ListByService(w http.ResponseWriter, r *http.Request) {
