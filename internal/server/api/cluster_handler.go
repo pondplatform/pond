@@ -58,47 +58,47 @@ type rotateTokenResponse struct {
 func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 	orgID, err := uuid.Parse(r.PathValue("orgId"))
 	if err != nil {
-		http.Error(w, "invalid organization id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid organization id")
 		return
 	}
 
 	// Verify org exists
 	if _, err := h.orgs.GetByID(r.Context(), orgID); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "organization not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "organization not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	var req createClusterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 
 	// Check if cluster already exists
 	existing, err := h.clusters.GetByName(r.Context(), orgID, req.Name)
 	if err == nil && existing != nil {
-		http.Error(w, "cluster already exists", http.StatusConflict)
+		writeError(w, http.StatusConflict, "cluster already exists")
 		return
 	}
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	// Generate token
 	token, tokenHash, err := generateToken()
 	if err != nil {
-		http.Error(w, "failed to generate token", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
 
@@ -111,7 +111,7 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.clusters.Create(r.Context(), cluster); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -121,29 +121,29 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *ClusterHandler) Get(w http.ResponseWriter, r *http.Request) {
 	orgID, err := uuid.Parse(r.PathValue("orgId"))
 	if err != nil {
-		http.Error(w, "invalid organization id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid organization id")
 		return
 	}
 
 	clusterID, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "invalid cluster id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid cluster id")
 		return
 	}
 
 	cluster, err := h.clusters.GetByID(r.Context(), clusterID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	// Verify cluster belongs to org
 	if cluster.OrganizationID != orgID {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 
@@ -153,23 +153,23 @@ func (h *ClusterHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *ClusterHandler) List(w http.ResponseWriter, r *http.Request) {
 	orgID, err := uuid.Parse(r.PathValue("orgId"))
 	if err != nil {
-		http.Error(w, "invalid organization id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid organization id")
 		return
 	}
 
 	// Verify org exists
 	if _, err := h.orgs.GetByID(r.Context(), orgID); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "organization not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "organization not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	clusters, err := h.clusters.ListByOrganization(r.Context(), orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -184,41 +184,41 @@ func (h *ClusterHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *ClusterHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
 	orgID, err := uuid.Parse(r.PathValue("orgId"))
 	if err != nil {
-		http.Error(w, "invalid organization id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid organization id")
 		return
 	}
 
 	clusterID, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "invalid cluster id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid cluster id")
 		return
 	}
 
 	cluster, err := h.clusters.GetByID(r.Context(), clusterID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	// Verify cluster belongs to org
 	if cluster.OrganizationID != orgID {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 
 	// Generate new token
 	token, tokenHash, err := generateToken()
 	if err != nil {
-		http.Error(w, "failed to generate token", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
 
 	if err := h.clusters.UpdateTokenHash(r.Context(), clusterID, tokenHash); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 

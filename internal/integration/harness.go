@@ -104,7 +104,8 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 	go deploySvc.Start(ctx)
 
 	// Create the agent handler and router
-	agentHandler := api.NewAgentHandler(clusterStore, bus, log.WithGroup("agent_handler"))
+	agentConnSvc := service.NewAgentConnectionService(bus)
+	agentHandler := api.NewAgentHandler(clusterStore, agentConnSvc, log.WithGroup("agent_handler"))
 	router := api.NewRouter(api.RouterDeps{
 		DeploySvc:     deploySvc,
 		Orgs:          orgStore,

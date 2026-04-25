@@ -27,24 +27,24 @@ type createOrganizationRequest struct {
 func (h *OrganizationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createOrganizationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 
 	// Check if organization already exists
 	existing, err := h.orgs.GetByName(r.Context(), req.Name)
 	if err == nil && existing != nil {
-		http.Error(w, "organization already exists", http.StatusConflict)
+		writeError(w, http.StatusConflict, "organization already exists")
 		return
 	}
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -55,7 +55,7 @@ func (h *OrganizationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.orgs.Create(r.Context(), org); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -66,17 +66,17 @@ func (h *OrganizationHandler) Get(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		http.Error(w, "invalid organization id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid organization id")
 		return
 	}
 
 	org, err := h.orgs.GetByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -88,7 +88,7 @@ func (h *OrganizationHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	orgs, err := h.orgs.List(r.Context(), p.Limit, p.Cursor)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 

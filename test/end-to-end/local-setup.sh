@@ -189,9 +189,8 @@ helm upgrade --install "$AGENT_RELEASE" "$HELM_AGENT" \
   --wait --timeout 2m \
   || die "helm upgrade failed for pond-agent (check: kubectl logs -n $NAMESPACE -l app=$AGENT_RELEASE)"
 
-# ── 8. Mint CLI token + write env file ────────────────────────────────────────
-E2E_ENV="${E2E_ENV:-$REPO_ROOT/test/end-to-end/.e2e-env}"
-step "Minting CLI token and writing $E2E_ENV"
+# ── 8. Mint CLI token ─────────────────────────────────────────────────────────
+step "Minting CLI token"
 TOKEN_BODY=$(curl_api "POST /organizations/$ORG_ID/tokens" \
   -X POST "$SERVER_URL/api/v1/organizations/$ORG_ID/tokens" \
   -H "Authorization: Bearer $ADMIN_KEY" \
@@ -199,12 +198,57 @@ TOKEN_BODY=$(curl_api "POST /organizations/$ORG_ID/tokens" \
   -d '{"role":"admin","description":"local-dev"}')
 POND_TOKEN=$(echo "$TOKEN_BODY" | jq -r '.token')
 [[ -n "$POND_TOKEN" && "$POND_TOKEN" != "null" ]] || die "could not obtain org token"
+
+# ── 9. Create e2e project + environment (idempotent) ──────────────────────────
+step "Creating project 'e2e-project'"
+PROJ_HTTP=$(curl -s -o /tmp/pond_proj_body -w "%{http_code}" \
+  -X POST "$SERVER_URL/api/v1/organizations/$ORG_ID/projects" \
+  -H "Authorization: Bearer $POND_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"e2e-project"}')
+PROJ_BODY=$(cat /tmp/pond_proj_body)
+if [[ "$PROJ_HTTP" == "201" ]]; then
+  PROJECT_ID=$(echo "$PROJ_BODY" | jq -r '.id')
+elif [[ "$PROJ_HTTP" == "409" ]]; then
+  info "Project already exists — looking it up"
+  LIST=$(curl_api "GET /organizations/$ORG_ID/projects" \
+    "$SERVER_URL/api/v1/organizations/$ORG_ID/projects" \
+    -H "Authorization: Bearer $POND_TOKEN")
+  PROJECT_ID=$(echo "$LIST" | jq -r '.items[] | select(.name=="e2e-project") | .id')
+else
+  error "POST /organizations/$ORG_ID/projects failed (HTTP $PROJ_HTTP)"
+  error "Response: $PROJ_BODY"
+  exit 1
+fi
+[[ -n "$PROJECT_ID" && "$PROJECT_ID" != "null" ]] || die "could not determine project ID"
+info "Project ID: $PROJECT_ID"
+
+step "Creating environment 'staging'"
+ENV_HTTP=$(curl -s -o /tmp/pond_env_body -w "%{http_code}" \
+  -X POST "$SERVER_URL/api/v1/projects/$PROJECT_ID/environments" \
+  -H "Authorization: Bearer $POND_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"staging\",\"namespace\":\"e2e-staging\",\"clusterId\":\"$CLUSTER_ID\"}")
+ENV_BODY=$(cat /tmp/pond_env_body)
+if [[ "$ENV_HTTP" == "201" ]]; then
+  info "Environment created"
+elif [[ "$ENV_HTTP" == "409" ]]; then
+  info "Environment already exists"
+else
+  error "POST /projects/$PROJECT_ID/environments failed (HTTP $ENV_HTTP)"
+  error "Response: $ENV_BODY"
+  exit 1
+fi
+
+# ── 10. Write env file ────────────────────────────────────────────────────────
+E2E_ENV="${E2E_ENV:-$REPO_ROOT/test/end-to-end/.e2e-env}"
+step "Writing $E2E_ENV"
 mkdir -p "$(dirname "$E2E_ENV")"
-printf 'export POND_SERVER_URL=%s\nexport POND_TOKEN=%s\nexport POND_ORG_ID=%s\nexport POND_CLUSTER_ID=%s\n' \
-  "$SERVER_URL" "$POND_TOKEN" "$ORG_ID" "$CLUSTER_ID" > "$E2E_ENV"
+printf 'export POND_SERVER_URL=%s\nexport POND_TOKEN=%s\nexport POND_ORG_ID=%s\nexport POND_CLUSTER_ID=%s\nexport POND_PROJECT_ID=%s\n' \
+  "$SERVER_URL" "$POND_TOKEN" "$ORG_ID" "$CLUSTER_ID" "$PROJECT_ID" > "$E2E_ENV"
 info "Written: $E2E_ENV"
 
-# ── 9. Summary ────────────────────────────────────────────────────────────────
+# ── 11. Summary ───────────────────────────────────────────────────────────────
 step "Done"
 echo
 echo "${bold}Environment:${reset}"
@@ -213,6 +257,7 @@ echo "  Admin key:   $ADMIN_KEY"
 echo "  JWT secret:  $JWT_SECRET"
 echo "  Org ID:      $ORG_ID"
 echo "  Cluster ID:  $CLUSTER_ID"
+echo "  Project ID:  $PROJECT_ID"
 echo "  Env file:    $E2E_ENV"
 echo
 echo "${bold}To use the CLI:${reset}"

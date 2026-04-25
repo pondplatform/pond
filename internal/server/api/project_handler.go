@@ -33,40 +33,40 @@ type updateProjectRequest struct {
 func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	orgID, err := uuid.Parse(r.PathValue("orgId"))
 	if err != nil {
-		http.Error(w, "invalid organization id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid organization id")
 		return
 	}
 
 	// Verify org exists
 	if _, err := h.orgs.GetByID(r.Context(), orgID); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "organization not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "organization not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	var req createProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 
 	// Check if project already exists
 	existing, err := h.projects.GetByName(r.Context(), orgID, req.Name)
 	if err == nil && existing != nil {
-		http.Error(w, "project already exists", http.StatusConflict)
+		writeError(w, http.StatusConflict, "project already exists")
 		return
 	}
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -78,7 +78,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.projects.Create(r.Context(), project); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -88,17 +88,17 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "invalid project id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid project id")
 		return
 	}
 
 	project, err := h.projects.GetByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -108,23 +108,23 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	orgID, err := uuid.Parse(r.PathValue("orgId"))
 	if err != nil {
-		http.Error(w, "invalid organization id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid organization id")
 		return
 	}
 
 	// Verify org exists
 	if _, err := h.orgs.GetByID(r.Context(), orgID); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "organization not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "organization not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	projects, err := h.projects.ListByOrganization(r.Context(), orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -134,23 +134,23 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "invalid project id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid project id")
 		return
 	}
 
 	project, err := h.projects.GetByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	var req updateProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -159,19 +159,19 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		env, err := h.envs.GetByID(r.Context(), *req.RootEnvironmentID)
 		if err != nil {
 			if errors.Is(err, domain.ErrNotFound) {
-				http.Error(w, "environment not found", http.StatusBadRequest)
+				writeError(w, http.StatusNotFound, "environment not found")
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		if env.ProjectID != id {
-			http.Error(w, "environment does not belong to this project", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "environment does not belong to this project")
 			return
 		}
 
 		if err := h.projects.SetRootEnvironment(r.Context(), id, *req.RootEnvironmentID); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		project.RootEnvironmentID = req.RootEnvironmentID

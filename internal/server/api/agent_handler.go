@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -12,6 +11,7 @@ import (
 	"github.com/pondplatform/pond/internal/common/domain"
 	"github.com/pondplatform/pond/internal/server/auth"
 	"github.com/pondplatform/pond/internal/server/events"
+	"github.com/pondplatform/pond/internal/server/service"
 	"github.com/pondplatform/pond/internal/server/store"
 )
 
@@ -41,30 +41,30 @@ type wsLog struct {
 // through a published event, and every DB mutation happens on the service
 // side in response to that event.
 type AgentHandler struct {
-	clusters store.ClusterRepository
-	bus      events.Bus
-	log      *slog.Logger
+	clusters  store.ClusterRepository
+	agentConn service.AgentConnectionService
+	log       *slog.Logger
 }
 
-func NewAgentHandler(clusters store.ClusterRepository, bus events.Bus, log *slog.Logger) *AgentHandler {
+func NewAgentHandler(clusters store.ClusterRepository, agentConn service.AgentConnectionService, log *slog.Logger) *AgentHandler {
 	return &AgentHandler{
-		clusters: clusters,
-		bus:      bus,
-		log:      log,
+		clusters:  clusters,
+		agentConn: agentConn,
+		log:       log,
 	}
 }
 
 func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	token := auth.BearerToken(r)
 	if token == "" {
-		http.Error(w, "missing authorization", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, "missing authorization")
 		return
 	}
 
 	hash := auth.SHA256Hex(token)
 	cluster, err := h.clusters.GetByTokenHash(r.Context(), hash)
 	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -81,12 +81,25 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Per-connection channels. All connection state lives on a single
-	// goroutine (the main select loop below); subscribers and the reader
-	// goroutine only communicate with it through these channels.
+	// Create session for event protocol handling
+	session := h.agentConn.NewSession(cluster.ID, log)
+	dispatchCh, wakeCh, err := session.Start(ctx)
+	if err != nil {
+		log.Error("start session failed", "err", err)
+		return
+	}
+
+	// Connection state — only mutated on the main goroutine below.
+	var activeCommandID uuid.UUID
+
+	// On disconnect, publish AgentDisconnected so the service can requeue
+	// whatever was in flight.
+	defer func() {
+		session.Close(activeCommandID)
+	}()
+
+	// Per-connection channels for WebSocket reader goroutine.
 	wsCh := make(chan wsEnvelope, 4)
-	dispatchCh := make(chan *domain.Command, 1)
-	wakeCh := make(chan struct{}, 1)
 	readerDone := make(chan error, 1)
 
 	// Reader goroutine: gorilla WS requires all ReadJSON calls from one
@@ -107,83 +120,32 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Per-event-type cluster subscribers: the only bridge from the bus into
-	// this connection's goroutine. Never touch handler-local state directly.
-	unsubDispatch, err := h.bus.SubscribeWork(events.ClusterCommandDispatchTopic(cluster.ID), func(v any) {
-		e, ok := v.(events.CommandDispatch)
-		if !ok {
+	// sendCommand marshals and writes a command to the WebSocket.
+	sendCommand := func(cmd *domain.Command) {
+		log.Info("sending command to agent", "command_id", cmd.ID, "type", cmd.Type)
+		data, err := json.Marshal(cmd)
+		if err != nil {
+			log.Error("marshal command", "err", err)
 			return
 		}
-		select {
-		case dispatchCh <- e.Cmd:
-		default:
-			// A dispatch is already queued for the main loop to
-			// consume. The service only dispatches in response to
-			// AgentReady (one outstanding credit), so this path
-			// should be unreachable — log if we ever hit it.
-			log.Warn("dropped duplicate CommandDispatch")
+		if err := conn.WriteJSON(wsEnvelope{Type: "command", Data: data}); err != nil {
+			log.Error("write command to ws", "err", err)
 		}
-	})
-	if err != nil {
-		log.Error("subscribe dispatch failed", "err", err)
-		return
 	}
-	defer unsubDispatch()
 
-	unsubQueued, err := h.bus.SubscribeWork(events.ClusterCommandQueuedTopic(cluster.ID), func(v any) {
-		if _, ok := v.(events.CommandQueued); !ok {
-			return
-		}
-		select {
-		case wakeCh <- struct{}{}:
-		default:
-		}
-	})
-	if err != nil {
-		log.Error("subscribe queued failed", "err", err)
-		return
-	}
-	defer unsubQueued()
-
-	// Connection state — only mutated on the main goroutine below.
-	var activeCommandID uuid.UUID
-
-	// requestNext publishes AgentReady and waits briefly for the service to
-	// respond with a CommandDispatch. Falls back to "idle" if no command
-	// arrives within the window.
+	// requestNext asks the service for next command and sends it or idle.
 	requestNext := func() {
-		h.bus.Publish(ctx, events.TopicAgentReady, events.AgentReady{ClusterID: cluster.ID})
-		select {
-		case cmd := <-dispatchCh:
+		if cmd := session.RequestNext(ctx); cmd != nil {
 			activeCommandID = cmd.ID
-			log.Info("sending command to agent", "command_id", cmd.ID, "type", cmd.Type)
-			data, err := json.Marshal(cmd)
-			if err != nil {
-				log.Error("marshal command", "err", err)
-				return
-			}
-			if err := conn.WriteJSON(wsEnvelope{Type: "command", Data: data}); err != nil {
-				log.Error("write command to ws", "err", err)
-			}
-		case <-time.After(200 * time.Millisecond):
+			sendCommand(cmd)
+		} else {
 			if err := conn.WriteJSON(wsEnvelope{Type: "idle"}); err != nil {
 				log.Error("write idle to ws", "err", err)
 			}
 		}
 	}
 
-	// On disconnect, publish AgentDisconnected so the service can requeue
-	// whatever was in flight.
-	defer func() {
-		log.Info("agent disconnected", "in_flight_command_id", activeCommandID)
-		h.bus.Publish(context.Background(), events.TopicAgentDisconnected, events.AgentDisconnected{
-			ClusterID:         cluster.ID,
-			InFlightCommandID: activeCommandID,
-		})
-	}()
-
-	// Main loop: single goroutine owns all connection state. Reader
-	// goroutine feeds wsCh; bus subscriber feeds dispatchCh/wakeCh.
+	// Main loop: single goroutine owns all connection state.
 	for {
 		select {
 		case <-ctx.Done():
@@ -210,9 +172,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				log.Info("command acknowledged by agent", "command_id", ack.CommandID)
-				h.bus.Publish(ctx, events.TopicCommandStarted, events.CommandStarted{
-					DeploymentID: ack.DeploymentID,
-				})
+				session.OnAck(ctx, ack.DeploymentID)
 
 			case "result":
 				var res events.CommandResult
@@ -225,13 +185,9 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				log.Info("received command result", "command_id", activeCommandID, "success", res.Success)
-				// Trust the server-tracked command ID, not the agent-supplied one.
 				res.CommandID = activeCommandID
 				activeCommandID = uuid.Nil
-				// Synchronous bus: by the time this returns, the service
-				// has persisted the result and advanced the state machine.
-				h.bus.Publish(ctx, events.TopicCommandResults, res)
-				// Ask for the next command (may yield a new dispatch or idle).
+				session.OnResult(ctx, res)
 				requestNext()
 
 			case "log":
@@ -243,33 +199,21 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 				if activeCommandID == uuid.Nil {
 					continue
 				}
-				h.bus.Publish(ctx, events.TopicCommandLogs, events.CommandLog{
-					CommandID: activeCommandID,
-					Line:      msg.Line,
-				})
+				session.OnLog(ctx, activeCommandID, msg.Line)
 
 			default:
 				log.Warn("unknown message type from agent", "type", env.Type)
 			}
 
 		case cmd := <-dispatchCh:
-			// An unsolicited dispatch arrived outside of requestNext. This
-			// can happen if the service dispatched before our AgentReady
-			// publish consumed it; treat it as a valid command arrival.
+			// An unsolicited dispatch arrived outside of requestNext.
 			if activeCommandID != uuid.Nil {
 				log.Warn("dispatch arrived while busy, dropping", "command_id", cmd.ID)
 				continue
 			}
 			activeCommandID = cmd.ID
 			log.Info("sending unsolicited command to agent", "command_id", cmd.ID, "type", cmd.Type)
-			data, err := json.Marshal(cmd)
-			if err != nil {
-				log.Error("marshal command", "err", err)
-				continue
-			}
-			if err := conn.WriteJSON(wsEnvelope{Type: "command", Data: data}); err != nil {
-				log.Error("write command to ws", "err", err)
-			}
+			sendCommand(cmd)
 
 		case <-wakeCh:
 			// A new command was enqueued for this cluster. If we're idle,

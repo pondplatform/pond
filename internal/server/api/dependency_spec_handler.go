@@ -24,17 +24,17 @@ func (h *DependencySpecHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *DependencySpecHandler) Get(w http.ResponseWriter, r *http.Request) {
 	depType := r.PathValue("type")
 	if depType == "" {
-		http.Error(w, "missing type", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "missing type")
 		return
 	}
 
 	spec, err := h.registry.Get(depType)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 

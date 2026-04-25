@@ -41,7 +41,7 @@ type updateEnvironmentRequest struct {
 func (h *EnvironmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	projectID, err := uuid.Parse(r.PathValue("projectId"))
 	if err != nil {
-		http.Error(w, "invalid project id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid project id")
 		return
 	}
 
@@ -49,31 +49,31 @@ func (h *EnvironmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	project, err := h.projects.GetByID(r.Context(), projectID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "project not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "project not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	var req createEnvironmentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 	req.Namespace = strings.TrimSpace(req.Namespace)
 	if req.Namespace == "" {
-		http.Error(w, "namespace is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "namespace is required")
 		return
 	}
 	if req.ClusterID == uuid.Nil {
-		http.Error(w, "cluster_id is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "cluster_id is required")
 		return
 	}
 
@@ -81,25 +81,25 @@ func (h *EnvironmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	cluster, err := h.clusters.GetByID(r.Context(), req.ClusterID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "cluster not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "cluster not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	if cluster.OrganizationID != project.OrganizationID {
-		http.Error(w, "cluster does not belong to the same organization", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "cluster does not belong to the same organization")
 		return
 	}
 
 	// Check if environment already exists
 	existing, err := h.envs.GetByName(r.Context(), projectID, req.Name)
 	if err == nil && existing != nil {
-		http.Error(w, "environment already exists", http.StatusConflict)
+		writeError(w, http.StatusConflict, "environment already exists")
 		return
 	}
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -108,14 +108,14 @@ func (h *EnvironmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		parent, err := h.envs.GetByID(r.Context(), *req.ParentEnvironmentID)
 		if err != nil {
 			if errors.Is(err, domain.ErrNotFound) {
-				http.Error(w, "parent environment not found", http.StatusNotFound)
+				writeError(w, http.StatusNotFound, "parent environment not found")
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		if parent.ProjectID != projectID {
-			http.Error(w, "parent environment does not belong to this project", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "parent environment does not belong to this project")
 			return
 		}
 	}
@@ -132,7 +132,7 @@ func (h *EnvironmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.envs.Create(r.Context(), env); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -142,17 +142,17 @@ func (h *EnvironmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *EnvironmentHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "invalid environment id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid environment id")
 		return
 	}
 
 	env, err := h.envs.GetByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -162,23 +162,23 @@ func (h *EnvironmentHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *EnvironmentHandler) List(w http.ResponseWriter, r *http.Request) {
 	projectID, err := uuid.Parse(r.PathValue("projectId"))
 	if err != nil {
-		http.Error(w, "invalid project id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid project id")
 		return
 	}
 
 	// Verify project exists
 	if _, err := h.projects.GetByID(r.Context(), projectID); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "project not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "project not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	envs, err := h.envs.ListByProject(r.Context(), projectID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -188,29 +188,29 @@ func (h *EnvironmentHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *EnvironmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "invalid environment id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid environment id")
 		return
 	}
 
 	env, err := h.envs.GetByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	project, err := h.projects.GetByID(r.Context(), env.ProjectID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	var req updateEnvironmentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -219,14 +219,14 @@ func (h *EnvironmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 		cluster, err := h.clusters.GetByID(r.Context(), *req.ClusterID)
 		if err != nil {
 			if errors.Is(err, domain.ErrNotFound) {
-				http.Error(w, "cluster not found", http.StatusNotFound)
+				writeError(w, http.StatusNotFound, "cluster not found")
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		if cluster.OrganizationID != project.OrganizationID {
-			http.Error(w, "cluster does not belong to the same organization", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "cluster does not belong to the same organization")
 			return
 		}
 		env.ClusterID = *req.ClusterID
@@ -246,19 +246,19 @@ func (h *EnvironmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 			parent, err := h.envs.GetByID(r.Context(), *req.ParentEnvironmentID)
 			if err != nil {
 				if errors.Is(err, domain.ErrNotFound) {
-					http.Error(w, "parent environment not found", http.StatusNotFound)
+					writeError(w, http.StatusNotFound, "parent environment not found")
 					return
 				}
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, "internal server error")
 				return
 			}
 			if parent.ProjectID != env.ProjectID {
-				http.Error(w, "parent environment does not belong to this project", http.StatusBadRequest)
+				writeError(w, http.StatusBadRequest, "parent environment does not belong to this project")
 				return
 			}
 			// Check for cycle
 			if wouldCreateCycle(r.Context(), h.envs, env.ID, *req.ParentEnvironmentID) {
-				http.Error(w, "setting this parent would create a cycle", http.StatusConflict)
+				writeError(w, http.StatusConflict, "setting this parent would create a cycle")
 				return
 			}
 		}
@@ -266,7 +266,7 @@ func (h *EnvironmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.envs.Update(r.Context(), env); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 

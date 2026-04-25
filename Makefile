@@ -20,6 +20,8 @@ build-todo-image:
 
 build-images: build-server-image build-agent-image build-cli-image build-todo-image
 
+build-cli:
+	go build -o ./bin/pond ./cmd/pond-cli/main.go
 # ---- Test targets ----
 
 test:

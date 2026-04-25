@@ -21,17 +21,17 @@ func NewServiceHandler(services store.ServiceRepository, projects store.ProjectR
 func (h *ServiceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "invalid service id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid service id")
 		return
 	}
 
 	svc, err := h.services.GetByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -41,23 +41,23 @@ func (h *ServiceHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *ServiceHandler) List(w http.ResponseWriter, r *http.Request) {
 	projectID, err := uuid.Parse(r.PathValue("projectId"))
 	if err != nil {
-		http.Error(w, "invalid project id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid project id")
 		return
 	}
 
 	// Verify project exists
 	if _, err := h.projects.GetByID(r.Context(), projectID); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "project not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "project not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	services, err := h.services.ListByProject(r.Context(), projectID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 

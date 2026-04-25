@@ -1,0 +1,15 @@
+version: 1
+name: todo-app
+build: Dockerfile
+image: nginx:latest
+
+ingress:
+  enabled: true
+
+service:
+  port: 3000
+
+
+env:
+  ENVIRONMENT: "testing"
+

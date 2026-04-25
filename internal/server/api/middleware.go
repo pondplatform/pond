@@ -2,7 +2,6 @@ package api
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -65,13 +64,11 @@ func requireAuth(authenticator auth.Authenticator, log *slog.Logger) func(http.H
 			identity, err := authenticator.Authenticate(r.Context(), r)
 			if err != nil {
 				if errors.Is(err, domain.ErrUnauthorized) {
-					w.WriteHeader(http.StatusUnauthorized)
-					json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+					writeError(w, http.StatusUnauthorized, "unauthorized")
 					return
 				}
 				log.Error("authentication error", "err", err)
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
+				writeError(w, http.StatusInternalServerError, "internal server error")
 				return
 			}
 			ctx := contextWithIdentity(r.Context(), identity)
@@ -91,8 +88,7 @@ func requireOrgAccess(authorizer auth.Authorizer, action auth.Action, pathParam 
 			if !ok {
 				// Programming error: requireAuth should have run first
 				log.Error("requireOrgAccess called without identity in context")
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
+				writeError(w, http.StatusInternalServerError, "internal server error")
 				return
 			}
 
@@ -102,8 +98,7 @@ func requireOrgAccess(authorizer auth.Authorizer, action auth.Action, pathParam 
 				var err error
 				orgID, err = uuid.Parse(orgIDStr)
 				if err != nil {
-					w.WriteHeader(http.StatusBadRequest)
-					json.NewEncoder(w).Encode(map[string]string{"error": "invalid organization ID"})
+					writeError(w, http.StatusBadRequest, "invalid organization ID")
 					return
 				}
 			} else {
@@ -113,13 +108,11 @@ func requireOrgAccess(authorizer auth.Authorizer, action auth.Action, pathParam 
 
 			if err := authorizer.Authorize(identity, action, orgID); err != nil {
 				if errors.Is(err, domain.ErrForbidden) {
-					w.WriteHeader(http.StatusForbidden)
-					json.NewEncoder(w).Encode(map[string]string{"error": "forbidden"})
+					writeError(w, http.StatusForbidden, "forbidden")
 					return
 				}
 				log.Error("authorization error", "err", err)
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
+				writeError(w, http.StatusInternalServerError, "internal server error")
 				return
 			}
 

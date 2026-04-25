@@ -24,71 +24,58 @@ func NewDeploymentHandler(svc service.DeploymentService, services store.ServiceR
 func (h *DeploymentHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	var req service.SubmitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	d, err := h.svc.Submit(r.Context(), req)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeServiceError(w, err)
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(d)
+	writeJSON(w, http.StatusCreated, d)
 }
 
 func (h *DeploymentHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		http.Error(w, "invalid deployment id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid deployment id")
 		return
 	}
 
 	d, err := h.svc.GetStatus(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeServiceError(w, err)
 		return
 	}
 
-	json.NewEncoder(w).Encode(d)
+	writeJSON(w, http.StatusOK, d)
 }
 
 func (h *DeploymentHandler) ProvideUserInput(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		http.Error(w, "invalid deployment id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid deployment id")
 		return
 	}
 
 	depName := r.PathValue("name")
 	if depName == "" {
-		http.Error(w, "missing dependency name", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "missing dependency name")
 		return
 	}
 
 	var req service.UserInputRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if err := h.svc.ProvideUserInput(r.Context(), id, depName, req); err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeServiceError(w, err)
 		return
 	}
 
@@ -110,17 +97,17 @@ type deploymentListItem struct {
 func (h *DeploymentHandler) ListByService(w http.ResponseWriter, r *http.Request) {
 	serviceID, err := uuid.Parse(r.PathValue("serviceId"))
 	if err != nil {
-		http.Error(w, "invalid service id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid service id")
 		return
 	}
 
 	// Verify service exists
 	if _, err := h.services.GetByID(r.Context(), serviceID); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "service not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "service not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -131,7 +118,7 @@ func (h *DeploymentHandler) ListByService(w http.ResponseWriter, r *http.Request
 	if envStr := r.URL.Query().Get("environment_id"); envStr != "" {
 		id, err := uuid.Parse(envStr)
 		if err != nil {
-			http.Error(w, "invalid environment_id", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "invalid environment_id")
 			return
 		}
 		environmentID = &id
@@ -145,7 +132,7 @@ func (h *DeploymentHandler) ListByService(w http.ResponseWriter, r *http.Request
 
 	deployments, err := h.svc.ListByService(r.Context(), serviceID, environmentID, status, p.Limit, p.Cursor)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -178,20 +165,20 @@ func (h *DeploymentHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		http.Error(w, "invalid deployment id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid deployment id")
 		return
 	}
 
 	if err := h.svc.Cancel(r.Context(), id); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
 		if errors.Is(err, domain.ErrInvalidInput) {
-			http.Error(w, err.Error(), http.StatusConflict)
+			writeError(w, http.StatusConflict, "deployment is already in a terminal state")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -201,13 +188,13 @@ func (h *DeploymentHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 func (h *DeploymentHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	var req service.SubmitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	result, err := h.svc.Validate(r.Context(), req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 

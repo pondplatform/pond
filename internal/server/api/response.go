@@ -2,8 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
+
+	"github.com/pondplatform/pond/internal/common/domain"
 )
 
 // ListResponse wraps paginated list results.
@@ -58,4 +61,26 @@ func writeList[T any](w http.ResponseWriter, items []T, nextCursor *string) {
 		Items:      items,
 		NextCursor: nextCursor,
 	})
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+func writeServiceError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not found")
+	case errors.Is(err, domain.ErrAlreadyExists):
+		writeError(w, http.StatusConflict, "already exists")
+	case errors.Is(err, domain.ErrInvalidInput):
+		writeError(w, http.StatusBadRequest, "invalid input")
+	case errors.Is(err, domain.ErrUnauthorized):
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+	case errors.Is(err, domain.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden")
+	default:
+		writeError(w, http.StatusInternalServerError, "internal server error")
+	}
 }

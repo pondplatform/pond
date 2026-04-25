@@ -56,7 +56,7 @@ func readBodyError(resp *http.Response) error {
 
 type clusterSetupResult struct {
 	ID         uuid.UUID `json:"id"`
-	AgentToken string    `json:"agent_token"`
+	AgentToken string    `json:"agentToken"`
 }
 
 type projectSetupResult struct {
@@ -101,9 +101,9 @@ func (c *scenarioClient) createProject(ctx context.Context, orgID uuid.UUID, nam
 
 func (c *scenarioClient) createEnvironment(ctx context.Context, projectID uuid.UUID, name, namespace string, clusterID uuid.UUID) (envSetupResult, error) {
 	body := map[string]any{
-		"name":       name,
-		"namespace":  namespace,
-		"cluster_id": clusterID,
+		"name":      name,
+		"namespace": namespace,
+		"clusterId": clusterID,
 	}
 	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/projects/%s/environments", projectID), body)
 	if err != nil {

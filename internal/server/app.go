@@ -93,7 +93,8 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	go func() { svcErr <- deploySvc.Start(ctx) }()
 
 	// Agent handler
-	agentHandler := api.NewAgentHandler(clusterStore, bus, log.WithGroup("agent_handler"))
+	agentConnSvc := service.NewAgentConnectionService(bus)
+	agentHandler := api.NewAgentHandler(clusterStore, agentConnSvc, log.WithGroup("agent_handler"))
 
 	// Auth components
 	jwtSecret := []byte(cfg.JWTSecret)

@@ -35,19 +35,19 @@ type tokenResponse struct {
 func (h *TokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 	orgID, err := uuid.Parse(r.PathValue("orgId"))
 	if err != nil {
-		http.Error(w, "invalid organization id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid organization id")
 		return
 	}
 
 	var req createTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	role := domain.OrgRole(strings.ToLower(strings.TrimSpace(req.Role)))
 	if role != domain.RoleAdmin && role != domain.RoleMember && role != domain.RoleViewer {
-		http.Error(w, "role must be admin, member, or viewer", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "role must be admin, member, or viewer")
 		return
 	}
 
@@ -61,7 +61,7 @@ func (h *TokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 	signed, err := tok.SignedString(h.jwtSecret)
 	if err != nil {
-		http.Error(w, "failed to sign token", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "failed to sign token")
 		return
 	}
 
