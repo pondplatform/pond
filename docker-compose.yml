@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: pond
       POSTGRES_DB: pond
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
       - ./db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
@@ -19,7 +19,7 @@ services:
   rabbitmq:
     image: rabbitmq:4-alpine
     ports:
-      - "5672:5672"
+      - "127.0.0.1:5672:5672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
       interval: 5s
