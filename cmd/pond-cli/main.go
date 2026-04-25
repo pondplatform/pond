@@ -13,7 +13,8 @@ func main() {
 		serverURL = "http://localhost:8080"
 	}
 
-	root := cli.NewRootCmd(serverURL)
+	token := os.Getenv("POND_TOKEN")
+	root := cli.NewRootCmd(serverURL, token)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

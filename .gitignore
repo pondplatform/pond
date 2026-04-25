@@ -47,3 +47,4 @@ Thumbs.db
 .env.*
 *.pem
 *.key
+test/end-to-end/.e2e-env

@@ -4,11 +4,11 @@
 #
 # What it does:
 #   1. Builds pond-server and pond-agent Docker images
-#   2. Imports them into the Rancher Desktop containerd runtime (rdctl)
-#   3. Installs the pond-server Helm chart (postgres + rabbitmq included)
-#   4. Waits for the server to be healthy, then port-forwards it
-#   5. Creates an org + cluster via the API using the admin key
-#   6. Installs the pond-agent Helm chart with the cluster's agent token
+#   2. Installs the pond-server Helm chart (postgres + rabbitmq included)
+#   3. Waits for the server to be healthy, then port-forwards it
+#   4. Creates an org + cluster via the API using the admin key
+#   5. Installs the pond-agent Helm chart with the cluster's agent token
+#   6. Mints a CLI token and writes test/end-to-end/.e2e-env
 #
 # Prerequisites:
 #   - Rancher Desktop running with the "rancher-desktop" kube context active
@@ -23,7 +23,7 @@ SERVER_PORT="${SERVER_PORT:-8080}"
 CONTEXT="rancher-desktop"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 HELM_SERVER="$REPO_ROOT/infra/deploy/helm/pond-server"
 HELM_AGENT="$REPO_ROOT/infra/deploy/helm/pond-agent"
 
@@ -72,15 +72,13 @@ docker build -f "$REPO_ROOT/infra/docker/Dockerfile.server" -t pond-server:lates
 docker build -f "$REPO_ROOT/infra/docker/Dockerfile.agent"  -t pond-agent:latest  "$REPO_ROOT" \
   || die "docker build failed for pond-agent"
 
-
-
-# ── 3. Generate secrets ───────────────────────────────────────────────────────
+# ── 2. Generate secrets ───────────────────────────────────────────────────────
 step "Generating secrets"
 JWT_SECRET=$(openssl rand -base64 32) || die "openssl failed to generate JWT secret"
 ADMIN_KEY=$(openssl rand -base64 24)  || die "openssl failed to generate admin key"
 info "JWT secret and admin key generated (not shown)"
 
-# ── 4. Install pond-server chart ──────────────────────────────────────────────
+# ── 3. Install pond-server chart ──────────────────────────────────────────────
 step "Installing pond-server chart into namespace '$NAMESPACE'"
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - \
   || die "failed to create namespace '$NAMESPACE'"
@@ -96,9 +94,8 @@ helm upgrade --install "$SERVER_RELEASE" "$HELM_SERVER" \
   --wait --timeout 3m \
   || die "helm upgrade failed for pond-server (check: kubectl logs -n $NAMESPACE -l app=$SERVER_RELEASE)"
 
-# ── 5. Wait for server pod + port-forward ─────────────────────────────────────
+# ── 4. Wait for server pod + port-forward ─────────────────────────────────────
 step "Port-forwarding pond-server to localhost:$SERVER_PORT"
-# Kill any stale port-forward
 pkill -f "kubectl port-forward.*$SERVER_PORT" 2>/dev/null || true
 
 kubectl port-forward \
@@ -109,7 +106,6 @@ kubectl port-forward \
 PF_PID=$!
 trap 'kill $PF_PID 2>/dev/null || true' EXIT
 
-# Wait until the server responds
 SERVER_URL="http://localhost:$SERVER_PORT"
 info "Waiting for server at $SERVER_URL ..."
 SERVER_READY=0
@@ -124,7 +120,7 @@ for i in $(seq 1 30); do
 done
 [[ $SERVER_READY -eq 1 ]] || die "server did not become healthy after 60s (port-forward PID $PF_PID — check: kubectl logs -n $NAMESPACE -l app=$SERVER_RELEASE)"
 
-# ── 6. Create organisation (idempotent) ───────────────────────────────────────
+# ── 5. Create organisation (idempotent) ───────────────────────────────────────
 step "Creating organisation 'local-org'"
 ORG_HTTP=$(curl -s -o /tmp/pond_org_body -w "%{http_code}" \
   -X POST "$SERVER_URL/api/v1/organizations" \
@@ -148,7 +144,7 @@ fi
 [[ -n "$ORG_ID" && "$ORG_ID" != "null" ]] || die "could not determine org ID"
 info "Organisation ID: $ORG_ID"
 
-# ── 7. Create cluster + obtain agent token (idempotent) ───────────────────────
+# ── 6. Create cluster + obtain agent token (idempotent) ───────────────────────
 step "Creating cluster 'rancher-desktop' in org"
 CLUSTER_HTTP=$(curl -s -o /tmp/pond_cluster_body -w "%{http_code}" \
   -X POST "$SERVER_URL/api/v1/organizations/$ORG_ID/clusters" \
@@ -180,7 +176,7 @@ fi
 info "Cluster ID:   $CLUSTER_ID"
 info "Agent token:  $AGENT_TOKEN"
 
-# ── 8. Install pond-agent chart ───────────────────────────────────────────────
+# ── 7. Install pond-agent chart ───────────────────────────────────────────────
 step "Installing pond-agent chart"
 helm upgrade --install "$AGENT_RELEASE" "$HELM_AGENT" \
   --namespace "$NAMESPACE" \
@@ -193,27 +189,41 @@ helm upgrade --install "$AGENT_RELEASE" "$HELM_AGENT" \
   --wait --timeout 2m \
   || die "helm upgrade failed for pond-agent (check: kubectl logs -n $NAMESPACE -l app=$AGENT_RELEASE)"
 
+# ── 8. Mint CLI token + write env file ────────────────────────────────────────
+E2E_ENV="${E2E_ENV:-$REPO_ROOT/test/end-to-end/.e2e-env}"
+step "Minting CLI token and writing $E2E_ENV"
+TOKEN_BODY=$(curl_api "POST /organizations/$ORG_ID/tokens" \
+  -X POST "$SERVER_URL/api/v1/organizations/$ORG_ID/tokens" \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"role":"admin","description":"local-dev"}')
+POND_TOKEN=$(echo "$TOKEN_BODY" | jq -r '.token')
+[[ -n "$POND_TOKEN" && "$POND_TOKEN" != "null" ]] || die "could not obtain org token"
+mkdir -p "$(dirname "$E2E_ENV")"
+printf 'export POND_SERVER_URL=%s\nexport POND_TOKEN=%s\nexport POND_ORG_ID=%s\nexport POND_CLUSTER_ID=%s\n' \
+  "$SERVER_URL" "$POND_TOKEN" "$ORG_ID" "$CLUSTER_ID" > "$E2E_ENV"
+info "Written: $E2E_ENV"
+
 # ── 9. Summary ────────────────────────────────────────────────────────────────
 step "Done"
 echo
 echo "${bold}Environment:${reset}"
-echo "  Server URL:    $SERVER_URL"
-echo "  Admin key:     $ADMIN_KEY"
-echo "  JWT secret:    $JWT_SECRET"
-echo "  Org ID:        $ORG_ID"
-echo "  Cluster ID:    $CLUSTER_ID"
+echo "  Server URL:  $SERVER_URL"
+echo "  Admin key:   $ADMIN_KEY"
+echo "  JWT secret:  $JWT_SECRET"
+echo "  Org ID:      $ORG_ID"
+echo "  Cluster ID:  $CLUSTER_ID"
+echo "  Env file:    $E2E_ENV"
 echo
-echo "${bold}Useful commands:${reset}"
-echo "  # Create a JWT token for the org:"
-echo "  curl -sf -X POST $SERVER_URL/api/v1/organizations/$ORG_ID/tokens \\"
-echo "    -H 'Authorization: Bearer $ADMIN_KEY' \\"
-echo "    -H 'Content-Type: application/json' \\"
-echo "    -d '{\"role\":\"admin\",\"description\":\"local-dev\"}'"
+echo "${bold}To use the CLI:${reset}"
+echo "  source $E2E_ENV"
+echo "  pond deploy --project <id> --env <env> --tag <tag>"
 echo
-echo "  # Export for the CLI:"
-echo "  export POND_SERVER_URL=$SERVER_URL"
+echo "${bold}To run end-to-end tests:${reset}"
+echo "  ./test/end-to-end/deploy-postgres.sh"
+echo "  (env file is auto-sourced)"
 echo
-echo "  # Tear down:"
+echo "${bold}Tear down:${reset}"
 echo "  helm uninstall $SERVER_RELEASE $AGENT_RELEASE -n $NAMESPACE"
 echo "  kubectl delete namespace $NAMESPACE"
 echo

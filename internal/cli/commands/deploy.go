@@ -42,6 +42,7 @@ func NewDeployCmd(serverClient client.ServerClient) *cobra.Command {
 				OverridableConfig: *overridable,
 				ImageTag:          tag,
 				TriggeredBy:       "cli",
+				CreateIfNotExists: true,
 			}
 
 			d, err := serverClient.SubmitDeployment(cmd.Context(), req)

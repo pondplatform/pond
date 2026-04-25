@@ -6,8 +6,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func NewRootCmd(serverURL string) *cobra.Command {
-	serverClient := client.NewHTTPClient(serverURL)
+func NewRootCmd(serverURL, token string) *cobra.Command {
+	var serverClient client.ServerClient
+	if token != "" {
+		serverClient = client.NewHTTPClientWithToken(serverURL, token)
+	} else {
+		serverClient = client.NewHTTPClient(serverURL)
+	}
 
 	root := &cobra.Command{
 		Use:   "pond",
