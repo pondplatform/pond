@@ -1,0 +1,42 @@
+image:
+  repository: pond-server
+  tag: latest
+  pullPolicy: IfNotPresent
+
+listenAddr: ":8080"
+databaseUrl: "postgres://pond:pond@postgres:5432/pond?sslmode=disable"
+rabbitmqUrl: "amqp://guest:guest@rabbitmq:5672/"
+jwtSecret: ""
+
+postgres:
+  tag: "16-alpine"
+  user: pond
+  password: pond
+  db: pond
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+rabbitmq:
+  tag: "3-alpine"
+  user: guest
+  password: guest
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi

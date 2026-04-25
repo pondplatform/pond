@@ -7,8 +7,8 @@ RUN CGO_ENABLED=0 go build -o /pond-agent ./cmd/pond-agent
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates curl bash
-# Install Helm
-RUN curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+# Install Helm 4
+RUN curl -fsSL https://get.helm.sh/helm-v4.1.4-linux-amd64.tar.gz | tar -xz -C /usr/local/bin --strip-components=1 linux-amd64/helm
 # Install OpenTofu
 RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community opentofu
 COPY --from=builder /pond-agent /usr/local/bin/pond-agent

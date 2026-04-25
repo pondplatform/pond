@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-rabbitmq
+  labels:
+    app: pond-rabbitmq
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pond-rabbitmq
+  template:
+    metadata:
+      labels:
+        app: pond-rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: "rabbitmq:{{ .Values.rabbitmq.tag }}"
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              value: {{ .Values.rabbitmq.user | quote }}
+            - name: RABBITMQ_DEFAULT_PASS
+              value: {{ .Values.rabbitmq.password | quote }}
+          ports:
+            - containerPort: 5672
+          resources:
+            {{- toYaml .Values.rabbitmq.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+spec:
+  selector:
+    app: pond-rabbitmq
+  ports:
+    - port: 5672
+      targetPort: 5672

@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: pond-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pond-server
+  template:
+    metadata:
+      labels:
+        app: pond-server
+    spec:
+      containers:
+        - name: pond-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DATABASE_URL
+              value: {{ .Values.databaseUrl | quote }}
+            - name: LISTEN_ADDR
+              value: {{ .Values.listenAddr | quote }}
+            - name: RABBITMQ_URL
+              value: {{ .Values.rabbitmqUrl | quote }}
+            - name: POND_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: jwt-secret
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

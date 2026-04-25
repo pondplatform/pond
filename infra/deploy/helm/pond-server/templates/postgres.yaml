@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-postgres
+  labels:
+    app: pond-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pond-postgres
+  template:
+    metadata:
+      labels:
+        app: pond-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: "postgres:{{ .Values.postgres.tag }}"
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.postgres.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.db | quote }}
+          ports:
+            - containerPort: 5432
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: pond-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
