@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -215,48 +214,3 @@ func bootstrapOrgAndToken(t *testing.T, db *sql.DB) (orgID uuid.UUID, adminJWT s
 	return orgID, signed
 }
 
-// RunSchema applies the database schema from db/schema.sql.
-func RunSchema(t *testing.T, db *sql.DB) {
-	t.Helper()
-
-	// Find the schema file relative to the project root
-	schemaPath := findSchemaFile(t)
-
-	schema, err := os.ReadFile(schemaPath)
-	if err != nil {
-		t.Fatalf("read schema file: %v", err)
-	}
-
-	_, err = db.Exec(string(schema))
-	if err != nil {
-		t.Fatalf("execute schema: %v", err)
-	}
-}
-
-// findSchemaFile locates db/schema.sql by walking up from the current directory.
-func findSchemaFile(t *testing.T) string {
-	t.Helper()
-
-	// Start from the current working directory
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-
-	// Walk up looking for db/schema.sql
-	for {
-		schemaPath := filepath.Join(dir, "db", "schema.sql")
-		if _, err := os.Stat(schemaPath); err == nil {
-			return schemaPath
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-
-	t.Fatal("could not find db/schema.sql")
-	return ""
-}

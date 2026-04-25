@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
+	dbmigrate "github.com/pondplatform/pond/db"
 	"github.com/pondplatform/pond/internal/agent"
 	"github.com/pondplatform/pond/internal/cli/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -90,8 +91,8 @@ func TestMain(m *testing.M) {
 	if db == nil {
 		log.Fatalf("could not connect to database after retries")
 	}
-	if err := applySchema(db); err != nil {
-		log.Fatalf("apply schema: %v", err)
+	if err := dbmigrate.Run(db); err != nil {
+		log.Fatalf("run migrations: %v", err)
 	}
 	db.Close()
 
@@ -107,29 +108,6 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(code)
-}
-
-func applySchema(db *sql.DB) error {
-	schemaPath := findSchemaPath()
-	schema, err := os.ReadFile(schemaPath)
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(string(schema))
-	return err
-}
-
-func findSchemaPath() string {
-	paths := []string{
-		"../../db/schema.sql",
-		"db/schema.sql",
-	}
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return "db/schema.sql"
 }
 
 // TestDeployment_SimpleSucceeds tests a helm-only deployment with no dependencies.

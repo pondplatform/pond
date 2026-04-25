@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	_ "github.com/lib/pq"
+	dbmigrate "github.com/pondplatform/pond/db"
 	"github.com/pondplatform/pond/internal/common/config"
 	"github.com/pondplatform/pond/internal/server/api"
 	"github.com/pondplatform/pond/internal/server/auth"
@@ -46,6 +47,12 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		return fmt.Errorf("ping db: %w", err)
 	}
 	log.Info("database connected")
+
+	log.Info("running database migrations")
+	if err := dbmigrate.Run(db); err != nil {
+		return fmt.Errorf("migrate db: %w", err)
+	}
+	log.Info("database migrations complete")
 
 	// Repositories
 	deploymentInfoStore := store.NewDeploymentInfoStore(db)
