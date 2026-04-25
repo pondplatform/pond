@@ -3,7 +3,7 @@ package events
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -11,6 +11,7 @@ import (
 
 type rabbitMQBus struct {
 	conn *amqp.Connection
+	log  *slog.Logger
 
 	publishMu sync.Mutex
 	pubCh     *amqp.Channel
@@ -21,7 +22,7 @@ type rabbitMQBus struct {
 
 // NewRabbitMQBus dials RabbitMQ at url and returns a Bus backed by AMQP.
 // The returned closer must be called on shutdown to release the connection.
-func NewRabbitMQBus(url string) (Bus, func(), error) {
+func NewRabbitMQBus(url string, log *slog.Logger) (Bus, func(), error) {
 	conn, err := amqp.Dial(url)
 	if err != nil {
 		return nil, nil, err
@@ -33,6 +34,7 @@ func NewRabbitMQBus(url string) (Bus, func(), error) {
 	}
 	b := &rabbitMQBus{
 		conn:    conn,
+		log:     log,
 		pubCh:   pubCh,
 		fanouts: make(map[string]struct{}),
 	}
@@ -64,13 +66,13 @@ func (b *rabbitMQBus) SubscribeWork(topic string, h Handler) (func(), error) {
 		for d := range deliveries {
 			v, err := unmarshalEvent(d.Body)
 			if err != nil {
-				log.Printf("rabbitmq SubscribeWork %s: unmarshal: %v", topic, err)
+				b.log.Error("unmarshal event", "topic", topic, "err", err)
 				d.Nack(false, false)
 				continue
 			}
 			h(v)
 			if err := d.Ack(false); err != nil {
-				log.Printf("rabbitmq SubscribeWork %s: ack: %v", topic, err)
+				b.log.Error("ack message", "topic", topic, "err", err)
 				return
 			}
 		}
@@ -78,10 +80,10 @@ func (b *rabbitMQBus) SubscribeWork(topic string, h Handler) (func(), error) {
 
 	return func() {
 		if err := ch.Cancel(tag, false); err != nil {
-			log.Printf("rabbitmq disconnect %s: cancel: %v", topic, err)
+			b.log.Warn("cancel consumer", "topic", topic, "err", err)
 		}
 		if err := ch.Close(); err != nil {
-			log.Printf("rabbitmq disconnect %s: close: %v", topic, err)
+			b.log.Warn("close channel", "topic", topic, "err", err)
 		}
 	}, nil
 }
@@ -124,7 +126,7 @@ func (b *rabbitMQBus) SubscribeFanout(topic string, h Handler) (func(), error) {
 		for d := range deliveries {
 			v, err := unmarshalEvent(d.Body)
 			if err != nil {
-				log.Printf("rabbitmq SubscribeFanout %s: unmarshal: %v", topic, err)
+				b.log.Error("unmarshal fanout event", "topic", topic, "err", err)
 				continue
 			}
 			h(v)
@@ -138,7 +140,7 @@ func (b *rabbitMQBus) SubscribeFanout(topic string, h Handler) (func(), error) {
 func (b *rabbitMQBus) Publish(_ context.Context, topic string, v any) {
 	body, err := marshalEvent(v)
 	if err != nil {
-		log.Printf("rabbitmq Publish %s: marshal: %v", topic, err)
+		b.log.Error("marshal event", "topic", topic, "err", err)
 		return
 	}
 
@@ -153,20 +155,20 @@ func (b *rabbitMQBus) Publish(_ context.Context, topic string, v any) {
 
 	if isFanout {
 		if err := b.pubCh.ExchangeDeclare(topic, "fanout", true, false, false, false, nil); err != nil {
-			log.Printf("rabbitmq Publish %s: declare exchange: %v", topic, err)
+			b.log.Error("declare fanout exchange", "topic", topic, "err", err)
 			return
 		}
 		if err := b.pubCh.PublishWithContext(context.Background(), topic, "", false, false, msg); err != nil {
-			log.Printf("rabbitmq Publish %s: publish: %v", topic, err)
+			b.log.Error("publish to fanout exchange", "topic", topic, "err", err)
 		}
 		return
 	}
 
 	if _, err := b.pubCh.QueueDeclare(topic, true, false, false, false, nil); err != nil {
-		log.Printf("rabbitmq Publish %s: declare queue: %v", topic, err)
+		b.log.Error("declare queue", "topic", topic, "err", err)
 		return
 	}
 	if err := b.pubCh.PublishWithContext(context.Background(), "", topic, false, false, msg); err != nil {
-		log.Printf("rabbitmq Publish %s: publish: %v", topic, err)
+		b.log.Error("publish to queue", "topic", topic, "err", err)
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +25,7 @@ type deploymentService struct {
 	resolver       config.ConfigResolver
 	tx             Transactor
 	bus            events.Bus
+	log            *slog.Logger
 }
 
 func NewDeploymentService(
@@ -37,6 +38,7 @@ func NewDeploymentService(
 	resolver config.ConfigResolver,
 	tx Transactor,
 	bus events.Bus,
+	log *slog.Logger,
 ) DeploymentService {
 	return &deploymentService{
 		deploymentInfo: deploymentInfo,
@@ -48,6 +50,7 @@ func NewDeploymentService(
 		resolver:       resolver,
 		tx:             tx,
 		bus:            bus,
+		log:            log,
 	}
 }
 
@@ -315,11 +318,11 @@ func (s *deploymentService) Start(ctx context.Context) error {
 			return s.bus.SubscribeWork(events.TopicCommandResults, func(v any) {
 				res, ok := v.(events.CommandResult)
 				if !ok {
-					log.Printf("deployment service: unexpected event type %T on command_results", v)
+					s.log.Error("unexpected event type", "topic", events.TopicCommandResults, "type", fmt.Sprintf("%T", v))
 					return
 				}
 				if err := s.processResult(ctx, res); err != nil {
-					log.Printf("deployment service: processResult for command %s: %v", res.CommandID, err)
+					s.log.Error("processResult", "command_id", res.CommandID, "err", err)
 				}
 			})
 		}},
@@ -327,7 +330,7 @@ func (s *deploymentService) Start(ctx context.Context) error {
 			return s.bus.SubscribeWork(events.TopicAgentReady, func(v any) {
 				e, ok := v.(events.AgentReady)
 				if !ok {
-					log.Printf("deployment service: unexpected event type %T on agent_ready", v)
+					s.log.Error("unexpected event type", "topic", events.TopicAgentReady, "type", fmt.Sprintf("%T", v))
 					return
 				}
 				s.handleAgentReady(ctx, e)
@@ -337,7 +340,7 @@ func (s *deploymentService) Start(ctx context.Context) error {
 			return s.bus.SubscribeWork(events.TopicCommandStarted, func(v any) {
 				e, ok := v.(events.CommandStarted)
 				if !ok {
-					log.Printf("deployment service: unexpected event type %T on command_started", v)
+					s.log.Error("unexpected event type", "topic", events.TopicCommandStarted, "type", fmt.Sprintf("%T", v))
 					return
 				}
 				s.handleCommandStarted(ctx, e)
@@ -347,7 +350,7 @@ func (s *deploymentService) Start(ctx context.Context) error {
 			return s.bus.SubscribeFanout(events.TopicCommandLogs, func(v any) {
 				e, ok := v.(events.CommandLog)
 				if !ok {
-					log.Printf("deployment service: unexpected event type %T on command_logs", v)
+					s.log.Error("unexpected event type", "topic", events.TopicCommandLogs, "type", fmt.Sprintf("%T", v))
 					return
 				}
 				s.handleCommandLog(ctx, e)
@@ -357,7 +360,7 @@ func (s *deploymentService) Start(ctx context.Context) error {
 			return s.bus.SubscribeWork(events.TopicAgentDisconnected, func(v any) {
 				e, ok := v.(events.AgentDisconnected)
 				if !ok {
-					log.Printf("deployment service: unexpected event type %T on agent_disconnected", v)
+					s.log.Error("unexpected event type", "topic", events.TopicAgentDisconnected, "type", fmt.Sprintf("%T", v))
 					return
 				}
 				s.handleAgentDisconnected(ctx, e)
@@ -367,7 +370,7 @@ func (s *deploymentService) Start(ctx context.Context) error {
 			return s.bus.SubscribeWork(events.TopicUserInputProvided, func(v any) {
 				e, ok := v.(events.UserInputProvided)
 				if !ok {
-					log.Printf("deployment service: unexpected event type %T on user_input.provided", v)
+					s.log.Error("unexpected event type", "topic", events.TopicUserInputProvided, "type", fmt.Sprintf("%T", v))
 					return
 				}
 				s.handleUserInputProvided(ctx, e)

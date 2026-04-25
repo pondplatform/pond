@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -60,7 +59,7 @@ func (s *deploymentService) advance(ctx context.Context, tx TxRepos, cmd *domain
 	case domain.CommandTypeHelmUpgrade:
 		return nil, s.advanceHelmUpgrade(ctx, tx, cmd, result)
 	default:
-		log.Printf("advance: unmatched command type %q for command %s", cmd.Type, result.CommandID)
+		s.log.Warn("unmatched command type", "type", cmd.Type, "command_id", result.CommandID)
 		return nil, nil
 	}
 }
@@ -73,7 +72,7 @@ func (s *deploymentService) advanceTofuApply(ctx context.Context, tx TxRepos, re
 		return nil, fmt.Errorf("get dep config by command id: %w", err)
 	}
 	if cfg == nil {
-		log.Printf("advance: tofu.apply command %s has no dep config row", result.CommandID)
+		s.log.Warn("tofu.apply command has no dep config row", "command_id", result.CommandID)
 		return nil, nil
 	}
 
@@ -109,7 +108,7 @@ func (s *deploymentService) advanceHelmUpgrade(ctx context.Context, tx TxRepos, 
 	dep, err := s.deploymentInfo.GetByID(ctx, cmd.DeploymentID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			log.Printf("advance: deployment %s not found for helm command %s", cmd.DeploymentID, result.CommandID)
+			s.log.Warn("deployment not found for helm command", "deployment_id", cmd.DeploymentID, "command_id", result.CommandID)
 			return nil
 		}
 		return fmt.Errorf("get deployment: %w", err)
@@ -120,6 +119,7 @@ func (s *deploymentService) advanceHelmUpgrade(ctx context.Context, tx TxRepos, 
 	if !result.Success {
 		status = domain.DeploymentStatusFailed
 	}
+	s.log.Info("helm upgrade completed", "deployment_id", dep.ID, "status", status)
 	return tx.DeploymentInfo.UpdateStatus(ctx, dep.ID, status, &now)
 }
 

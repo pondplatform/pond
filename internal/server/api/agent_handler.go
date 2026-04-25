@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -43,12 +43,14 @@ type wsLog struct {
 type AgentHandler struct {
 	clusters store.ClusterRepository
 	bus      events.Bus
+	log      *slog.Logger
 }
 
-func NewAgentHandler(clusters store.ClusterRepository, bus events.Bus) *AgentHandler {
+func NewAgentHandler(clusters store.ClusterRepository, bus events.Bus, log *slog.Logger) *AgentHandler {
 	return &AgentHandler{
 		clusters: clusters,
 		bus:      bus,
+		log:      log,
 	}
 }
 
@@ -68,12 +70,13 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("agent ws upgrade: %v", err)
+		h.log.Error("websocket upgrade failed", "cluster_id", cluster.ID, "err", err)
 		return
 	}
 	defer conn.Close()
 
-	log.Printf("agent connected: cluster=%s", cluster.ID)
+	log := h.log.With("cluster_id", cluster.ID)
+	log.Info("agent connected")
 	_ = h.clusters.UpdateLastSeen(r.Context(), cluster.ID, time.Now())
 
 	ctx := r.Context()
@@ -118,11 +121,11 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			// consume. The service only dispatches in response to
 			// AgentReady (one outstanding credit), so this path
 			// should be unreachable — log if we ever hit it.
-			log.Printf("agent ws: dropped duplicate CommandDispatch for cluster %s", cluster.ID)
+			log.Warn("dropped duplicate CommandDispatch")
 		}
 	})
 	if err != nil {
-		log.Printf("agent ws: subscribe dispatch for cluster %s: %v", cluster.ID, err)
+		log.Error("subscribe dispatch failed", "err", err)
 		return
 	}
 	defer unsubDispatch()
@@ -137,7 +140,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	if err != nil {
-		log.Printf("agent ws: subscribe queued for cluster %s: %v", cluster.ID, err)
+		log.Error("subscribe queued failed", "err", err)
 		return
 	}
 	defer unsubQueued()
@@ -153,17 +156,18 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		select {
 		case cmd := <-dispatchCh:
 			activeCommandID = cmd.ID
+			log.Info("sending command to agent", "command_id", cmd.ID, "type", cmd.Type)
 			data, err := json.Marshal(cmd)
 			if err != nil {
-				log.Printf("marshal command: %v", err)
+				log.Error("marshal command", "err", err)
 				return
 			}
 			if err := conn.WriteJSON(wsEnvelope{Type: "command", Data: data}); err != nil {
-				log.Printf("agent ws write command: %v", err)
+				log.Error("write command to ws", "err", err)
 			}
 		case <-time.After(200 * time.Millisecond):
 			if err := conn.WriteJSON(wsEnvelope{Type: "idle"}); err != nil {
-				log.Printf("agent ws write idle: %v", err)
+				log.Error("write idle to ws", "err", err)
 			}
 		}
 	}
@@ -171,6 +175,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// On disconnect, publish AgentDisconnected so the service can requeue
 	// whatever was in flight.
 	defer func() {
+		log.Info("agent disconnected", "in_flight_command_id", activeCommandID)
 		h.bus.Publish(context.Background(), events.TopicAgentDisconnected, events.AgentDisconnected{
 			ClusterID:         cluster.ID,
 			InFlightCommandID: activeCommandID,
@@ -186,7 +191,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 		case err := <-readerDone:
 			if err != nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Printf("agent ws read: %v", err)
+				log.Error("websocket read error", "err", err)
 			}
 			return
 
@@ -201,9 +206,10 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			case "ack":
 				var ack wsAck
 				if err := json.Unmarshal(env.Data, &ack); err != nil {
-					log.Printf("decode ack: %v", err)
+					log.Error("decode ack", "err", err)
 					continue
 				}
+				log.Info("command acknowledged by agent", "command_id", ack.CommandID)
 				h.bus.Publish(ctx, events.TopicCommandStarted, events.CommandStarted{
 					DeploymentID: ack.DeploymentID,
 				})
@@ -211,13 +217,14 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			case "result":
 				var res events.CommandResult
 				if err := json.Unmarshal(env.Data, &res); err != nil {
-					log.Printf("decode result: %v", err)
+					log.Error("decode result", "err", err)
 					continue
 				}
 				if activeCommandID == uuid.Nil {
-					log.Printf("received result with no active command")
+					log.Warn("received result with no active command")
 					continue
 				}
+				log.Info("received command result", "command_id", activeCommandID, "success", res.Success)
 				// Trust the server-tracked command ID, not the agent-supplied one.
 				res.CommandID = activeCommandID
 				activeCommandID = uuid.Nil
@@ -230,7 +237,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			case "log":
 				var msg wsLog
 				if err := json.Unmarshal(env.Data, &msg); err != nil {
-					log.Printf("decode log: %v", err)
+					log.Error("decode log", "err", err)
 					continue
 				}
 				if activeCommandID == uuid.Nil {
@@ -242,7 +249,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 				})
 
 			default:
-				log.Printf("agent ws: unknown message type %q", env.Type)
+				log.Warn("unknown message type from agent", "type", env.Type)
 			}
 
 		case cmd := <-dispatchCh:
@@ -250,17 +257,18 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			// can happen if the service dispatched before our AgentReady
 			// publish consumed it; treat it as a valid command arrival.
 			if activeCommandID != uuid.Nil {
-				log.Printf("agent ws: dispatch arrived while busy, dropping command %s", cmd.ID)
+				log.Warn("dispatch arrived while busy, dropping", "command_id", cmd.ID)
 				continue
 			}
 			activeCommandID = cmd.ID
+			log.Info("sending unsolicited command to agent", "command_id", cmd.ID, "type", cmd.Type)
 			data, err := json.Marshal(cmd)
 			if err != nil {
-				log.Printf("marshal command: %v", err)
+				log.Error("marshal command", "err", err)
 				continue
 			}
 			if err := conn.WriteJSON(wsEnvelope{Type: "command", Data: data}); err != nil {
-				log.Printf("agent ws write command: %v", err)
+				log.Error("write command to ws", "err", err)
 			}
 
 		case <-wakeCh:

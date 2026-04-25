@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -113,7 +114,7 @@ func TestDeploymentService_Submit(t *testing.T) {
 
 	tmplRenderer := config.NewTemplateRenderer()
 	resolver := &mockConfigResolver{}
-	s := NewDeploymentService(infoStore, svcRepo, envRepo, depSvc, helmGen, tmplRenderer, resolver, tx, bus)
+	s := NewDeploymentService(infoStore, svcRepo, envRepo, depSvc, helmGen, tmplRenderer, resolver, tx, bus, slog.Default())
 
 	t.Run("Submit without managed dependencies", func(t *testing.T) {
 		depSvc.scheduleCommandsFn = nil // returns nil (no managed deps)

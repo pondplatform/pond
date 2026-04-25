@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,14 +59,14 @@ func startRabbitMQ(t *testing.T) string {
 //     the next command (none queued → "idle" frame).
 func TestAgentHandler_EventFlow(t *testing.T) {
 	amqpURL := startRabbitMQ(t)
-	bus, closeBus, err := events.NewRabbitMQBus(amqpURL)
+	bus, closeBus, err := events.NewRabbitMQBus(amqpURL, slog.Default())
 	if err != nil {
 		t.Fatalf("new rabbitmq bus: %v", err)
 	}
 	t.Cleanup(closeBus)
 
 	clusterRepo := &testutil.MockClusterRepository{}
-	handler := NewAgentHandler(clusterRepo, bus)
+	handler := NewAgentHandler(clusterRepo, bus, slog.Default())
 
 	token := "my-token"
 	hash := auth.SHA256Hex(token)

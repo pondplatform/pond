@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,6 +13,12 @@ import (
 )
 
 func main() {
+	level := slog.LevelInfo
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		_ = level.UnmarshalText([]byte(v))
+	}
+	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -23,8 +29,8 @@ func main() {
 
 	exec := agent.NewExecutor(helm.NewRunner(), tofu.NewRunner())
 
-	if err := agent.Run(ctx, cfg, exec); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	if err := agent.Run(ctx, cfg, exec, log); err != nil {
+		log.Error("agent exited", "err", err)
 		os.Exit(1)
 	}
 }

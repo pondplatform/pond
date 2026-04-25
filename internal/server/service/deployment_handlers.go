@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,17 +14,18 @@ import (
 func (s *deploymentService) handleAgentReady(ctx context.Context, e events.AgentReady) {
 	cmds, err := s.deploymentInfo.ListQueuedCommandsByCluster(ctx, e.ClusterID)
 	if err != nil {
-		log.Printf("deployment service: list queued commands for cluster %s: %v", e.ClusterID, err)
+		s.log.Error("list queued commands", "cluster_id", e.ClusterID, "err", err)
 		return
 	}
 	if len(cmds) == 0 {
 		return
 	}
 	cmd := cmds[0]
+	s.log.Info("dispatching command to agent", "cluster_id", e.ClusterID, "command_id", cmd.ID, "type", cmd.Type)
 	cmd.Status = domain.CommandStatusDispatched
 	cmd.UpdatedAt = time.Now()
 	if err := s.deploymentInfo.UpdateCommand(ctx, cmd); err != nil {
-		log.Printf("deployment service: update command %s to dispatched: %v", cmd.ID, err)
+		s.log.Error("update command to dispatched", "command_id", cmd.ID, "err", err)
 		return
 	}
 	s.bus.Publish(ctx, events.ClusterCommandDispatchTopic(e.ClusterID), events.CommandDispatch{Cmd: cmd})
@@ -36,21 +36,22 @@ func (s *deploymentService) handleAgentReady(ctx context.Context, e events.Agent
 func (s *deploymentService) handleCommandStarted(ctx context.Context, e events.CommandStarted) {
 	dep, err := s.deploymentInfo.GetByID(ctx, e.DeploymentID)
 	if err != nil {
-		log.Printf("deployment service: get deployment %s for command_started: %v", e.DeploymentID, err)
+		s.log.Error("get deployment for command_started", "deployment_id", e.DeploymentID, "err", err)
 		return
 	}
 	if dep.Status != domain.DeploymentStatusPending {
 		return
 	}
+	s.log.Info("deployment running", "deployment_id", e.DeploymentID)
 	if err := s.deploymentInfo.UpdateStatus(ctx, e.DeploymentID, domain.DeploymentStatusRunning, nil); err != nil {
-		log.Printf("deployment service: mark running %s: %v", e.DeploymentID, err)
+		s.log.Error("mark deployment running", "deployment_id", e.DeploymentID, "err", err)
 	}
 }
 
 // handleCommandLog persists a streamed log line from a running command.
 func (s *deploymentService) handleCommandLog(ctx context.Context, e events.CommandLog) {
 	if err := s.deploymentInfo.AppendLog(ctx, e.CommandID, e.Line); err != nil {
-		log.Printf("deployment service: append log for command %s: %v", e.CommandID, err)
+		s.log.Error("append log", "command_id", e.CommandID, "err", err)
 	}
 }
 
@@ -60,9 +61,10 @@ func (s *deploymentService) handleAgentDisconnected(ctx context.Context, e event
 	if e.InFlightCommandID == uuid.Nil {
 		return
 	}
+	s.log.Info("agent disconnected with in-flight command, requeueing", "command_id", e.InFlightCommandID)
 	cmd, err := s.deploymentInfo.GetCommand(ctx, e.InFlightCommandID)
 	if err != nil {
-		log.Printf("deployment service: get command %s on disconnect: %v", e.InFlightCommandID, err)
+		s.log.Error("get command on disconnect", "command_id", e.InFlightCommandID, "err", err)
 		return
 	}
 	if cmd.Status != domain.CommandStatusDispatched {
@@ -71,40 +73,41 @@ func (s *deploymentService) handleAgentDisconnected(ctx context.Context, e event
 	cmd.Status = domain.CommandStatusQueued
 	cmd.UpdatedAt = time.Now()
 	if err := s.deploymentInfo.UpdateCommand(ctx, cmd); err != nil {
-		log.Printf("deployment service: requeue command %s on disconnect: %v", e.InFlightCommandID, err)
+		s.log.Error("requeue command on disconnect", "command_id", e.InFlightCommandID, "err", err)
 	}
 }
 
 // handleUserInputProvided checks if all dependencies now have their input provided.
 // Only when ALL dependencies have input will it schedule ALL of them at once.
 func (s *deploymentService) handleUserInputProvided(ctx context.Context, e events.UserInputProvided) {
+	s.log.Info("user input provided", "deployment_id", e.DeploymentID, "dependency", e.DependencyName)
 	dep, err := s.deploymentInfo.GetByID(ctx, e.DeploymentID)
 	if err != nil {
-		log.Printf("deployment service: get deployment %s for user_input.provided: %v", e.DeploymentID, err)
+		s.log.Error("get deployment for user_input.provided", "deployment_id", e.DeploymentID, "err", err)
 		return
 	}
 	env, err := s.envs.GetByID(ctx, dep.EnvironmentID)
 	if err != nil {
-		log.Printf("deployment service: get environment for deployment %s: %v", e.DeploymentID, err)
+		s.log.Error("get environment for deployment", "deployment_id", e.DeploymentID, "err", err)
 		return
 	}
 
 	// Check if any dependencies still need input
 	stillAwaiting, err := s.deploymentInfo.AnyDepConfigAwaitingInput(ctx, e.DeploymentID)
 	if err != nil {
-		log.Printf("deployment service: check awaiting input for %s: %v", e.DeploymentID, err)
+		s.log.Error("check awaiting input", "deployment_id", e.DeploymentID, "err", err)
 		return
 	}
 
 	if stillAwaiting {
-		// Not all inputs provided yet - wait for the rest
+		s.log.Info("still awaiting input for other dependencies", "deployment_id", e.DeploymentID)
 		return
 	}
 
-	// All inputs provided - schedule ALL dependencies at once
+	s.log.Info("all inputs provided, scheduling dependencies", "deployment_id", e.DeploymentID)
 	scheduledDeps, helmCmd, err := s.scheduleAllDepsAfterInput(ctx, dep, env)
 	if err != nil {
-		log.Printf("deployment service: schedule all deps for %s: %v", e.DeploymentID, err)
+		s.log.Error("schedule all deps after input", "deployment_id", e.DeploymentID, "err", err)
 		return
 	}
 

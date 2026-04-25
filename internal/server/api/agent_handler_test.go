@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,7 +14,7 @@ import (
 
 func TestAgentHandler_ServeWS_Auth(t *testing.T) {
 	clusterRepo := &testutil.MockClusterRepository{}
-	handler := NewAgentHandler(clusterRepo, &testutil.MockBus{})
+	handler := NewAgentHandler(clusterRepo, &testutil.MockBus{}, slog.Default())
 
 	t.Run("Unauthorized - no token", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/ws", nil)

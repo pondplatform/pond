@@ -3,7 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -12,12 +12,31 @@ import (
 	"github.com/pondplatform/pond/internal/server/auth"
 )
 
-func loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
-	})
+// statusRecorder wraps ResponseWriter to capture the HTTP status code.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func loggingMiddleware(log *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(rec, r)
+			log.Info("request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", rec.status,
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
+		})
+	}
 }
 
 func jsonContentType(next http.Handler) http.Handler {
@@ -29,7 +48,7 @@ func jsonContentType(next http.Handler) http.Handler {
 
 // requireAuth validates the bearer token and injects *domain.Identity into context.
 // Returns 401 if no/invalid token.
-func requireAuth(authenticator auth.Authenticator) func(http.Handler) http.Handler {
+func requireAuth(authenticator auth.Authenticator, log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			identity, err := authenticator.Authenticate(r.Context(), r)
@@ -39,7 +58,7 @@ func requireAuth(authenticator auth.Authenticator) func(http.Handler) http.Handl
 					json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 					return
 				}
-				log.Printf("auth error: %v", err)
+				log.Error("authentication error", "err", err)
 				w.WriteHeader(http.StatusInternalServerError)
 				json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
 				return
@@ -54,13 +73,13 @@ func requireAuth(authenticator auth.Authenticator) func(http.Handler) http.Handl
 // The orgID is extracted from the path using the provided pathParam (e.g., "orgId").
 // If pathParam is empty, the org check is skipped (for routes where org is implicit).
 // Returns 403 if forbidden.
-func requireOrgAccess(authorizer auth.Authorizer, action auth.Action, pathParam string) func(http.Handler) http.Handler {
+func requireOrgAccess(authorizer auth.Authorizer, action auth.Action, pathParam string, log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			identity, ok := IdentityFromContext(r.Context())
 			if !ok {
 				// Programming error: requireAuth should have run first
-				log.Printf("requireOrgAccess called without identity in context")
+				log.Error("requireOrgAccess called without identity in context")
 				w.WriteHeader(http.StatusInternalServerError)
 				json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
 				return
@@ -87,7 +106,7 @@ func requireOrgAccess(authorizer auth.Authorizer, action auth.Action, pathParam 
 					json.NewEncoder(w).Encode(map[string]string{"error": "forbidden"})
 					return
 				}
-				log.Printf("authz error: %v", err)
+				log.Error("authorization error", "err", err)
 				w.WriteHeader(http.StatusInternalServerError)
 				json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
 				return

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/pondplatform/pond/internal/server/auth"
@@ -22,6 +23,7 @@ type RouterDeps struct {
 	AgentHandler  *AgentHandler
 	Authenticator auth.Authenticator
 	Authorizer    auth.Authorizer
+	Log           *slog.Logger
 }
 
 func NewRouter(deps RouterDeps) http.Handler {
@@ -40,8 +42,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// Auth middleware helpers
 	authed := func(action auth.Action, pathParam string, h http.HandlerFunc) http.HandlerFunc {
 		return chain(
-			requireAuth(deps.Authenticator),
-			requireOrgAccess(deps.Authorizer, action, pathParam),
+			requireAuth(deps.Authenticator, deps.Log),
+			requireOrgAccess(deps.Authorizer, action, pathParam, deps.Log),
 		)(http.HandlerFunc(h)).ServeHTTP
 	}
 
@@ -113,7 +115,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// Apply global middleware (logging, content-type) to all routes.
 	var handler http.Handler = mux
 	handler = jsonContentType(handler)
-	handler = loggingMiddleware(handler)
+	handler = loggingMiddleware(deps.Log)(handler)
 
 	return handler
 }

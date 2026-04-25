@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -73,7 +74,9 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 
 	tx := newTestTransactor(db)
 	specRegistry := dependency.NewSpecRegistry()
-	bus, closeBus, err := events.NewRabbitMQBus(amqpURL)
+	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	bus, closeBus, err := events.NewRabbitMQBus(amqpURL, log.WithGroup("rabbitmq"))
 	if err != nil {
 		cancel()
 		db.Close()
@@ -95,13 +98,14 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 		resolver,
 		tx,
 		bus,
+		log.WithGroup("deployment"),
 	)
 
 	// Start the deployment service event loop
 	go deploySvc.Start(ctx)
 
 	// Create the agent handler and router
-	agentHandler := api.NewAgentHandler(clusterStore, bus)
+	agentHandler := api.NewAgentHandler(clusterStore, bus, log.WithGroup("agent_handler"))
 	router := api.NewRouter(api.RouterDeps{
 		DeploySvc:     deploySvc,
 		Orgs:          orgStore,
@@ -114,6 +118,7 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 		AgentHandler:  agentHandler,
 		Authenticator: authenticator,
 		Authorizer:    authorizer,
+		Log:           log.WithGroup("http"),
 	})
 
 	// Start the test server
