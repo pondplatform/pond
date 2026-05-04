@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
 )
 
 var templateVarRegex = regexp.MustCompile(`\{\{(\w+(?:\.\w+)*)\}\}`)
@@ -16,7 +16,7 @@ func NewTemplateRenderer() TemplateRenderer {
 	return &templateRenderer{}
 }
 
-func (t *templateRenderer) Render(values map[string]any, contexts map[string]map[string]any, svcConfig *domain.ServiceConfig) (map[string]any, error) {
+func (t *templateRenderer) Render(values map[string]any, contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) (map[string]any, error) {
 	lookupTable := buildLookupTable(contexts, svcConfig)
 	result, err := renderMap(values, lookupTable)
 	if err != nil {
@@ -25,7 +25,7 @@ func (t *templateRenderer) Render(values map[string]any, contexts map[string]map
 	return result, nil
 }
 
-func buildLookupTable(contexts map[string]map[string]any, svcConfig *domain.ServiceConfig) map[string]string {
+func buildLookupTable(contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) map[string]string {
 	table := make(map[string]string)
 
 	// Add dependency context values: {{depName.field}}

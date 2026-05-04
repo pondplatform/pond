@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+
+	"github.com/pondplatform/pond/internal/common/wire"
 )
 
 type Config struct {
@@ -34,7 +36,7 @@ func Run(ctx context.Context, cfg Config, exec CommandExecutor, log *slog.Logger
 
 		switch msg.Type {
 		case "command":
-			var cmd Command
+			var cmd wire.CommandPayload
 			if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 				log.Error("decode command", "err", err)
 				continue
@@ -46,7 +48,7 @@ func Run(ctx context.Context, cfg Config, exec CommandExecutor, log *slog.Logger
 				// Non-fatal: server will stay in 'pending' briefly longer.
 			}
 
-			logSink := func(entry LogEntry) {
+			logSink := func(entry wire.LogPayload) {
 				if err := conn.SendLog(ctx, entry); err != nil {
 					log.Warn("send log failed", "err", err)
 				}
@@ -55,7 +57,7 @@ func Run(ctx context.Context, cfg Config, exec CommandExecutor, log *slog.Logger
 			result, err := exec.Execute(ctx, &cmd, logSink)
 			if err != nil {
 				log.Error("execute command failed", "command_id", cmd.ID, "err", err)
-				result = &CommandResult{
+				result = &wire.ResultPayload{
 					CommandID: cmd.ID,
 					Success:   false,
 					Error:     err.Error(),

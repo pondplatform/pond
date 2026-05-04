@@ -4,19 +4,19 @@ import (
 	"testing"
 
 	"github.com/pondplatform/pond/internal/common/config"
-	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
 )
 
 func ptr[T any](v T) *T { return &v }
 
 func TestResolve_NoOverrideForEnv_ReturnsBase(t *testing.T) {
 	r := config.NewResolver()
-	base := &domain.OverridableConfig{
-		ServiceConfig: domain.ServiceConfig{
+	base := &serviceconfig.OverridableConfig{
+		ServiceConfig: serviceconfig.ServiceConfig{
 			Name:  "my-service",
 			Image: "my-image:latest",
 		},
-		Overrides: map[string]domain.Override{},
+		Overrides: map[string]serviceconfig.Override{},
 	}
 
 	got, err := r.Resolve(base, "staging")
@@ -30,11 +30,11 @@ func TestResolve_NoOverrideForEnv_ReturnsBase(t *testing.T) {
 
 func TestResolve_NilMaps_Initialized(t *testing.T) {
 	r := config.NewResolver()
-	base := &domain.OverridableConfig{
-		ServiceConfig: domain.ServiceConfig{
+	base := &serviceconfig.OverridableConfig{
+		ServiceConfig: serviceconfig.ServiceConfig{
 			// Env, Dependencies, Configs are all nil
 		},
-		Overrides: map[string]domain.Override{},
+		Overrides: map[string]serviceconfig.Override{},
 	}
 
 	got, err := r.Resolve(base, "prod")
@@ -54,13 +54,13 @@ func TestResolve_NilMaps_Initialized(t *testing.T) {
 
 func TestResolve_IngressOverrideApplied(t *testing.T) {
 	r := config.NewResolver()
-	base := &domain.OverridableConfig{
-		ServiceConfig: domain.ServiceConfig{
-			Ingress: domain.IngressConfig{Enabled: false},
+	base := &serviceconfig.OverridableConfig{
+		ServiceConfig: serviceconfig.ServiceConfig{
+			Ingress: serviceconfig.IngressConfig{Enabled: false},
 		},
-		Overrides: map[string]domain.Override{
+		Overrides: map[string]serviceconfig.Override{
 			"prod": {
-				Ingress: &domain.IngressOverride{Enabled: ptr(true)},
+				Ingress: &serviceconfig.IngressOverride{Enabled: ptr(true)},
 			},
 		},
 	}
@@ -76,13 +76,13 @@ func TestResolve_IngressOverrideApplied(t *testing.T) {
 
 func TestResolve_ReplicasOverrideApplied(t *testing.T) {
 	r := config.NewResolver()
-	base := &domain.OverridableConfig{
-		ServiceConfig: domain.ServiceConfig{
-			Service: domain.ServiceSpec{Replicas: 1},
+	base := &serviceconfig.OverridableConfig{
+		ServiceConfig: serviceconfig.ServiceConfig{
+			Service: serviceconfig.ServiceSpec{Replicas: 1},
 		},
-		Overrides: map[string]domain.Override{
+		Overrides: map[string]serviceconfig.Override{
 			"prod": {
-				Service: &domain.ServiceOverride{Replicas: ptr(int32(5))},
+				Service: &serviceconfig.ServiceOverride{Replicas: ptr(int32(5))},
 			},
 		},
 	}
@@ -98,11 +98,11 @@ func TestResolve_ReplicasOverrideApplied(t *testing.T) {
 
 func TestResolve_EnvVarsDeepMerge(t *testing.T) {
 	r := config.NewResolver()
-	base := &domain.OverridableConfig{
-		ServiceConfig: domain.ServiceConfig{
+	base := &serviceconfig.OverridableConfig{
+		ServiceConfig: serviceconfig.ServiceConfig{
 			Env: map[string]string{"A": "base-a", "B": "base-b"},
 		},
-		Overrides: map[string]domain.Override{
+		Overrides: map[string]serviceconfig.Override{
 			"prod": {
 				Env: map[string]string{"B": "override-b", "C": "new-c"},
 			},
@@ -126,13 +126,13 @@ func TestResolve_EnvVarsDeepMerge(t *testing.T) {
 
 func TestResolve_OverrideBleeding_OtherEnvUnaffected(t *testing.T) {
 	r := config.NewResolver()
-	base := &domain.OverridableConfig{
-		ServiceConfig: domain.ServiceConfig{
-			Service: domain.ServiceSpec{Replicas: 1},
+	base := &serviceconfig.OverridableConfig{
+		ServiceConfig: serviceconfig.ServiceConfig{
+			Service: serviceconfig.ServiceSpec{Replicas: 1},
 		},
-		Overrides: map[string]domain.Override{
+		Overrides: map[string]serviceconfig.Override{
 			"prod": {
-				Service: &domain.ServiceOverride{Replicas: ptr(int32(10))},
+				Service: &serviceconfig.ServiceOverride{Replicas: ptr(int32(10))},
 			},
 		},
 	}
@@ -158,12 +158,12 @@ func TestResolve_OverrideBleeding_OtherEnvUnaffected(t *testing.T) {
 
 func TestResolve_OverrideNilPointers_BaseNotMutated(t *testing.T) {
 	r := config.NewResolver()
-	base := &domain.OverridableConfig{
-		ServiceConfig: domain.ServiceConfig{
-			Ingress: domain.IngressConfig{Enabled: true},
-			Service: domain.ServiceSpec{Replicas: 3},
+	base := &serviceconfig.OverridableConfig{
+		ServiceConfig: serviceconfig.ServiceConfig{
+			Ingress: serviceconfig.IngressConfig{Enabled: true},
+			Service: serviceconfig.ServiceSpec{Replicas: 3},
 		},
-		Overrides: map[string]domain.Override{
+		Overrides: map[string]serviceconfig.Override{
 			// Override struct exists but all pointer fields are nil.
 			"staging": {},
 		},

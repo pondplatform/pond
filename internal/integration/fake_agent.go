@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/agent"
+	"github.com/pondplatform/pond/internal/common/wire"
 )
 
 // Behavior configures how the FakeAgent responds to commands.
@@ -18,7 +19,7 @@ type Behavior struct {
 	// Handler is called for each command received.
 	// Return a result to send back to the server.
 	// If nil, DefaultBehavior is used.
-	Handler func(cmd *agent.Command) *agent.CommandResult
+	Handler func(cmd *wire.CommandPayload) *wire.ResultPayload
 
 	// Logs are sent as log frames before the result.
 	Logs []string
@@ -29,8 +30,8 @@ type Behavior struct {
 
 // DefaultBehavior succeeds every command immediately with empty output.
 var DefaultBehavior = Behavior{
-	Handler: func(cmd *agent.Command) *agent.CommandResult {
-		return &agent.CommandResult{
+	Handler: func(cmd *wire.CommandPayload) *wire.ResultPayload {
+		return &wire.ResultPayload{
 			CommandID: cmd.ID,
 			Success:   true,
 		}
@@ -40,8 +41,8 @@ var DefaultBehavior = Behavior{
 // FailingBehavior fails every command with the given error message.
 func FailingBehavior(errMsg string) Behavior {
 	return Behavior{
-		Handler: func(cmd *agent.Command) *agent.CommandResult {
-			return &agent.CommandResult{
+		Handler: func(cmd *wire.CommandPayload) *wire.ResultPayload {
+			return &wire.ResultPayload{
 				CommandID: cmd.ID,
 				Success:   false,
 				Error:     errMsg,
@@ -58,7 +59,7 @@ type FakeAgent struct {
 	conn       agent.AgentConnection
 
 	mu       sync.Mutex
-	Commands []*agent.Command // commands received, in order
+	Commands []*wire.CommandPayload // commands received, in order
 	done     chan struct{}
 	cancel   context.CancelFunc
 }
@@ -107,7 +108,7 @@ func (a *FakeAgent) Run(ctx context.Context) error {
 
 		switch msg.Type {
 		case "command":
-			var cmd agent.Command
+			var cmd wire.CommandPayload
 			if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 				continue
 			}
@@ -123,7 +124,7 @@ func (a *FakeAgent) Run(ctx context.Context) error {
 
 			// Send logs if configured
 			for _, line := range a.behavior.Logs {
-				entry := agent.LogEntry{
+				entry := wire.LogPayload{
 					CommandID: cmd.ID,
 					Line:      line,
 					Timestamp: time.Now(),
@@ -178,10 +179,10 @@ func (a *FakeAgent) CloseConnection() {
 }
 
 // ReceivedCommands returns a copy of all commands received by this agent.
-func (a *FakeAgent) ReceivedCommands() []*agent.Command {
+func (a *FakeAgent) ReceivedCommands() []*wire.CommandPayload {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	result := make([]*agent.Command, len(a.Commands))
+	result := make([]*wire.CommandPayload, len(a.Commands))
 	copy(result, a.Commands)
 	return result
 }
@@ -191,12 +192,12 @@ func (a *FakeAgent) ReceivedCommands() []*agent.Command {
 func TofuOutputBehavior(output map[string]any) Behavior {
 	outputJSON, _ := json.Marshal(output)
 	return Behavior{
-		Handler: func(cmd *agent.Command) *agent.CommandResult {
-			result := &agent.CommandResult{
+		Handler: func(cmd *wire.CommandPayload) *wire.ResultPayload {
+			result := &wire.ResultPayload{
 				CommandID: cmd.ID,
 				Success:   true,
 			}
-			if cmd.Type == agent.CommandTofuApply {
+			if cmd.Type == wire.CommandTofuApply {
 				result.Output = outputJSON
 			}
 			return result
@@ -205,14 +206,14 @@ func TofuOutputBehavior(output map[string]any) Behavior {
 }
 
 // PerCommandBehavior returns a behavior that uses different handlers per command type.
-func PerCommandBehavior(handlers map[agent.CommandType]func(cmd *agent.Command) *agent.CommandResult) Behavior {
+func PerCommandBehavior(handlers map[wire.CommandType]func(cmd *wire.CommandPayload) *wire.ResultPayload) Behavior {
 	return Behavior{
-		Handler: func(cmd *agent.Command) *agent.CommandResult {
+		Handler: func(cmd *wire.CommandPayload) *wire.ResultPayload {
 			if h, ok := handlers[cmd.Type]; ok {
 				return h(cmd)
 			}
 			// Default: succeed
-			return &agent.CommandResult{
+			return &wire.ResultPayload{
 				CommandID: cmd.ID,
 				Success:   true,
 			}
@@ -224,9 +225,9 @@ func PerCommandBehavior(handlers map[agent.CommandType]func(cmd *agent.Command) 
 // Useful for testing agent disconnect scenarios.
 func BlockingBehavior(unblock <-chan struct{}) Behavior {
 	return Behavior{
-		Handler: func(cmd *agent.Command) *agent.CommandResult {
+		Handler: func(cmd *wire.CommandPayload) *wire.ResultPayload {
 			<-unblock
-			return &agent.CommandResult{
+			return &wire.ResultPayload{
 				CommandID: cmd.ID,
 				Success:   true,
 			}
@@ -240,20 +241,20 @@ func CommandCountBehavior(failIndices map[int]string) Behavior {
 	var count int
 	var mu sync.Mutex
 	return Behavior{
-		Handler: func(cmd *agent.Command) *agent.CommandResult {
+		Handler: func(cmd *wire.CommandPayload) *wire.ResultPayload {
 			mu.Lock()
 			idx := count
 			count++
 			mu.Unlock()
 
 			if errMsg, shouldFail := failIndices[idx]; shouldFail {
-				return &agent.CommandResult{
+				return &wire.ResultPayload{
 					CommandID: cmd.ID,
 					Success:   false,
 					Error:     errMsg,
 				}
 			}
-			return &agent.CommandResult{
+			return &wire.ResultPayload{
 				CommandID: cmd.ID,
 				Success:   true,
 			}

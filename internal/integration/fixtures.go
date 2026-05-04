@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
 	"github.com/pondplatform/pond/internal/server/service"
 )
 
@@ -52,12 +52,12 @@ func BuildScenario(ctx context.Context, t *testing.T, h *TestHarness) ScenarioRe
 }
 
 // MinimalServiceConfig returns a ServiceConfig with no dependencies.
-func MinimalServiceConfig(name string) domain.ServiceConfig {
-	return domain.ServiceConfig{
+func MinimalServiceConfig(name string) serviceconfig.ServiceConfig {
+	return serviceconfig.ServiceConfig{
 		Version: 1,
 		Name:    name,
 		Image:   "ghcr.io/example/" + name,
-		Service: domain.ServiceSpec{
+		Service: serviceconfig.ServiceSpec{
 			Port:     8080,
 			Replicas: 1,
 		},
@@ -65,9 +65,9 @@ func MinimalServiceConfig(name string) domain.ServiceConfig {
 }
 
 // ServiceConfigWithDep returns a ServiceConfig with one managed postgres dependency.
-func ServiceConfigWithDep(name string) domain.ServiceConfig {
+func ServiceConfigWithDep(name string) serviceconfig.ServiceConfig {
 	cfg := MinimalServiceConfig(name)
-	cfg.Dependencies = map[string]domain.DependencyDeclaration{
+	cfg.Dependencies = map[string]serviceconfig.DependencyDeclaration{
 		"postgres": {
 			Type: "postgres",
 		},
@@ -76,11 +76,11 @@ func ServiceConfigWithDep(name string) domain.ServiceConfig {
 }
 
 // SubmitRequest builds a SubmitRequest from scenario data and a service config.
-func SubmitRequest(scenario ScenarioResult, cfg domain.ServiceConfig, imageTag string) service.SubmitRequest {
+func SubmitRequest(scenario ScenarioResult, cfg serviceconfig.ServiceConfig, imageTag string) service.SubmitRequest {
 	return service.SubmitRequest{
 		ProjectID:       scenario.ProjectID,
 		EnvironmentName: "test-env",
-		OverridableConfig: domain.OverridableConfig{
+		OverridableConfig: serviceconfig.OverridableConfig{
 			ServiceConfig: cfg,
 		},
 		ImageTag:          imageTag,

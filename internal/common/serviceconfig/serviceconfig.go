@@ -1,4 +1,4 @@
-package domain
+package serviceconfig
 
 // ServiceConfig is the fully-resolved configuration for deploying a service
 // to a specific environment (overrides already applied).
@@ -60,11 +60,11 @@ type OverridableConfig struct {
 }
 
 type Override struct {
-	Ingress      *IngressOverride              `yaml:"ingress"      json:"ingress,omitempty"`
-	Service      *ServiceOverride              `yaml:"service"      json:"service,omitempty"`
-	Env          map[string]string             `yaml:"env"          json:"env,omitempty"`
+	Ingress      *IngressOverride                 `yaml:"ingress"      json:"ingress,omitempty"`
+	Service      *ServiceOverride                 `yaml:"service"      json:"service,omitempty"`
+	Env          map[string]string                `yaml:"env"          json:"env,omitempty"`
 	Dependencies map[string]DependencyDeclaration `yaml:"dependencies" json:"dependencies,omitempty"`
-	Configs      map[string]ConfigFileSpec    `yaml:"configs"      json:"configs,omitempty"`
+	Configs      map[string]ConfigFileSpec        `yaml:"configs"      json:"configs,omitempty"`
 }
 
 type IngressOverride struct {

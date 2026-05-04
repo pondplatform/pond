@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
 )
 
 type DeploymentStatus string
@@ -21,7 +22,7 @@ type Deployment struct {
 	ServiceID             uuid.UUID                       `json:"serviceId"`
 	EnvironmentID         uuid.UUID                       `json:"environmentId"`
 	ImageTag              string                          `json:"imageTag"`
-	ServiceConfigSnapshot ServiceConfig                   `json:"serviceConfigSnapshot"`
+	ServiceConfigSnapshot serviceconfig.ServiceConfig      `json:"serviceConfigSnapshot"`
 	DependencyConfigs     map[string]DependencyDeployment `json:"dependencyConfigs"`
 	Status                DeploymentStatus                `json:"status"`
 	TriggeredBy           string                          `json:"triggeredBy"`

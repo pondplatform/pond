@@ -5,6 +5,7 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
     go mod download
 COPY cmd/pond-agent/ cmd/pond-agent/
 COPY internal/agent/ internal/agent/
+COPY internal/common/ internal/common/
 RUN --mount=type=cache,target=/root/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -o /pond-agent ./cmd/pond-agent

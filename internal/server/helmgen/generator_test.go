@@ -5,15 +5,16 @@ import (
 	"testing"
 
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
 )
 
 func TestGenerator_Generate_ConfigFiles(t *testing.T) {
 	g := NewGenerator()
 
 	// Values are pre-rendered by the deployment service before calling Generate
-	cfg := &domain.ServiceConfig{
+	cfg := &serviceconfig.ServiceConfig{
 		Name: "test-service",
-		Configs: map[string]domain.ConfigFileSpec{
+		Configs: map[string]serviceconfig.ConfigFileSpec{
 			"app.yaml": {
 				Format:   "yaml",
 				MountDir: "/etc/app",
@@ -57,9 +58,9 @@ func TestGenerator_Generate_ConfigFiles(t *testing.T) {
 func TestGenerator_Generate_Ingress(t *testing.T) {
 	g := NewGenerator()
 
-	cfg := &domain.ServiceConfig{
+	cfg := &serviceconfig.ServiceConfig{
 		Name: "web",
-		Ingress: domain.IngressConfig{
+		Ingress: serviceconfig.IngressConfig{
 			Enabled: true,
 		},
 	}

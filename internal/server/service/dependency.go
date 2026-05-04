@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
+	"github.com/pondplatform/pond/internal/common/wire"
 	"github.com/pondplatform/pond/internal/server/dependency"
 )
 
@@ -21,11 +23,7 @@ func NewDependencyService(specs dependency.SpecRegistry) DependencyService {
 
 // buildTofuPayload constructs the JSON payload for a tofu.apply command.
 func buildTofuPayload(serviceName, depName, depType string, depConfig map[string]any, providerInputs map[string]any) ([]byte, error) {
-	return json.Marshal(struct {
-		WorkDir   string         `json:"workDir"`
-		StatePath string         `json:"statePath"`
-		Vars      map[string]any `json:"vars"`
-	}{
+	return wire.MarshalPayload(wire.TofuApplyPayload{
 		WorkDir:   fmt.Sprintf("providers/%s/terraform.tfstate", depType),
 		StatePath: fmt.Sprintf("states/%s/%s/terraform.tfstate", serviceName, depName),
 		Vars: map[string]any{
@@ -257,7 +255,7 @@ func (s *dependencyService) AdvanceOnResult(ctx context.Context, tx TxRepos, dep
 }
 
 // Validate checks that all declared dependency types are known.
-func (s *dependencyService) Validate(ctx context.Context, deps map[string]domain.DependencyDeclaration) error {
+func (s *dependencyService) Validate(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error {
 	var errs domain.ValidationErrors
 
 	for name, decl := range deps {

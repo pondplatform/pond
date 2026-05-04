@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/wire"
 	"github.com/pondplatform/pond/internal/server/auth"
 	"github.com/pondplatform/pond/internal/server/events"
 	"github.com/pondplatform/pond/internal/server/service"
@@ -19,22 +20,6 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// wsEnvelope is the wire format for all WebSocket messages.
-type wsEnvelope struct {
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
-}
-
-// wsAck is the payload of an "ack" message from the agent.
-type wsAck struct {
-	CommandID    uuid.UUID `json:"commandId"`
-	DeploymentID uuid.UUID `json:"deploymentId"`
-}
-
-// wsLog is the payload of a "log" message from the agent.
-type wsLog struct {
-	Line string `json:"line"`
-}
 
 // AgentHandler bridges agent WebSocket connections to the event bus. It owns
 // no deployment state: every interaction with the deployment service goes
@@ -99,14 +84,14 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Per-connection channels for WebSocket reader goroutine.
-	wsCh := make(chan wsEnvelope, 4)
+	wsCh := make(chan wire.Envelope, 4)
 	readerDone := make(chan error, 1)
 
 	// Reader goroutine: gorilla WS requires all ReadJSON calls from one
 	// goroutine, so we park it here and push parsed envelopes onto wsCh.
 	go func() {
 		for {
-			var env wsEnvelope
+			var env wire.Envelope
 			if err := conn.ReadJSON(&env); err != nil {
 				readerDone <- err
 				close(wsCh)
@@ -120,15 +105,22 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// sendCommand marshals and writes a command to the WebSocket.
+	// sendCommand maps a domain.Command to wire.CommandPayload and writes it to the WebSocket.
 	sendCommand := func(cmd *domain.Command) {
 		log.Info("sending command to agent", "command_id", cmd.ID, "type", cmd.Type)
-		data, err := json.Marshal(cmd)
+		wireCmd := wire.CommandPayload{
+			ID:           cmd.ID,
+			DeploymentID: cmd.DeploymentID,
+			Type:         cmd.Type,
+			Payload:      cmd.Payload,
+			CreatedAt:    cmd.CreatedAt,
+		}
+		data, err := json.Marshal(wireCmd)
 		if err != nil {
 			log.Error("marshal command", "err", err)
 			return
 		}
-		if err := conn.WriteJSON(wsEnvelope{Type: "command", Data: data}); err != nil {
+		if err := conn.WriteJSON(wire.Envelope{Type: "command", Data: data}); err != nil {
 			log.Error("write command to ws", "err", err)
 		}
 	}
@@ -139,7 +131,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			activeCommandID = cmd.ID
 			sendCommand(cmd)
 		} else {
-			if err := conn.WriteJSON(wsEnvelope{Type: "idle"}); err != nil {
+			if err := conn.WriteJSON(wire.Envelope{Type: "idle"}); err != nil {
 				log.Error("write idle to ws", "err", err)
 			}
 		}
@@ -166,7 +158,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 				requestNext()
 
 			case "ack":
-				var ack wsAck
+				var ack wire.AckPayload
 				if err := json.Unmarshal(env.Data, &ack); err != nil {
 					log.Error("decode ack", "err", err)
 					continue
@@ -191,7 +183,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 				requestNext()
 
 			case "log":
-				var msg wsLog
+				var msg wire.LogPayload
 				if err := json.Unmarshal(env.Data, &msg); err != nil {
 					log.Error("decode log", "err", err)
 					continue

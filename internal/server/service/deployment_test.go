@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/common/config"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
 	"github.com/pondplatform/pond/internal/testutil"
 )
 
@@ -29,7 +30,7 @@ type mockDependencyService struct {
 	scheduleAfterInputFn func(ctx context.Context, tx TxRepos, deployment *domain.Deployment, env *domain.Environment, depName string) (*domain.DependencyDeployment, error)
 	advanceOnResultFn    func(ctx context.Context, tx TxRepos, deploymentID uuid.UUID, cfg *domain.DependencyDeployment, success bool, output json.RawMessage) (bool, error)
 	buildContextsFn      func(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
-	validateFn           func(ctx context.Context, deps map[string]domain.DependencyDeclaration) error
+	validateFn           func(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error
 }
 
 func (m *mockDependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error) {
@@ -60,7 +61,7 @@ func (m *mockDependencyService) BuildContexts(rawOutputs map[string]json.RawMess
 	return map[string]map[string]any{}, nil
 }
 
-func (m *mockDependencyService) Validate(ctx context.Context, deps map[string]domain.DependencyDeclaration) error {
+func (m *mockDependencyService) Validate(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error {
 	if m.validateFn != nil {
 		return m.validateFn(ctx, deps)
 	}
@@ -70,17 +71,17 @@ func (m *mockDependencyService) Validate(ctx context.Context, deps map[string]do
 // mockConfigResolver is a simple resolver that returns the base config (ignores overrides).
 type mockConfigResolver struct{}
 
-func (m *mockConfigResolver) Resolve(base *domain.OverridableConfig, envName string) (*domain.ServiceConfig, error) {
+func (m *mockConfigResolver) Resolve(base *serviceconfig.OverridableConfig, envName string) (*serviceconfig.ServiceConfig, error) {
 	cfg := base.ServiceConfig
 	// Initialize maps if nil
 	if cfg.Env == nil {
 		cfg.Env = make(map[string]string)
 	}
 	if cfg.Dependencies == nil {
-		cfg.Dependencies = make(map[string]domain.DependencyDeclaration)
+		cfg.Dependencies = make(map[string]serviceconfig.DependencyDeclaration)
 	}
 	if cfg.Configs == nil {
-		cfg.Configs = make(map[string]domain.ConfigFileSpec)
+		cfg.Configs = make(map[string]serviceconfig.ConfigFileSpec)
 	}
 	return &cfg, nil
 }
@@ -122,8 +123,8 @@ func TestDeploymentService_Submit(t *testing.T) {
 		req := SubmitRequest{
 			ProjectID:       projectID,
 			EnvironmentName: "staging",
-			OverridableConfig: domain.OverridableConfig{
-				ServiceConfig: domain.ServiceConfig{
+			OverridableConfig: serviceconfig.OverridableConfig{
+				ServiceConfig: serviceconfig.ServiceConfig{
 					Name: "my-service",
 				},
 			},
@@ -229,10 +230,10 @@ func TestDeploymentService_Submit(t *testing.T) {
 		req := SubmitRequest{
 			ProjectID:       projectID,
 			EnvironmentName: "staging",
-			OverridableConfig: domain.OverridableConfig{
-				ServiceConfig: domain.ServiceConfig{
+			OverridableConfig: serviceconfig.OverridableConfig{
+				ServiceConfig: serviceconfig.ServiceConfig{
 					Name: "my-service",
-					Dependencies: map[string]domain.DependencyDeclaration{
+					Dependencies: map[string]serviceconfig.DependencyDeclaration{
 						"db":    {Type: "postgres", Config: map[string]any{"version": "13"}},
 						"redis": {Type: "redis"},
 					},

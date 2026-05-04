@@ -12,10 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/pondplatform/pond/internal/agent"
+	"github.com/pondplatform/pond/internal/common/wire"
 )
-
-// wsEnvelope mirrors agent.Envelope for use in test server handlers.
-type wsEnvelope = agent.Envelope
 
 func newTestServer(t *testing.T, handler func(*websocket.Conn)) *httptest.Server {
 	t.Helper()
@@ -55,15 +53,15 @@ func TestConnection_ReceiveCommand(t *testing.T) {
 	deployID := uuid.New()
 
 	srv := newTestServer(t, func(conn *websocket.Conn) {
-		cmd := agent.Command{
+		cmd := wire.CommandPayload{
 			ID:           cmdID,
 			DeploymentID: deployID,
-			Type:         agent.CommandHelmUpgrade,
+			Type:         wire.CommandHelmUpgrade,
 			Payload:      json.RawMessage(`{"releaseName":"test"}`),
 			CreatedAt:    time.Now(),
 		}
 		data, _ := json.Marshal(cmd)
-		_ = conn.WriteJSON(wsEnvelope{Type: "command", Data: data})
+		_ = conn.WriteJSON(wire.Envelope{Type: "command", Data: data})
 		// Wait for client to close.
 		conn.ReadMessage()
 	})
@@ -83,7 +81,7 @@ func TestConnection_ReceiveCommand(t *testing.T) {
 	if env.Type != "command" {
 		t.Fatalf("expected type 'command', got %q", env.Type)
 	}
-	var cmd agent.Command
+	var cmd wire.CommandPayload
 	if err := json.Unmarshal(env.Data, &cmd); err != nil {
 		t.Fatalf("decode command: %v", err)
 	}
@@ -93,10 +91,10 @@ func TestConnection_ReceiveCommand(t *testing.T) {
 }
 
 func TestConnection_SendResult(t *testing.T) {
-	received := make(chan wsEnvelope, 1)
+	received := make(chan wire.Envelope, 1)
 
 	srv := newTestServer(t, func(conn *websocket.Conn) {
-		var env wsEnvelope
+		var env wire.Envelope
 		if err := conn.ReadJSON(&env); err == nil {
 			received <- env
 		}
@@ -110,7 +108,7 @@ func TestConnection_SendResult(t *testing.T) {
 	}
 	defer c.Close()
 
-	result := &agent.CommandResult{
+	result := &wire.ResultPayload{
 		CommandID: uuid.New(),
 		Success:   true,
 	}
@@ -129,10 +127,10 @@ func TestConnection_SendResult(t *testing.T) {
 }
 
 func TestConnection_SendLog(t *testing.T) {
-	received := make(chan wsEnvelope, 1)
+	received := make(chan wire.Envelope, 1)
 
 	srv := newTestServer(t, func(conn *websocket.Conn) {
-		var env wsEnvelope
+		var env wire.Envelope
 		if err := conn.ReadJSON(&env); err == nil {
 			received <- env
 		}
@@ -146,7 +144,7 @@ func TestConnection_SendLog(t *testing.T) {
 	}
 	defer c.Close()
 
-	entry := agent.LogEntry{
+	entry := wire.LogPayload{
 		CommandID: uuid.New(),
 		Line:      "hello from agent",
 		Timestamp: time.Now(),

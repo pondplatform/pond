@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/common/config"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
 	"github.com/pondplatform/pond/internal/server/events"
 	"github.com/pondplatform/pond/internal/server/helmgen"
 	"github.com/pondplatform/pond/internal/server/store"
@@ -359,10 +360,10 @@ func (m *MockBus) Publish(ctx context.Context, topic string, v any) {
 // --- helmgen.HelmValuesGenerator ---
 
 type MockHelmValuesGenerator struct {
-	GenerateFn func(cfg *domain.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*helmgen.HelmValues, error)
+	GenerateFn func(cfg *serviceconfig.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*helmgen.HelmValues, error)
 }
 
-func (m *MockHelmValuesGenerator) Generate(cfg *domain.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*helmgen.HelmValues, error) {
+func (m *MockHelmValuesGenerator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*helmgen.HelmValues, error) {
 	if m.GenerateFn != nil {
 		return m.GenerateFn(cfg, env, contexts)
 	}
@@ -372,10 +373,10 @@ func (m *MockHelmValuesGenerator) Generate(cfg *domain.ServiceConfig, env *domai
 // --- config.TemplateRenderer ---
 
 type MockTemplateRenderer struct {
-	RenderFn func(values map[string]any, contexts map[string]map[string]any, svcConfig *domain.ServiceConfig) (map[string]any, error)
+	RenderFn func(values map[string]any, contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) (map[string]any, error)
 }
 
-func (m *MockTemplateRenderer) Render(values map[string]any, contexts map[string]map[string]any, svcConfig *domain.ServiceConfig) (map[string]any, error) {
+func (m *MockTemplateRenderer) Render(values map[string]any, contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) (map[string]any, error) {
 	if m.RenderFn != nil {
 		return m.RenderFn(values, contexts, svcConfig)
 	}

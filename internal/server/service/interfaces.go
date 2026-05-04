@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
 	"github.com/pondplatform/pond/internal/server/events"
 	"github.com/pondplatform/pond/internal/server/store"
 )
@@ -41,7 +42,7 @@ type UserInputRequest struct {
 type SubmitRequest struct {
 	ProjectID         uuid.UUID
 	EnvironmentName   string
-	OverridableConfig domain.OverridableConfig
+	OverridableConfig serviceconfig.OverridableConfig
 	ImageTag          string
 	TriggeredBy       string
 	CreateIfNotExists bool
@@ -90,7 +91,7 @@ type DependencyService interface {
 	BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
 
 	// Validate checks that all declared dep types are known.
-	Validate(ctx context.Context, deps map[string]domain.DependencyDeclaration) error
+	Validate(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error
 }
 
 // AgentConnectionService manages the event-driven protocol for connected agents.

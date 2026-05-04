@@ -2,14 +2,16 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
+	"github.com/pondplatform/pond/internal/common/wire"
 	"github.com/pondplatform/pond/internal/server/events"
+	"gopkg.in/yaml.v3"
 )
 
 // processResult persists the command outcome AND advances the state machine
@@ -141,7 +143,7 @@ func (s *deploymentService) enqueueHelm(ctx context.Context, tx TxRepos, dep *do
 	// Render template variables in config file values
 	renderedCfg := dep.ServiceConfigSnapshot
 	if len(renderedCfg.Configs) > 0 {
-		renderedConfigs := make(map[string]domain.ConfigFileSpec, len(renderedCfg.Configs))
+		renderedConfigs := make(map[string]serviceconfig.ConfigFileSpec, len(renderedCfg.Configs))
 		for name, cfgFile := range renderedCfg.Configs {
 			rendered, err := s.tmplRenderer.Render(cfgFile.Values, contexts, &renderedCfg)
 			if err != nil {
@@ -157,9 +159,19 @@ func (s *deploymentService) enqueueHelm(ctx context.Context, tx TxRepos, dep *do
 	if err != nil {
 		return nil, fmt.Errorf("generate helm values: %w", err)
 	}
-	payload, err := json.Marshal(helmVals)
+	helmValuesYAML, err := yaml.Marshal(helmVals)
 	if err != nil {
 		return nil, fmt.Errorf("marshal helm values: %w", err)
+	}
+	helmPayload := wire.HelmUpgradePayload{
+		ReleaseName: dep.ServiceConfigSnapshot.Name,
+		Namespace:   env.Name,
+		ChartPath:   "charts/service",
+		Values:      helmValuesYAML,
+	}
+	payload, err := wire.MarshalPayload(helmPayload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal helm upgrade payload: %w", err)
 	}
 
 	now := time.Now()

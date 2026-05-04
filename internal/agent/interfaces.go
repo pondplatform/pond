@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"io"
+
+	"github.com/pondplatform/pond/internal/common/wire"
 )
 
 // AgentConnection represents the persistent connection to the server.
@@ -11,29 +13,22 @@ type AgentConnection interface {
 	// SendReady tells the server the agent is ready for its first command.
 	SendReady(ctx context.Context) error
 	// SendAck notifies the server that execution of cmd has started.
-	SendAck(ctx context.Context, cmd *Command) error
+	SendAck(ctx context.Context, cmd *wire.CommandPayload) error
 	// ReceiveMessage reads the next envelope from the server.
-	ReceiveMessage(ctx context.Context) (*Envelope, error)
-	SendResult(ctx context.Context, result *CommandResult) error
-	SendLog(ctx context.Context, entry LogEntry) error
+	ReceiveMessage(ctx context.Context) (*wire.Envelope, error)
+	SendResult(ctx context.Context, result *wire.ResultPayload) error
+	SendLog(ctx context.Context, entry wire.LogPayload) error
 	Close() error
 }
 
 // CommandExecutor dispatches and runs agent commands.
 type CommandExecutor interface {
-	Execute(ctx context.Context, cmd *Command, logSink func(LogEntry)) (*CommandResult, error)
+	Execute(ctx context.Context, cmd *wire.CommandPayload, logSink func(wire.LogPayload)) (*wire.ResultPayload, error)
 }
 
 // HelmRunner wraps Helm CLI operations.
 type HelmRunner interface {
-	Upgrade(ctx context.Context, req HelmUpgradeRequest, logW io.Writer) error
-}
-
-type HelmUpgradeRequest struct {
-	ReleaseName string
-	Namespace   string
-	ChartPath   string
-	Values      []byte
+	Upgrade(ctx context.Context, req wire.HelmUpgradePayload, logW io.Writer) error
 }
 
 // TofuRunner wraps OpenTofu CLI operations.

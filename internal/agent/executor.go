@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/pondplatform/pond/internal/common/wire"
 )
 
 type executor struct {
@@ -21,19 +23,19 @@ func NewExecutor(helmRunner HelmRunner, tofuRunner TofuRunner) CommandExecutor {
 	}
 }
 
-func (e *executor) Execute(ctx context.Context, cmd *Command, logSink func(LogEntry)) (*CommandResult, error) {
-	var result *CommandResult
+func (e *executor) Execute(ctx context.Context, cmd *wire.CommandPayload, logSink func(wire.LogPayload)) (*wire.ResultPayload, error) {
+	var result *wire.ResultPayload
 	var err error
 
 	switch cmd.Type {
-	case CommandHelmUpgrade:
+	case wire.CommandHelmUpgrade:
 		result, err = e.executeHelmUpgrade(ctx, cmd, logSink)
-	case CommandTofuApply:
+	case wire.CommandTofuApply:
 		result, err = e.executeTofuApply(ctx, cmd, logSink)
-	case CommandTofuOutput:
+	case wire.CommandTofuOutput:
 		result, err = e.executeTofuOutput(ctx, cmd)
 	default:
-		return &CommandResult{
+		return &wire.ResultPayload{
 			CommandID: cmd.ID,
 			Success:   false,
 			Error:     fmt.Sprintf("unknown command type: %s", cmd.Type),
@@ -41,7 +43,7 @@ func (e *executor) Execute(ctx context.Context, cmd *Command, logSink func(LogEn
 	}
 
 	if err != nil {
-		return &CommandResult{
+		return &wire.ResultPayload{
 			CommandID: cmd.ID,
 			Success:   false,
 			Error:     err.Error(),
@@ -51,8 +53,8 @@ func (e *executor) Execute(ctx context.Context, cmd *Command, logSink func(LogEn
 	return result, nil
 }
 
-func (e *executor) executeHelmUpgrade(ctx context.Context, cmd *Command, logSink func(LogEntry)) (*CommandResult, error) {
-	var req HelmUpgradeRequest
+func (e *executor) executeHelmUpgrade(ctx context.Context, cmd *wire.CommandPayload, logSink func(wire.LogPayload)) (*wire.ResultPayload, error) {
+	var req wire.HelmUpgradePayload
 	if err := json.Unmarshal(cmd.Payload, &req); err != nil {
 		return nil, fmt.Errorf("unmarshal helm upgrade request: %w", err)
 	}
@@ -64,18 +66,14 @@ func (e *executor) executeHelmUpgrade(ctx context.Context, cmd *Command, logSink
 		return nil, fmt.Errorf("helm upgrade: %w", err)
 	}
 
-	return &CommandResult{
+	return &wire.ResultPayload{
 		CommandID: cmd.ID,
 		Success:   true,
 	}, nil
 }
 
-func (e *executor) executeTofuApply(ctx context.Context, cmd *Command, logSink func(LogEntry)) (*CommandResult, error) {
-	var payload struct {
-		WorkDir   string         `json:"workDir"`
-		StatePath string         `json:"statePath"`
-		Vars      map[string]any `json:"vars"`
-	}
+func (e *executor) executeTofuApply(ctx context.Context, cmd *wire.CommandPayload, logSink func(wire.LogPayload)) (*wire.ResultPayload, error) {
+	var payload wire.TofuApplyPayload
 	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
 		return nil, fmt.Errorf("unmarshal tofu apply request: %w", err)
 	}
@@ -101,18 +99,15 @@ func (e *executor) executeTofuApply(ctx context.Context, cmd *Command, logSink f
 		return nil, fmt.Errorf("marshal outputs: %w", err)
 	}
 
-	return &CommandResult{
+	return &wire.ResultPayload{
 		CommandID: cmd.ID,
 		Success:   true,
 		Output:    outputJSON,
 	}, nil
 }
 
-func (e *executor) executeTofuOutput(ctx context.Context, cmd *Command) (*CommandResult, error) {
-	var payload struct {
-		WorkDir   string `json:"workDir"`
-		StatePath string `json:"statePath"`
-	}
+func (e *executor) executeTofuOutput(ctx context.Context, cmd *wire.CommandPayload) (*wire.ResultPayload, error) {
+	var payload wire.TofuOutputPayload
 	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
 		return nil, fmt.Errorf("unmarshal tofu output request: %w", err)
 	}
@@ -127,7 +122,7 @@ func (e *executor) executeTofuOutput(ctx context.Context, cmd *Command) (*Comman
 		return nil, fmt.Errorf("marshal outputs: %w", err)
 	}
 
-	return &CommandResult{
+	return &wire.ResultPayload{
 		CommandID: cmd.ID,
 		Success:   true,
 		Output:    outputJSON,
@@ -137,12 +132,12 @@ func (e *executor) executeTofuOutput(ctx context.Context, cmd *Command) (*Comman
 // logWriter is a line-buffered writer that sends each line to logSink.
 type logWriter struct {
 	cmdID   string
-	logSink func(LogEntry)
+	logSink func(wire.LogPayload)
 	pw      *io.PipeWriter
 	done    chan struct{}
 }
 
-func newLogWriter(cmdID string, logSink func(LogEntry)) *logWriter {
+func newLogWriter(cmdID string, logSink func(wire.LogPayload)) *logWriter {
 	pr, pw := io.Pipe()
 	lw := &logWriter{
 		cmdID:   cmdID,
@@ -154,7 +149,7 @@ func newLogWriter(cmdID string, logSink func(LogEntry)) *logWriter {
 		defer close(lw.done)
 		scanner := bufio.NewScanner(pr)
 		for scanner.Scan() {
-			logSink(LogEntry{
+			logSink(wire.LogPayload{
 				Line:      scanner.Text(),
 				Timestamp: time.Now(),
 				Stream:    "stdout",

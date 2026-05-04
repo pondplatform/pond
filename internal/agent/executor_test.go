@@ -8,15 +8,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/agent"
+	"github.com/pondplatform/pond/internal/common/wire"
 )
 
 // --- mocks ---
 
 type mockHelmRunner struct {
-	upgradeFn func(ctx context.Context, req agent.HelmUpgradeRequest, logW io.Writer) error
+	upgradeFn func(ctx context.Context, req wire.HelmUpgradePayload, logW io.Writer) error
 }
 
-func (m *mockHelmRunner) Upgrade(ctx context.Context, req agent.HelmUpgradeRequest, logW io.Writer) error {
+func (m *mockHelmRunner) Upgrade(ctx context.Context, req wire.HelmUpgradePayload, logW io.Writer) error {
 	return m.upgradeFn(ctx, req, logW)
 }
 
@@ -45,7 +46,7 @@ func (m *mockTofuRunner) Destroy(ctx context.Context, workDir string, statePath 
 func TestExecute_HelmUpgrade_CallsRunner(t *testing.T) {
 	called := false
 	helm := &mockHelmRunner{
-		upgradeFn: func(_ context.Context, req agent.HelmUpgradeRequest, logW io.Writer) error {
+		upgradeFn: func(_ context.Context, req wire.HelmUpgradePayload, logW io.Writer) error {
 			called = true
 			if req.ReleaseName != "my-release" {
 				t.Errorf("unexpected release name: %s", req.ReleaseName)
@@ -58,21 +59,21 @@ func TestExecute_HelmUpgrade_CallsRunner(t *testing.T) {
 
 	exec := agent.NewExecutor(helm, &mockTofuRunner{})
 
-	payload, _ := json.Marshal(agent.HelmUpgradeRequest{
+	payload, _ := json.Marshal(wire.HelmUpgradePayload{
 		ReleaseName: "my-release",
 		Namespace:   "default",
 		ChartPath:   "./chart",
 		Values:      []byte("key: value\n"),
 	})
 
-	cmd := &agent.Command{
+	cmd := &wire.CommandPayload{
 		ID:      uuid.New(),
-		Type:    agent.CommandHelmUpgrade,
+		Type:    wire.CommandHelmUpgrade,
 		Payload: payload,
 	}
 
 	var logLines []string
-	logSink := func(e agent.LogEntry) { logLines = append(logLines, e.Line) }
+	logSink := func(e wire.LogPayload) { logLines = append(logLines, e.Line) }
 
 	result, err := exec.Execute(context.Background(), cmd, logSink)
 	if err != nil {
@@ -112,24 +113,19 @@ func TestExecute_TofuApply_CallsRunners(t *testing.T) {
 
 	exec := agent.NewExecutor(&mockHelmRunner{}, tofu)
 
-	type applyPayload struct {
-		WorkDir   string         `json:"workDir"`
-		StatePath string         `json:"statePath"`
-		Vars      map[string]any `json:"vars"`
-	}
-	payload, _ := json.Marshal(applyPayload{
+	payload, _ := json.Marshal(wire.TofuApplyPayload{
 		WorkDir:   "./tofu",
 		StatePath: "states/my-service/my-dep/terraform.tfstate",
 		Vars:      map[string]any{"key": "value"},
 	})
-	cmd := &agent.Command{
+	cmd := &wire.CommandPayload{
 		ID:      uuid.New(),
-		Type:    agent.CommandTofuApply,
+		Type:    wire.CommandTofuApply,
 		Payload: payload,
 	}
 
 	var logLines []string
-	result, err := exec.Execute(context.Background(), cmd, func(e agent.LogEntry) {
+	result, err := exec.Execute(context.Background(), cmd, func(e wire.LogPayload) {
 		logLines = append(logLines, e.Line)
 	})
 	if err != nil {
@@ -147,9 +143,9 @@ func TestExecute_TofuApply_CallsRunners(t *testing.T) {
 }
 func TestExecute_UnknownType_ReturnsError(t *testing.T) {
 	exec := agent.NewExecutor(&mockHelmRunner{}, &mockTofuRunner{})
-	cmd := &agent.Command{ID: uuid.New(), Type: "unknown.command", Payload: json.RawMessage("{}")}
+	cmd := &wire.CommandPayload{ID: uuid.New(), Type: "unknown.command", Payload: json.RawMessage("{}")}
 
-	result, err := exec.Execute(context.Background(), cmd, func(agent.LogEntry) {})
+	result, err := exec.Execute(context.Background(), cmd, func(wire.LogPayload) {})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

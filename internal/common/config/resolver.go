@@ -1,6 +1,6 @@
 package config
 
-import "github.com/pondplatform/pond/internal/common/domain"
+import "github.com/pondplatform/pond/internal/common/serviceconfig"
 
 type resolver struct{}
 
@@ -8,7 +8,7 @@ func NewResolver() ConfigResolver {
 	return &resolver{}
 }
 
-func (r *resolver) Resolve(base *domain.OverridableConfig, envName string) (*domain.ServiceConfig, error) {
+func (r *resolver) Resolve(base *serviceconfig.OverridableConfig, envName string) (*serviceconfig.ServiceConfig, error) {
 	// Start with a copy of the base config.
 	cfg := base.ServiceConfig
 
@@ -17,10 +17,10 @@ func (r *resolver) Resolve(base *domain.OverridableConfig, envName string) (*dom
 		cfg.Env = make(map[string]string)
 	}
 	if cfg.Dependencies == nil {
-		cfg.Dependencies = make(map[string]domain.DependencyDeclaration)
+		cfg.Dependencies = make(map[string]serviceconfig.DependencyDeclaration)
 	}
 	if cfg.Configs == nil {
-		cfg.Configs = make(map[string]domain.ConfigFileSpec)
+		cfg.Configs = make(map[string]serviceconfig.ConfigFileSpec)
 	}
 
 	override, ok := base.Overrides[envName]

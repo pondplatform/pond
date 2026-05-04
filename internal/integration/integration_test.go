@@ -14,8 +14,8 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	dbmigrate "github.com/pondplatform/pond/db"
-	"github.com/pondplatform/pond/internal/agent"
 	"github.com/pondplatform/pond/internal/cli/client"
+	"github.com/pondplatform/pond/internal/common/wire"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -152,8 +152,8 @@ func TestDeployment_SimpleSucceeds(t *testing.T) {
 	if len(commands) != 1 {
 		t.Errorf("expected 1 command, got %d", len(commands))
 	}
-	if len(commands) > 0 && commands[0].Type != agent.CommandHelmUpgrade {
-		t.Errorf("expected command type %q, got %q", agent.CommandHelmUpgrade, commands[0].Type)
+	if len(commands) > 0 && commands[0].Type != wire.CommandHelmUpgrade {
+		t.Errorf("expected command type %q, got %q", wire.CommandHelmUpgrade, commands[0].Type)
 	}
 
 	var dbStatus string
@@ -257,11 +257,11 @@ func TestDeployment_WithTofuDep(t *testing.T) {
 	if len(commands) < 2 {
 		t.Errorf("expected at least 2 commands, got %d", len(commands))
 	} else {
-		if commands[0].Type != agent.CommandTofuApply {
-			t.Errorf("expected first command %q, got %q", agent.CommandTofuApply, commands[0].Type)
+		if commands[0].Type != wire.CommandTofuApply {
+			t.Errorf("expected first command %q, got %q", wire.CommandTofuApply, commands[0].Type)
 		}
-		if commands[len(commands)-1].Type != agent.CommandHelmUpgrade {
-			t.Errorf("expected last command %q, got %q", agent.CommandHelmUpgrade, commands[len(commands)-1].Type)
+		if commands[len(commands)-1].Type != wire.CommandHelmUpgrade {
+			t.Errorf("expected last command %q, got %q", wire.CommandHelmUpgrade, commands[len(commands)-1].Type)
 		}
 	}
 }
@@ -274,9 +274,9 @@ func TestDeployment_TofuFails(t *testing.T) {
 	h := NewTestHarness(t, testConnStr, testAMQPURL)
 	scenario := BuildScenario(ctx, t, h)
 
-	behavior := PerCommandBehavior(map[agent.CommandType]func(*agent.Command) *agent.CommandResult{
-		agent.CommandTofuApply: func(cmd *agent.Command) *agent.CommandResult {
-			return &agent.CommandResult{
+	behavior := PerCommandBehavior(map[wire.CommandType]func(*wire.CommandPayload) *wire.ResultPayload{
+		wire.CommandTofuApply: func(cmd *wire.CommandPayload) *wire.ResultPayload {
+			return &wire.ResultPayload{
 				CommandID: cmd.ID,
 				Success:   false,
 				Error:     "tofu apply failed: resource quota exceeded",
@@ -321,8 +321,8 @@ func TestDeployment_TofuFails(t *testing.T) {
 	if len(commands) != 1 {
 		t.Errorf("expected 1 command (only tofu), got %d", len(commands))
 	}
-	if len(commands) > 0 && commands[0].Type != agent.CommandTofuApply {
-		t.Errorf("expected command type %q, got %q", agent.CommandTofuApply, commands[0].Type)
+	if len(commands) > 0 && commands[0].Type != wire.CommandTofuApply {
+		t.Errorf("expected command type %q, got %q", wire.CommandTofuApply, commands[0].Type)
 	}
 }
 

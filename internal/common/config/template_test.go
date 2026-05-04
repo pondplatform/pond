@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	"github.com/pondplatform/pond/internal/common/config"
-	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
 )
 
 func TestRender_PlainString_PassesThrough(t *testing.T) {
 	r := config.NewTemplateRenderer()
 	values := map[string]any{"key": "plain-value"}
-	got, err := r.Render(values, nil, &domain.ServiceConfig{})
+	got, err := r.Render(values, nil, &serviceconfig.ServiceConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -27,7 +27,7 @@ func TestRender_SingleDepVar_Resolved(t *testing.T) {
 	}
 	values := map[string]any{"dbHost": "{{db.host}}"}
 
-	got, err := r.Render(values, contexts, &domain.ServiceConfig{})
+	got, err := r.Render(values, contexts, &serviceconfig.ServiceConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestRender_SingleDepVar_Resolved(t *testing.T) {
 
 func TestRender_ServicePort_Resolved(t *testing.T) {
 	r := config.NewTemplateRenderer()
-	svc := &domain.ServiceConfig{Service: domain.ServiceSpec{Port: 8080, Replicas: 2}}
+	svc := &serviceconfig.ServiceConfig{Service: serviceconfig.ServiceSpec{Port: 8080, Replicas: 2}}
 	values := map[string]any{"port": "{{service.port}}", "replicas": "{{service.replicas}}"}
 
 	got, err := r.Render(values, nil, svc)
@@ -55,7 +55,7 @@ func TestRender_ServicePort_Resolved(t *testing.T) {
 
 func TestRender_EnvVar_Resolved(t *testing.T) {
 	r := config.NewTemplateRenderer()
-	svc := &domain.ServiceConfig{Env: map[string]string{"DB_URL": "postgres://localhost/mydb"}}
+	svc := &serviceconfig.ServiceConfig{Env: map[string]string{"DB_URL": "postgres://localhost/mydb"}}
 	values := map[string]any{"url": "{{env.DB_URL}}"}
 
 	got, err := r.Render(values, nil, svc)
@@ -72,7 +72,7 @@ func TestRender_MultipleVarsInOneString(t *testing.T) {
 	contexts := map[string]map[string]any{
 		"db": {"host": "db.internal", "port": "5432"},
 	}
-	svc := &domain.ServiceConfig{Env: map[string]string{"DB_NAME": "mydb"}}
+	svc := &serviceconfig.ServiceConfig{Env: map[string]string{"DB_NAME": "mydb"}}
 	values := map[string]any{"dsn": "postgres://{{db.host}}:{{db.port}}/{{env.DB_NAME}}"}
 
 	got, err := r.Render(values, contexts, svc)
@@ -96,7 +96,7 @@ func TestRender_NestedMap_RecursivelyRendered(t *testing.T) {
 		},
 	}
 
-	got, err := r.Render(values, contexts, &domain.ServiceConfig{})
+	got, err := r.Render(values, contexts, &serviceconfig.ServiceConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestRender_MissingVar_ReturnsError(t *testing.T) {
 	r := config.NewTemplateRenderer()
 	values := map[string]any{"url": "{{db.host}}"}
 
-	_, err := r.Render(values, nil, &domain.ServiceConfig{})
+	_, err := r.Render(values, nil, &serviceconfig.ServiceConfig{})
 	if err == nil {
 		t.Fatal("expected error for unresolved variable, got nil")
 	}
@@ -124,7 +124,7 @@ func TestRender_MultipleMissingVars_AllNamed(t *testing.T) {
 	// Both {{db.host}} and {{cache.addr}} are missing.
 	values := map[string]any{"combined": "{{db.host}}:{{cache.addr}}"}
 
-	_, err := r.Render(values, nil, &domain.ServiceConfig{})
+	_, err := r.Render(values, nil, &serviceconfig.ServiceConfig{})
 	if err == nil {
 		t.Fatal("expected error for unresolved variables, got nil")
 	}
@@ -146,7 +146,7 @@ func TestRender_NonStringValue_PassesThrough(t *testing.T) {
 		"nothing": nil,
 	}
 
-	got, err := r.Render(values, nil, &domain.ServiceConfig{})
+	got, err := r.Render(values, nil, &serviceconfig.ServiceConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestRender_NonStringValue_PassesThrough(t *testing.T) {
 
 func TestRender_EmptyValues_ReturnsEmpty(t *testing.T) {
 	r := config.NewTemplateRenderer()
-	got, err := r.Render(map[string]any{}, nil, &domain.ServiceConfig{})
+	got, err := r.Render(map[string]any{}, nil, &serviceconfig.ServiceConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

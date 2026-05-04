@@ -8,16 +8,8 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"github.com/pondplatform/pond/internal/common/wire"
 )
-
-// Envelope is the wire format for all WebSocket messages between agent and server.
-type Envelope struct {
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
-}
-
-// wsEnvelope is an alias used internally for JSON marshalling.
-type wsEnvelope = Envelope
 
 type connection struct {
 	serverAddr string
@@ -51,7 +43,7 @@ func (c *connection) Connect(ctx context.Context) error {
 
 // ReceiveMessage reads the next envelope from the server.
 // It blocks until a message arrives or ctx is cancelled.
-func (c *connection) ReceiveMessage(ctx context.Context) (*wsEnvelope, error) {
+func (c *connection) ReceiveMessage(ctx context.Context) (*wire.Envelope, error) {
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
@@ -60,12 +52,12 @@ func (c *connection) ReceiveMessage(ctx context.Context) (*wsEnvelope, error) {
 	}
 
 	type result struct {
-		env *wsEnvelope
+		env *wire.Envelope
 		err error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		var env wsEnvelope
+		var env wire.Envelope
 		if err := conn.ReadJSON(&env); err != nil {
 			ch <- result{err: fmt.Errorf("read websocket: %w", err)}
 			return
@@ -86,21 +78,18 @@ func (c *connection) SendReady(ctx context.Context) error {
 	return c.send("ready", struct{}{})
 }
 
-func (c *connection) SendAck(ctx context.Context, cmd *Command) error {
-	return c.send("ack", struct {
-		CommandID    any `json:"commandId"`
-		DeploymentID any `json:"deploymentId"`
-	}{
+func (c *connection) SendAck(ctx context.Context, cmd *wire.CommandPayload) error {
+	return c.send("ack", wire.AckPayload{
 		CommandID:    cmd.ID,
 		DeploymentID: cmd.DeploymentID,
 	})
 }
 
-func (c *connection) SendResult(ctx context.Context, result *CommandResult) error {
+func (c *connection) SendResult(ctx context.Context, result *wire.ResultPayload) error {
 	return c.send("result", result)
 }
 
-func (c *connection) SendLog(ctx context.Context, entry LogEntry) error {
+func (c *connection) SendLog(ctx context.Context, entry wire.LogPayload) error {
 	return c.send("log", entry)
 }
 
@@ -116,7 +105,7 @@ func (c *connection) send(msgType string, payload any) error {
 		c.mu.Unlock()
 		return fmt.Errorf("not connected")
 	}
-	err = conn.WriteJSON(wsEnvelope{Type: msgType, Data: data})
+	err = conn.WriteJSON(wire.Envelope{Type: msgType, Data: data})
 	c.mu.Unlock()
 	return err
 }

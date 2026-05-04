@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,7 +27,7 @@ func splitRepositoryTag(image string) (string,string) {
 	return split[0], tag
 }
 
-func (g *generator) Generate(cfg *domain.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*HelmValues, error) {
+func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*HelmValues, error) {
 	repository,tag := splitRepositoryTag(cfg.Image)
 	
 	vals := &HelmValues{
