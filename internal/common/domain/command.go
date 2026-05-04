@@ -36,3 +36,8 @@ type Command struct {
 	CreatedAt    time.Time       `json:"createdAt"`
 	UpdatedAt    time.Time       `json:"updatedAt"`
 }
+
+type CommandLog struct {
+	Line     string    `json:"line"`
+	LoggedAt time.Time `json:"loggedAt"`
+}

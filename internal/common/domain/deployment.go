@@ -38,7 +38,6 @@ type DependencyDeployment struct {
 	Managed        *bool                      `json:"managed"`
 	ProviderInputs map[string]any             `json:"providerInputs"`
 	UserConfig     map[string]any             `json:"userConfig"`
-	Outputs        map[string]any             `json:"outputs"`
 	Status         DependencyDeploymentStatus `json:"status"`
 	CommandID      *uuid.UUID                 `json:"commandId"`
 	Output         json.RawMessage            `json:"output"`

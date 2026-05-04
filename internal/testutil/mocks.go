@@ -33,7 +33,8 @@ type MockDeploymentInfoStore struct {
 	ListQueuedCommandsByClusterFn func(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
 	UpdateCommandsByDeploymentFn  func(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error
 	// Command log operations
-	AppendLogFn func(ctx context.Context, commandID uuid.UUID, line string) error
+	AppendLogFn      func(ctx context.Context, commandID uuid.UUID, line string) error
+	GetCommandLogsFn func(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error)
 	// Dependency config operations
 	CreateDepConfigFn           func(ctx context.Context, cfg *domain.DependencyDeployment) error
 	GetDepConfigFn              func(ctx context.Context, deploymentID uuid.UUID, depName string) (*domain.DependencyDeployment, error)
@@ -125,6 +126,12 @@ func (m *MockDeploymentInfoStore) AppendLog(ctx context.Context, commandID uuid.
 		return m.AppendLogFn(ctx, commandID, line)
 	}
 	return nil
+}
+func (m *MockDeploymentInfoStore) GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error) {
+	if m.GetCommandLogsFn != nil {
+		return m.GetCommandLogsFn(ctx, commandID)
+	}
+	return nil, nil
 }
 func (m *MockDeploymentInfoStore) CreateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error {
 	if m.CreateDepConfigFn != nil {

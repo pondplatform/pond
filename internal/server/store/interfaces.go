@@ -29,6 +29,7 @@ type DeploymentInfoStore interface {
 
 	// Command log operations
 	AppendLog(ctx context.Context, commandID uuid.UUID, line string) error
+	GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error)
 
 	// Dependency config operations (dependency_deployments table)
 	CreateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error

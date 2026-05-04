@@ -70,6 +70,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("GET /api/v1/deployments/{id}", implicitRead(auth.ResourceDeployment, deployHandler.GetStatus))
 	mux.HandleFunc("POST /api/v1/deployments/{id}/dependencies/{name}/input", implicitWrite(auth.ResourceDeployment, deployHandler.ProvideUserInput))
 	mux.HandleFunc("POST /api/v1/deployments/{id}/cancel", implicitWrite(auth.ResourceDeployment, deployHandler.Cancel))
+	mux.HandleFunc("GET /api/v1/commands/{commandId}/logs", implicitRead(auth.ResourceDeployment, deployHandler.GetCommandLogs))
 
 	// Organizations
 	mux.HandleFunc("POST /api/v1/organizations", authed(auth.Action{Resource: auth.ResourceOrganization, Verb: auth.VerbManage}, "", orgHandler.Create))

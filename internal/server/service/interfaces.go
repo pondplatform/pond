@@ -22,6 +22,9 @@ type DeploymentService interface {
 	// ProvideUserInput updates a dependency config with user-provided input and
 	// publishes a UserInputProvided event to trigger scheduling.
 	ProvideUserInput(ctx context.Context, deploymentID uuid.UUID, depName string, input UserInputRequest) error
+	// GetCommandLogs returns all log lines for a command in chronological order.
+	// Returns domain.ErrNotFound if the command does not exist.
+	GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error)
 	// Start registers subscriptions on the event bus (agent.ready,
 	// command.started, command.results, command.logs, agent.disconnected,
 	// user_input.provided) and drives the deployment state machine in response.

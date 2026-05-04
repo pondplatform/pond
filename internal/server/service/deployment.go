@@ -54,6 +54,13 @@ func NewDeploymentService(
 	}
 }
 
+func (s *deploymentService) GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error) {
+	if _, err := s.deploymentInfo.GetCommand(ctx, commandID); err != nil {
+		return nil, err
+	}
+	return s.deploymentInfo.GetCommandLogs(ctx, commandID)
+}
+
 func (s *deploymentService) Submit(ctx context.Context, req SubmitRequest) (*domain.Deployment, error) {
 	// --- reads (outside the transaction) ---
 	// Note: Validate performs the same lookups. Submit re-fetches independently

@@ -185,6 +185,31 @@ func (h *DeploymentHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type commandLogItem struct {
+	Line     string    `json:"line"`
+	LoggedAt time.Time `json:"loggedAt"`
+}
+
+func (h *DeploymentHandler) GetCommandLogs(w http.ResponseWriter, r *http.Request) {
+	commandID, err := uuid.Parse(r.PathValue("commandId"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid command id")
+		return
+	}
+
+	logs, err := h.svc.GetCommandLogs(r.Context(), commandID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	items := make([]commandLogItem, len(logs))
+	for i, l := range logs {
+		items[i] = commandLogItem{Line: l.Line, LoggedAt: l.LoggedAt}
+	}
+	writeList(w, items, nil)
+}
+
 func (h *DeploymentHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	var req service.SubmitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

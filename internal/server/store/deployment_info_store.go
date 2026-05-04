@@ -294,6 +294,30 @@ func (s *deploymentInfoStore) AppendLog(ctx context.Context, commandID uuid.UUID
 	return nil
 }
 
+func (s *deploymentInfoStore) GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT line, logged_at FROM command_logs WHERE command_id = $1 ORDER BY logged_at`,
+		commandID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query command logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []domain.CommandLog
+	for rows.Next() {
+		var l domain.CommandLog
+		if err := rows.Scan(&l.Line, &l.LoggedAt); err != nil {
+			return nil, fmt.Errorf("scan command log: %w", err)
+		}
+		logs = append(logs, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate command logs: %w", err)
+	}
+	return logs, nil
+}
+
 // ── Dependency config operations ─────────────────────────────────────────────
 
 func (s *deploymentInfoStore) CreateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error {
