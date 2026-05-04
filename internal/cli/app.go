@@ -15,8 +15,9 @@ func NewRootCmd(serverURL, token string) *cobra.Command {
 	}
 
 	root := &cobra.Command{
-		Use:   "pond",
-		Short: "Pond CLI — deploy and manage services",
+		Use:          "pond",
+		Short:        "Pond CLI — deploy and manage services",
+		SilenceUsage: true,
 	}
 
 	root.AddCommand(commands.NewDeployCmd(serverClient))

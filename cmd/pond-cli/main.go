@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/pondplatform/pond/internal/cli"
@@ -15,8 +14,5 @@ func main() {
 
 	token := os.Getenv("POND_TOKEN")
 	root := cli.NewRootCmd(serverURL, token)
-	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	root.Execute()
 }

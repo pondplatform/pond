@@ -3,11 +3,13 @@ package commands
 import (
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/cli/client"
 	"github.com/pondplatform/pond/internal/common/config"
+	"github.com/pondplatform/pond/internal/common/domain"
 	"github.com/pondplatform/pond/internal/server/service"
 	"github.com/spf13/cobra"
 )
@@ -24,16 +26,18 @@ func NewDeployCmd(serverClient client.ServerClient) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deploy",
 		Short: "Submit a deployment request",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		Run: func(cmd *cobra.Command, args []string) {
 			parser := config.NewParser()
 			overridable, err := parser.ParseFile(configPath)
 			if err != nil {
-				return fmt.Errorf("parse config: %w", err)
+				fmt.Fprintf(os.Stderr, "Error: parse config: %v\n", err)
+				os.Exit(1)
 			}
 
 			projID, err := uuid.Parse(projectID)
 			if err != nil {
-				return fmt.Errorf("invalid project id: %w", err)
+				fmt.Fprintf(os.Stderr, "Error: invalid project id: %v\n", err)
+				os.Exit(1)
 			}
 
 			req := service.SubmitRequest{
@@ -47,15 +51,15 @@ func NewDeployCmd(serverClient client.ServerClient) *cobra.Command {
 
 			d, err := serverClient.SubmitDeployment(cmd.Context(), req)
 			if err != nil {
-				return fmt.Errorf("submit deployment: %w", err)
+				fmt.Fprintf(os.Stderr, "Error: submit deployment: %v\n", err)
+				os.Exit(1)
 			}
 
 			fmt.Printf("Deployment submitted: %s (status: %s)\n", d.ID, d.Status)
 
 			if wait {
-				return waitForDeployment(cmd, serverClient, d.ID)
+				waitForDeployment(cmd, serverClient, d.ID)
 			}
-			return nil
 		},
 	}
 
@@ -69,22 +73,51 @@ func NewDeployCmd(serverClient client.ServerClient) *cobra.Command {
 	return cmd
 }
 
-func waitForDeployment(cmd *cobra.Command, c client.ServerClient, id uuid.UUID) error {
+func waitForDeployment(cmd *cobra.Command, c client.ServerClient, id uuid.UUID) {
 	for {
 		d, err := c.GetDeployment(cmd.Context(), id)
 		if err != nil {
-			return fmt.Errorf("get deployment status: %w", err)
+			fmt.Fprintf(os.Stderr, "Error: get deployment status: %v\n", err)
+			os.Exit(1)
 		}
 
 		switch d.Status {
 		case "succeeded":
 			log.Println("Deployment succeeded!")
-			return nil
+			return
 		case "failed":
-			return fmt.Errorf("deployment failed")
+			printDeploymentLogs(cmd, c, d)
+			fmt.Fprintln(os.Stderr, "Error: deployment failed")
+			os.Exit(1)
 		default:
 			log.Printf("Status: %s, waiting...", d.Status)
 			time.Sleep(2 * time.Second)
 		}
 	}
+}
+
+func printDeploymentLogs(cmd *cobra.Command, c client.ServerClient, d *domain.Deployment) {
+	commandIDs := collectCommandIDs(d)
+	for _, id := range commandIDs {
+		logs, err := c.GetCommandLogs(cmd.Context(), id)
+		if err != nil || len(logs) == 0 {
+			continue
+		}
+		for _, l := range logs {
+			fmt.Println(l.Line)
+		}
+	}
+}
+
+func collectCommandIDs(d *domain.Deployment) []uuid.UUID {
+	var ids []uuid.UUID
+	for _, dep := range d.DependencyConfigs {
+		if dep.CommandID != nil {
+			ids = append(ids, *dep.CommandID)
+		}
+	}
+	if d.HelmCommandID != nil {
+		ids = append(ids, *d.HelmCommandID)
+	}
+	return ids
 }

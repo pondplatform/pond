@@ -17,6 +17,7 @@ import (
 type ServerClient interface {
 	SubmitDeployment(ctx context.Context, req service.SubmitRequest) (*domain.Deployment, error)
 	GetDeployment(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
+	GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error)
 }
 
 type httpClient struct {
@@ -79,6 +80,26 @@ func (c *httpClient) GetDeployment(ctx context.Context, id uuid.UUID) (*domain.D
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	return &d, nil
+}
+
+func (c *httpClient) GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error) {
+	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/commands/%s/logs", commandID), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result struct {
+		Items []domain.CommandLog `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return result.Items, nil
 }
 
 func (c *httpClient) do(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
