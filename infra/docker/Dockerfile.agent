@@ -17,5 +17,6 @@ RUN curl -fsSL https://get.helm.sh/helm-v4.1.4-linux-amd64.tar.gz | tar -xz -C /
 # Install OpenTofu
 RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community opentofu
 COPY --from=builder /pond-agent /usr/local/bin/pond-agent
-COPY tofu-providers/ /opt/pond/tofu-providers/
+COPY infra/agent/helm-charts/ /opt/pond/helm-charts/
+COPY infra/agent/tofu-providers/ /opt/pond/tofu-providers/
 ENTRYPOINT ["pond-agent"]

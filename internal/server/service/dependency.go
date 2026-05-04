@@ -24,8 +24,8 @@ func NewDependencyService(specs dependency.SpecRegistry) DependencyService {
 // buildTofuPayload constructs the JSON payload for a tofu.apply command.
 func buildTofuPayload(serviceName, depName, depType string, depConfig map[string]any, providerInputs map[string]any) ([]byte, error) {
 	return wire.MarshalPayload(wire.TofuApplyPayload{
-		WorkDir:   fmt.Sprintf("providers/%s/terraform.tfstate", depType),
-		StatePath: fmt.Sprintf("states/%s/%s/terraform.tfstate", serviceName, depName),
+		WorkDir:   fmt.Sprintf("/opt/pond/tofu-providers/%s", depType),
+		StatePath: fmt.Sprintf("/opt/pond/states/%s/%s/terraform.tfstate", serviceName, depName),
 		Vars: map[string]any{
 			"service_name":        serviceName,
 			"dependency_name":     depName,

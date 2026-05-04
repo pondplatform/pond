@@ -166,7 +166,7 @@ func (s *deploymentService) enqueueHelm(ctx context.Context, tx TxRepos, dep *do
 	helmPayload := wire.HelmUpgradePayload{
 		ReleaseName: dep.ServiceConfigSnapshot.Name,
 		Namespace:   env.Name,
-		ChartPath:   "charts/service",
+		ChartPath:   "/opt/pond/helm-charts/base-service",
 		Values:      helmValuesYAML,
 	}
 	payload, err := wire.MarshalPayload(helmPayload)
