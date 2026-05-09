@@ -60,8 +60,8 @@ func TestGenerator_Generate_Ingress(t *testing.T) {
 
 	cfg := &serviceconfig.ServiceConfig{
 		Name: "web",
-		Ingress: serviceconfig.IngressConfig{
-			Enabled: true,
+		Ingress: &serviceconfig.IngressConfig{
+			Enabled: serviceconfig.Ptr(true),
 		},
 	}
 

@@ -57,9 +57,9 @@ func MinimalServiceConfig(name string) serviceconfig.ServiceConfig {
 		Version: 1,
 		Name:    name,
 		Image:   "ghcr.io/example/" + name,
-		Service: serviceconfig.ServiceSpec{
-			Port:     8080,
-			Replicas: 1,
+		Service: &serviceconfig.ServiceSpec{
+			Port:     serviceconfig.Ptr(int32(8080)),
+			Replicas: serviceconfig.Ptr(int32(1)),
 		},
 	}
 }

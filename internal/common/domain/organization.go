@@ -12,3 +12,14 @@ type Organization struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+func (o Organization) Validate() error {
+	var errs ValidationErrors
+	if o.Name == "" {
+		errs.Add("Organization", "name", "must not be empty")
+	}
+	if errs.HasErrors() {
+		return &errs
+	}
+	return nil
+}
+

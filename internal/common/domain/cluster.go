@@ -15,3 +15,17 @@ type Cluster struct {
 	CreatedAt      time.Time  `json:"createdAt"`
 }
 
+func (c Cluster) Validate() error {
+	var errs ValidationErrors
+	if c.Name == "" {
+		errs.Add("Cluster", "name", "must not be empty")
+	}
+	if c.AgentTokenHash == "" {
+		errs.Add("Cluster", "agentTokenHash", "must not be empty")
+	}
+	if errs.HasErrors() {
+		return &errs
+	}
+	return nil
+}
+

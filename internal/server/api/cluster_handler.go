@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -19,10 +20,11 @@ import (
 type ClusterHandler struct {
 	clusters store.ClusterRepository
 	orgs     store.OrganizationRepository
+	log      *slog.Logger
 }
 
-func NewClusterHandler(clusters store.ClusterRepository, orgs store.OrganizationRepository) *ClusterHandler {
-	return &ClusterHandler{clusters: clusters, orgs: orgs}
+func NewClusterHandler(clusters store.ClusterRepository, orgs store.OrganizationRepository, log *slog.Logger) *ClusterHandler {
+	return &ClusterHandler{clusters: clusters, orgs: orgs, log: log}
 }
 
 type createClusterRequest struct {
@@ -79,21 +81,6 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-
-	// Check if cluster already exists
-	existing, err := h.clusters.GetByName(r.Context(), orgID, req.Name)
-	if err == nil && existing != nil {
-		writeError(w, http.StatusConflict, "cluster already exists")
-		return
-	}
-	if err != nil && !errors.Is(err, domain.ErrNotFound) {
-		writeError(w, http.StatusInternalServerError, "internal server error")
-		return
-	}
 
 	// Generate token
 	token, tokenHash, err := generateToken()
@@ -108,6 +95,21 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Name:           req.Name,
 		AgentTokenHash: tokenHash,
 		CreatedAt:      time.Now().UTC(),
+	}
+	if err := cluster.Validate(); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	// Check if cluster already exists
+	existing, err := h.clusters.GetByName(r.Context(), orgID, req.Name)
+	if err == nil && existing != nil {
+		writeError(w, http.StatusConflict, "cluster already exists")
+		return
+	}
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
 	}
 
 	if err := h.clusters.Create(r.Context(), cluster); err != nil {

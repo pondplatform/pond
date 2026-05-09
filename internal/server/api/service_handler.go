@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -12,10 +13,11 @@ import (
 type ServiceHandler struct {
 	services store.ServiceRepository
 	projects store.ProjectRepository
+	log      *slog.Logger
 }
 
-func NewServiceHandler(services store.ServiceRepository, projects store.ProjectRepository) *ServiceHandler {
-	return &ServiceHandler{services: services, projects: projects}
+func NewServiceHandler(services store.ServiceRepository, projects store.ProjectRepository, log *slog.Logger) *ServiceHandler {
+	return &ServiceHandler{services: services, projects: projects, log: log}
 }
 
 func (h *ServiceHandler) Get(w http.ResponseWriter, r *http.Request) {

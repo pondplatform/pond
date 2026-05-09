@@ -7,8 +7,6 @@ import (
 	"github.com/pondplatform/pond/internal/common/serviceconfig"
 )
 
-func ptr[T any](v T) *T { return &v }
-
 func TestResolve_NoOverrideForEnv_ReturnsBase(t *testing.T) {
 	r := config.NewResolver()
 	base := &serviceconfig.OverridableConfig{
@@ -56,11 +54,11 @@ func TestResolve_IngressOverrideApplied(t *testing.T) {
 	r := config.NewResolver()
 	base := &serviceconfig.OverridableConfig{
 		ServiceConfig: serviceconfig.ServiceConfig{
-			Ingress: serviceconfig.IngressConfig{Enabled: false},
+			Ingress: &serviceconfig.IngressConfig{Enabled: serviceconfig.Ptr(false)},
 		},
 		Overrides: map[string]serviceconfig.Override{
 			"prod": {
-				Ingress: &serviceconfig.IngressOverride{Enabled: ptr(true)},
+				Ingress: &serviceconfig.IngressConfig{Enabled: serviceconfig.Ptr(true)},
 			},
 		},
 	}
@@ -69,7 +67,7 @@ func TestResolve_IngressOverrideApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !got.Ingress.Enabled {
+	if got.Ingress == nil || got.Ingress.Enabled == nil || !*got.Ingress.Enabled {
 		t.Error("expected Ingress.Enabled = true after override")
 	}
 }
@@ -78,11 +76,11 @@ func TestResolve_ReplicasOverrideApplied(t *testing.T) {
 	r := config.NewResolver()
 	base := &serviceconfig.OverridableConfig{
 		ServiceConfig: serviceconfig.ServiceConfig{
-			Service: serviceconfig.ServiceSpec{Replicas: 1},
+			Service: &serviceconfig.ServiceSpec{Replicas: serviceconfig.Ptr(int32(1))},
 		},
 		Overrides: map[string]serviceconfig.Override{
 			"prod": {
-				Service: &serviceconfig.ServiceOverride{Replicas: ptr(int32(5))},
+				Service: &serviceconfig.ServiceSpec{Replicas: serviceconfig.Ptr(int32(5))},
 			},
 		},
 	}
@@ -91,8 +89,8 @@ func TestResolve_ReplicasOverrideApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.Service.Replicas != 5 {
-		t.Errorf("expected Replicas = 5, got %d", got.Service.Replicas)
+	if got.Service == nil || got.Service.Replicas == nil || *got.Service.Replicas != 5 {
+		t.Errorf("expected Replicas = 5, got %v", got.Service)
 	}
 }
 
@@ -128,11 +126,11 @@ func TestResolve_OverrideBleeding_OtherEnvUnaffected(t *testing.T) {
 	r := config.NewResolver()
 	base := &serviceconfig.OverridableConfig{
 		ServiceConfig: serviceconfig.ServiceConfig{
-			Service: serviceconfig.ServiceSpec{Replicas: 1},
+			Service: &serviceconfig.ServiceSpec{Replicas: serviceconfig.Ptr(int32(1))},
 		},
 		Overrides: map[string]serviceconfig.Override{
 			"prod": {
-				Service: &serviceconfig.ServiceOverride{Replicas: ptr(int32(10))},
+				Service: &serviceconfig.ServiceSpec{Replicas: serviceconfig.Ptr(int32(10))},
 			},
 		},
 	}
@@ -142,8 +140,8 @@ func TestResolve_OverrideBleeding_OtherEnvUnaffected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if prod.Service.Replicas != 10 {
-		t.Errorf("expected prod Replicas = 10, got %d", prod.Service.Replicas)
+	if prod.Service == nil || prod.Service.Replicas == nil || *prod.Service.Replicas != 10 {
+		t.Errorf("expected prod Replicas = 10, got %v", prod.Service)
 	}
 
 	// Resolve staging — should still have 1 replica (prod override did not bleed).
@@ -151,8 +149,8 @@ func TestResolve_OverrideBleeding_OtherEnvUnaffected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if staging.Service.Replicas != 1 {
-		t.Errorf("expected staging Replicas = 1, got %d", staging.Service.Replicas)
+	if staging.Service == nil || staging.Service.Replicas == nil || *staging.Service.Replicas != 1 {
+		t.Errorf("expected staging Replicas = 1, got %v", staging.Service)
 	}
 }
 
@@ -160,8 +158,8 @@ func TestResolve_OverrideNilPointers_BaseNotMutated(t *testing.T) {
 	r := config.NewResolver()
 	base := &serviceconfig.OverridableConfig{
 		ServiceConfig: serviceconfig.ServiceConfig{
-			Ingress: serviceconfig.IngressConfig{Enabled: true},
-			Service: serviceconfig.ServiceSpec{Replicas: 3},
+			Ingress: &serviceconfig.IngressConfig{Enabled: serviceconfig.Ptr(true)},
+			Service: &serviceconfig.ServiceSpec{Replicas: serviceconfig.Ptr(int32(3))},
 		},
 		Overrides: map[string]serviceconfig.Override{
 			// Override struct exists but all pointer fields are nil.
@@ -173,10 +171,10 @@ func TestResolve_OverrideNilPointers_BaseNotMutated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !got.Ingress.Enabled {
+	if got.Ingress == nil || got.Ingress.Enabled == nil || !*got.Ingress.Enabled {
 		t.Error("expected Ingress.Enabled to remain true when override is empty")
 	}
-	if got.Service.Replicas != 3 {
-		t.Errorf("expected Replicas = 3, got %d", got.Service.Replicas)
+	if got.Service == nil || got.Service.Replicas == nil || *got.Service.Replicas != 3 {
+		t.Errorf("expected Replicas = 3, got %v", got.Service)
 	}
 }

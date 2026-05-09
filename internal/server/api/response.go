@@ -68,8 +68,19 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+func writeValidationError(w http.ResponseWriter, err *domain.ValidationErrors) {
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	json.NewEncoder(w).Encode(map[string]any{
+		"error":  "validation failed",
+		"errors": err.Errors,
+	})
+}
+
 func writeServiceError(w http.ResponseWriter, err error) {
+	var ve *domain.ValidationErrors
 	switch {
+	case errors.As(err, &ve):
+		writeValidationError(w, ve)
 	case errors.Is(err, domain.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, domain.ErrAlreadyExists):

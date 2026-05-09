@@ -38,7 +38,7 @@ func TestRender_SingleDepVar_Resolved(t *testing.T) {
 
 func TestRender_ServicePort_Resolved(t *testing.T) {
 	r := config.NewTemplateRenderer()
-	svc := &serviceconfig.ServiceConfig{Service: serviceconfig.ServiceSpec{Port: 8080, Replicas: 2}}
+	svc := &serviceconfig.ServiceConfig{Service: &serviceconfig.ServiceSpec{Port: serviceconfig.Ptr(int32(8080)), Replicas: serviceconfig.Ptr(int32(2))}}
 	values := map[string]any{"port": "{{service.port}}", "replicas": "{{service.replicas}}"}
 
 	got, err := r.Render(values, nil, svc)

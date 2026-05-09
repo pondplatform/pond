@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/pondplatform/pond/internal/common/domain"
@@ -10,10 +11,11 @@ import (
 
 type DependencySpecHandler struct {
 	registry dependency.SpecRegistry
+	log      *slog.Logger
 }
 
-func NewDependencySpecHandler(registry dependency.SpecRegistry) *DependencySpecHandler {
-	return &DependencySpecHandler{registry: registry}
+func NewDependencySpecHandler(registry dependency.SpecRegistry, log *slog.Logger) *DependencySpecHandler {
+	return &DependencySpecHandler{registry: registry, log: log}
 }
 
 func (h *DependencySpecHandler) List(w http.ResponseWriter, r *http.Request) {

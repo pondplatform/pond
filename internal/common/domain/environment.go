@@ -17,3 +17,20 @@ type Environment struct {
 	CreatedAt              time.Time  `json:"createdAt"`
 }
 
+func (e Environment) Validate() error {
+	var errs ValidationErrors
+	if e.Name == "" {
+		errs.Add("Environment", "name", "must not be empty")
+	}
+	if e.Namespace == "" {
+		errs.Add("Environment", "namespace", "must not be empty")
+	}
+	if e.ClusterID == uuid.Nil {
+		errs.Add("Environment", "clusterId", "must not be empty")
+	}
+	if errs.HasErrors() {
+		return &errs
+	}
+	return nil
+}
+

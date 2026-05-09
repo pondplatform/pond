@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -16,10 +17,11 @@ type ProjectHandler struct {
 	projects store.ProjectRepository
 	orgs     store.OrganizationRepository
 	envs     store.EnvironmentRepository
+	log      *slog.Logger
 }
 
-func NewProjectHandler(projects store.ProjectRepository, orgs store.OrganizationRepository, envs store.EnvironmentRepository) *ProjectHandler {
-	return &ProjectHandler{projects: projects, orgs: orgs, envs: envs}
+func NewProjectHandler(projects store.ProjectRepository, orgs store.OrganizationRepository, envs store.EnvironmentRepository, log *slog.Logger) *ProjectHandler {
+	return &ProjectHandler{projects: projects, orgs: orgs, envs: envs, log: log}
 }
 
 type createProjectRequest struct {
@@ -54,8 +56,15 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
+
+	project := &domain.Project{
+		ID:             uuid.New(),
+		OrganizationID: orgID,
+		Name:           req.Name,
+		CreatedAt:      time.Now().UTC(),
+	}
+	if err := project.Validate(); err != nil {
+		writeServiceError(w, err)
 		return
 	}
 
@@ -68,13 +77,6 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
-	}
-
-	project := &domain.Project{
-		ID:             uuid.New(),
-		OrganizationID: orgID,
-		Name:           req.Name,
-		CreatedAt:      time.Now().UTC(),
 	}
 
 	if err := h.projects.Create(r.Context(), project); err != nil {

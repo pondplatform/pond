@@ -30,8 +30,17 @@ func splitRepositoryTag(image string) (string,string) {
 func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*HelmValues, error) {
 	repository,tag := splitRepositoryTag(cfg.Image)
 	
+	var replicaCount int
+	if cfg.Service != nil && cfg.Service.Replicas != nil {
+		replicaCount = int(*cfg.Service.Replicas)
+	}
+	var servicePort int
+	if cfg.Service != nil && cfg.Service.Port != nil {
+		servicePort = int(*cfg.Service.Port)
+	}
+
 	vals := &HelmValues{
-		ReplicaCount: int(cfg.Service.Replicas),
+		ReplicaCount: replicaCount,
 		Image: Image{
 			Repository: repository,
 			Tag:        tag,
@@ -41,17 +50,18 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 		FullnameOverride: cfg.Name,
 		Service: HelmService{
 			Type: "ClusterIP",
-			Port: int(cfg.Service.Port),
+			Port: servicePort,
 		},
 		Env: cfg.Env,
 	}
 
 	// Ingress
+	ingressEnabled := cfg.Ingress != nil && cfg.Ingress.Enabled != nil && *cfg.Ingress.Enabled
 	vals.Ingress = HelmIngress{
-		Enabled:   cfg.Ingress.Enabled,
+		Enabled:   ingressEnabled,
 		ClassName: "nginx",
 	}
-	if cfg.Ingress.Enabled && env != nil {
+	if ingressEnabled && env != nil {
 		vals.Ingress.Annotations = map[string]string{
 			"cert-manager.io/cluster-issuer":           "letsencrypt-prod",
 			"nginx.ingress.kubernetes.io/ssl-redirect": "true",
@@ -75,10 +85,10 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 	}
 
 	// Health probes
-	if cfg.Manage.Health.Endpoint != "" {
-		port := int(cfg.Service.Port)
-		if cfg.Manage.Health.Port != 0 {
-			port = cfg.Manage.Health.Port
+	if cfg.Manage != nil && cfg.Manage.Health != nil && cfg.Manage.Health.Endpoint != "" {
+		port := servicePort
+		if cfg.Manage.Health.Port != nil {
+			port = *cfg.Manage.Health.Port
 		}
 
 		probe := &HelmProbe{
@@ -92,12 +102,16 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 	}
 
 	// Metrics annotations
-	if cfg.Manage.Metrics.Endpoint != "" {
+	if cfg.Manage != nil && cfg.Manage.Metrics != nil && cfg.Manage.Metrics.Endpoint != "" {
 		if vals.PodAnnotations == nil {
 			vals.PodAnnotations = make(map[string]string)
 		}
+		metricsPort := 0
+		if cfg.Manage.Metrics.Port != nil {
+			metricsPort = *cfg.Manage.Metrics.Port
+		}
 		vals.PodAnnotations["prometheus.io/scrape"] = "true"
-		vals.PodAnnotations["prometheus.io/port"] = fmt.Sprintf("%d", cfg.Manage.Metrics.Port)
+		vals.PodAnnotations["prometheus.io/port"] = fmt.Sprintf("%d", metricsPort)
 		vals.PodAnnotations["prometheus.io/path"] = cfg.Manage.Metrics.Endpoint
 	}
 

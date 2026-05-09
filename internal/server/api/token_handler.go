@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -13,10 +14,11 @@ import (
 
 type TokenHandler struct {
 	jwtSecret []byte
+	log       *slog.Logger
 }
 
-func NewTokenHandler(jwtSecret []byte) *TokenHandler {
-	return &TokenHandler{jwtSecret: jwtSecret}
+func NewTokenHandler(jwtSecret []byte, log *slog.Logger) *TokenHandler {
+	return &TokenHandler{jwtSecret: jwtSecret, log: log}
 }
 
 type createTokenRequest struct {

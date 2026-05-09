@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/pondplatform/pond/internal/agent"
 	"github.com/pondplatform/pond/internal/common/wire"
@@ -19,11 +18,17 @@ func NewRunner() agent.HelmRunner {
 }
 
 func (r *runner) Upgrade(ctx context.Context, req wire.HelmUpgradePayload, logW io.Writer) error {
-	valuesFile := filepath.Join(os.TempDir(), fmt.Sprintf("pond-helm-%s.yaml", req.ReleaseName))
-	if err := os.WriteFile(valuesFile, req.Values, 0600); err != nil {
+	vf, err := os.CreateTemp("", "pond-helm-*.yaml")
+	if err != nil {
+		return fmt.Errorf("create values file: %w", err)
+	}
+	valuesFile := vf.Name()
+	//defer os.Remove(valuesFile)
+	if _, err := vf.Write(req.Values); err != nil {
+		vf.Close()
 		return fmt.Errorf("write values file: %w", err)
 	}
-	defer os.Remove(valuesFile)
+	vf.Close()
 
 	args := []string{
 		"upgrade", "--install",
@@ -35,6 +40,7 @@ func (r *runner) Upgrade(ctx context.Context, req wire.HelmUpgradePayload, logW 
 	}
 
 	cmd := exec.CommandContext(ctx, "helm", args...)
+	_, _ = fmt.Fprintf(logW, "Executing command %s", cmd.String())
 	cmd.Stdout = logW
 	cmd.Stderr = logW
 

@@ -15,3 +15,14 @@ type Service struct {
 	CreatedAt           time.Time  `json:"createdAt"`
 }
 
+func (s Service) Validate() error {
+	var errs ValidationErrors
+	if s.Name == "" {
+		errs.Add("Service", "name", "must not be empty")
+	}
+	if errs.HasErrors() {
+		return &errs
+	}
+	return nil
+}
+

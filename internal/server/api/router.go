@@ -30,14 +30,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux := http.NewServeMux()
 
 	// Handlers
-	deployHandler := NewDeploymentHandler(deps.DeploySvc, deps.Services)
-	orgHandler := NewOrganizationHandler(deps.Orgs)
-	clusterHandler := NewClusterHandler(deps.Clusters, deps.Orgs)
-	projectHandler := NewProjectHandler(deps.Projects, deps.Orgs, deps.Envs)
-	envHandler := NewEnvironmentHandler(deps.Envs, deps.Projects, deps.Clusters)
-	serviceHandler := NewServiceHandler(deps.Services, deps.Projects)
-	depSpecHandler := NewDependencySpecHandler(deps.SpecRegistry)
-	tokenHandler := NewTokenHandler(deps.JWTSecret)
+	deployHandler := NewDeploymentHandler(deps.DeploySvc, deps.Services, deps.Log)
+	orgHandler := NewOrganizationHandler(deps.Orgs, deps.Log)
+	clusterHandler := NewClusterHandler(deps.Clusters, deps.Orgs, deps.Log)
+	projectHandler := NewProjectHandler(deps.Projects, deps.Orgs, deps.Envs, deps.Log)
+	envHandler := NewEnvironmentHandler(deps.Envs, deps.Projects, deps.Clusters, deps.Log)
+	serviceHandler := NewServiceHandler(deps.Services, deps.Projects, deps.Log)
+	depSpecHandler := NewDependencySpecHandler(deps.SpecRegistry, deps.Log)
+	tokenHandler := NewTokenHandler(deps.JWTSecret, deps.Log)
 
 	// Auth middleware helpers
 	authed := func(action auth.Action, pathParam string, h http.HandlerFunc) http.HandlerFunc {

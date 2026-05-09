@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -17,10 +18,11 @@ type EnvironmentHandler struct {
 	envs     store.EnvironmentRepository
 	projects store.ProjectRepository
 	clusters store.ClusterRepository
+	log      *slog.Logger
 }
 
-func NewEnvironmentHandler(envs store.EnvironmentRepository, projects store.ProjectRepository, clusters store.ClusterRepository) *EnvironmentHandler {
-	return &EnvironmentHandler{envs: envs, projects: projects, clusters: clusters}
+func NewEnvironmentHandler(envs store.EnvironmentRepository, projects store.ProjectRepository, clusters store.ClusterRepository, log *slog.Logger) *EnvironmentHandler {
+	return &EnvironmentHandler{envs: envs, projects: projects, clusters: clusters, log: log}
 }
 
 type createEnvironmentRequest struct {
@@ -63,17 +65,20 @@ func (h *EnvironmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
 	req.Namespace = strings.TrimSpace(req.Namespace)
-	if req.Namespace == "" {
-		writeError(w, http.StatusBadRequest, "namespace is required")
-		return
+
+	env := &domain.Environment{
+		ID:                     uuid.New(),
+		ProjectID:              projectID,
+		ParentEnvironmentID:    req.ParentEnvironmentID,
+		Name:                   req.Name,
+		Namespace:              req.Namespace,
+		DefaultIngressBaseHost: req.DefaultIngressBaseHost,
+		ClusterID:              req.ClusterID,
+		CreatedAt:              time.Now().UTC(),
 	}
-	if req.ClusterID == uuid.Nil {
-		writeError(w, http.StatusBadRequest, "cluster_id is required")
+	if err := env.Validate(); err != nil {
+		writeServiceError(w, err)
 		return
 	}
 
@@ -118,17 +123,6 @@ func (h *EnvironmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "parent environment does not belong to this project")
 			return
 		}
-	}
-
-	env := &domain.Environment{
-		ID:                     uuid.New(),
-		ProjectID:              projectID,
-		ParentEnvironmentID:    req.ParentEnvironmentID,
-		Name:                   req.Name,
-		Namespace:              req.Namespace,
-		DefaultIngressBaseHost: req.DefaultIngressBaseHost,
-		ClusterID:              req.ClusterID,
-		CreatedAt:              time.Now().UTC(),
 	}
 
 	if err := h.envs.Create(r.Context(), env); err != nil {
@@ -263,6 +257,11 @@ func (h *EnvironmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		env.ParentEnvironmentID = req.ParentEnvironmentID
+	}
+
+	if err := env.Validate(); err != nil {
+		writeServiceError(w, err)
+		return
 	}
 
 	if err := h.envs.Update(r.Context(), env); err != nil {

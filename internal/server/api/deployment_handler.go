@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/internal/common/domain"
+	"github.com/pondplatform/pond/internal/common/serviceconfig"
 	"github.com/pondplatform/pond/internal/server/service"
 	"github.com/pondplatform/pond/internal/server/store"
 )
@@ -15,18 +17,22 @@ import (
 type DeploymentHandler struct {
 	svc      service.DeploymentService
 	services store.ServiceRepository
+	log      *slog.Logger
 }
 
-func NewDeploymentHandler(svc service.DeploymentService, services store.ServiceRepository) *DeploymentHandler {
-	return &DeploymentHandler{svc: svc, services: services}
+func NewDeploymentHandler(svc service.DeploymentService, services store.ServiceRepository, log *slog.Logger) *DeploymentHandler {
+	return &DeploymentHandler{svc: svc, services: services, log: log}
 }
 
 func (h *DeploymentHandler) Submit(w http.ResponseWriter, r *http.Request) {
-	var req service.SubmitRequest
+	req := defaultSubmitRequest()
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+
+	encoded, _ := json.Marshal(req)
+	h.log.Info("Deploying service: " + string(encoded))
 
 	d, err := h.svc.Submit(r.Context(), req)
 	if err != nil {
@@ -35,6 +41,21 @@ func (h *DeploymentHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, d)
+}
+
+func defaultSubmitRequest() service.SubmitRequest {
+	return service.SubmitRequest{
+		TriggeredBy:       "api",
+		CreateIfNotExists: true,
+		OverridableConfig: serviceconfig.OverridableConfig{
+			ServiceConfig: serviceconfig.ServiceConfig{
+				Service: &serviceconfig.ServiceSpec{
+					Port:     serviceconfig.Ptr(int32(8080)),
+					Replicas: serviceconfig.Ptr(int32(2)),
+				},
+			},
+		},
+	}
 }
 
 func (h *DeploymentHandler) GetStatus(w http.ResponseWriter, r *http.Request) {

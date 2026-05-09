@@ -1,55 +1,58 @@
 package serviceconfig
 
+// Ptr returns a pointer to v. Useful when constructing ServiceConfig literals.
+func Ptr[T any](v T) *T { return &v }
+
 // ServiceConfig is the fully-resolved configuration for deploying a service
 // to a specific environment (overrides already applied).
 type ServiceConfig struct {
-	Version int    `json:"version" yaml:"version"`
-	Name    string `json:"name"    yaml:"name"`
-	Image   string `json:"image"   yaml:"image"`
-	Build   string `json:"build"   yaml:"build"`
+	Version int    `json:"version,omitempty" yaml:"version"`
+	Name    string `json:"name"              yaml:"name"`
+	Image   string `json:"image,omitempty"   yaml:"image"`
+	Build   string `json:"build,omitempty"   yaml:"build"`
 
-	Ingress IngressConfig    `json:"ingress"    yaml:"ingress"`
-	Service ServiceSpec      `json:"service"    yaml:"service"`
-	Manage  ManagementConfig `json:"management" yaml:"management"`
+	Ingress *IngressConfig    `json:"ingress,omitempty"    yaml:"ingress"`
+	Service *ServiceSpec      `json:"service,omitempty"    yaml:"service"`
+	Manage  *ManagementConfig `json:"management,omitempty" yaml:"management"`
 
-	Dependencies map[string]DependencyDeclaration `json:"dependencies" yaml:"dependencies"`
-	Env          map[string]string                `json:"env"          yaml:"env"`
-	Configs      map[string]ConfigFileSpec        `json:"configs"      yaml:"configs"`
+	Dependencies map[string]DependencyDeclaration `json:"dependencies,omitempty" yaml:"dependencies"`
+	Env          map[string]string                `json:"env,omitempty"          yaml:"env"`
+	Configs      map[string]ConfigFileSpec        `json:"configs,omitempty"      yaml:"configs"`
 }
 
 type IngressConfig struct {
-	Enabled bool `json:"enabled" yaml:"enabled"`
+	Enabled *bool `json:"enabled,omitempty" yaml:"enabled"`
 }
 
 type ServiceSpec struct {
-	Port     int32 `json:"port"     yaml:"port"`
-	Replicas int32 `json:"replicas" yaml:"replicas"`
+	Port     *int32 `json:"port,omitempty"     yaml:"port"`
+	Replicas *int32 `json:"replicas,omitempty" yaml:"replicas"`
 }
 
 type ManagementConfig struct {
-	Metrics MetricsConfig `json:"metrics" yaml:"metrics"`
-	Health  HealthConfig  `json:"health"  yaml:"health"`
+	Metrics *MetricsConfig `json:"metrics,omitempty" yaml:"metrics"`
+	Health  *HealthConfig  `json:"health,omitempty"  yaml:"health"`
 }
 
 type MetricsConfig struct {
-	Port     int    `json:"port"     yaml:"port"`
-	Endpoint string `json:"endpoint" yaml:"endpoint"`
+	Port     *int   `json:"port,omitempty"     yaml:"port"`
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint"`
 }
 
 type HealthConfig struct {
-	Port     int    `json:"port"     yaml:"port"`
-	Endpoint string `json:"endpoint" yaml:"endpoint"`
+	Port     *int   `json:"port,omitempty"     yaml:"port"`
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint"`
 }
 
 type ConfigFileSpec struct {
-	Format   string         `json:"format"   yaml:"format"`
-	MountDir string         `json:"mountDir" yaml:"mountDir"`
-	Values   map[string]any `json:"values"   yaml:"values"`
+	Format   string         `json:"format,omitempty"   yaml:"format"`
+	MountDir string         `json:"mountDir,omitempty" yaml:"mountDir"`
+	Values   map[string]any `json:"values,omitempty"   yaml:"values"`
 }
 
 type DependencyDeclaration struct {
-	Type   string         `json:"type"   yaml:"type"`
-	Config map[string]any `json:"config" yaml:"config"`
+	Type   string         `json:"type,omitempty"   yaml:"type"`
+	Config map[string]any `json:"config,omitempty" yaml:"config"`
 }
 
 // OverridableConfig is the raw form of a pond.yml: a base ServiceConfig
@@ -60,17 +63,9 @@ type OverridableConfig struct {
 }
 
 type Override struct {
-	Ingress      *IngressOverride                 `yaml:"ingress"      json:"ingress,omitempty"`
-	Service      *ServiceOverride                 `yaml:"service"      json:"service,omitempty"`
+	Ingress      *IngressConfig                   `yaml:"ingress"      json:"ingress,omitempty"`
+	Service      *ServiceSpec                     `yaml:"service"      json:"service,omitempty"`
 	Env          map[string]string                `yaml:"env"          json:"env,omitempty"`
 	Dependencies map[string]DependencyDeclaration `yaml:"dependencies" json:"dependencies,omitempty"`
 	Configs      map[string]ConfigFileSpec        `yaml:"configs"      json:"configs,omitempty"`
-}
-
-type IngressOverride struct {
-	Enabled *bool `yaml:"enabled" json:"enabled,omitempty"`
-}
-
-type ServiceOverride struct {
-	Replicas *int32 `yaml:"replicas" json:"replicas,omitempty"`
 }

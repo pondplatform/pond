@@ -9,7 +9,7 @@ func NewResolver() ConfigResolver {
 }
 
 func (r *resolver) Resolve(base *serviceconfig.OverridableConfig, envName string) (*serviceconfig.ServiceConfig, error) {
-	// Start with a copy of the base config.
+	// Start with a shallow copy of the base config.
 	cfg := base.ServiceConfig
 
 	// Initialize maps if nil.
@@ -28,12 +28,31 @@ func (r *resolver) Resolve(base *serviceconfig.OverridableConfig, envName string
 		return &cfg, nil
 	}
 
-	// Apply scalar overrides.
-	if override.Ingress != nil && override.Ingress.Enabled != nil {
-		cfg.Ingress.Enabled = *override.Ingress.Enabled
+	// Apply ingress override: copy struct before mutating to avoid sharing with base.
+	if override.Ingress != nil {
+		ingressCopy := serviceconfig.IngressConfig{}
+		if cfg.Ingress != nil {
+			ingressCopy = *cfg.Ingress
+		}
+		if override.Ingress.Enabled != nil {
+			ingressCopy.Enabled = override.Ingress.Enabled
+		}
+		cfg.Ingress = &ingressCopy
 	}
-	if override.Service != nil && override.Service.Replicas != nil {
-		cfg.Service.Replicas = *override.Service.Replicas
+
+	// Apply service override: copy struct before mutating to avoid sharing with base.
+	if override.Service != nil {
+		serviceCopy := serviceconfig.ServiceSpec{}
+		if cfg.Service != nil {
+			serviceCopy = *cfg.Service
+		}
+		if override.Service.Port != nil {
+			serviceCopy.Port = override.Service.Port
+		}
+		if override.Service.Replicas != nil {
+			serviceCopy.Replicas = override.Service.Replicas
+		}
+		cfg.Service = &serviceCopy
 	}
 
 	// Deep merge maps: override keys win.

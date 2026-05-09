@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/pondplatform/pond/internal/common/wire"
 )
+
+const CommandIdTag = "command_id"
 
 type executor struct {
 	helmRunner HelmRunner
@@ -160,6 +163,7 @@ func newLogWriter(cmdID string, logSink func(wire.LogPayload)) *logWriter {
 }
 
 func (lw *logWriter) Write(p []byte) (int, error) {
+	slog.Default().Info("Command log: "+string(p), CommandIdTag, lw.cmdID)
 	return lw.pw.Write(p)
 }
 

@@ -14,3 +14,14 @@ type Project struct {
 	CreatedAt         time.Time  `json:"createdAt"`
 }
 
+func (p Project) Validate() error {
+	var errs ValidationErrors
+	if p.Name == "" {
+		errs.Add("Project", "name", "must not be empty")
+	}
+	if errs.HasErrors() {
+		return &errs
+	}
+	return nil
+}
+

@@ -224,6 +224,7 @@ fi
 info "Project ID: $PROJECT_ID"
 
 step "Creating environment 'staging'"
+kubectl create namespace "e2e-staging" --dry-run=client -o yaml | kubectl apply -f -
 ENV_HTTP=$(curl -s -o /tmp/pond_env_body -w "%{http_code}" \
   -X POST "$SERVER_URL/api/v1/projects/$PROJECT_ID/environments" \
   -H "Authorization: Bearer $POND_TOKEN" \

@@ -45,6 +45,20 @@ type DependencyDeployment struct {
 	CompletedAt    *time.Time                 `json:"completedAt"`
 }
 
+func (d Deployment) Validate() error {
+	var errs ValidationErrors
+	if d.ImageTag == "" {
+		errs.Add("Deployment", "imageTag", "must not be empty")
+	}
+	if d.TriggeredBy == "" {
+		errs.Add("Deployment", "triggeredBy", "must not be empty")
+	}
+	if errs.HasErrors() {
+		return &errs
+	}
+	return nil
+}
+
 // DependencyDeploymentStatus represents the lifecycle of a tofu.apply command.
 type DependencyDeploymentStatus string
 

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -14,10 +15,11 @@ import (
 
 type OrganizationHandler struct {
 	orgs store.OrganizationRepository
+	log  *slog.Logger
 }
 
-func NewOrganizationHandler(orgs store.OrganizationRepository) *OrganizationHandler {
-	return &OrganizationHandler{orgs: orgs}
+func NewOrganizationHandler(orgs store.OrganizationRepository, log *slog.Logger) *OrganizationHandler {
+	return &OrganizationHandler{orgs: orgs, log: log}
 }
 
 type createOrganizationRequest struct {
@@ -32,8 +34,14 @@ func (h *OrganizationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
+
+	org := &domain.Organization{
+		ID:        uuid.New(),
+		Name:      req.Name,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := org.Validate(); err != nil {
+		writeServiceError(w, err)
 		return
 	}
 
@@ -46,12 +54,6 @@ func (h *OrganizationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
-	}
-
-	org := &domain.Organization{
-		ID:        uuid.New(),
-		Name:      req.Name,
-		CreatedAt: time.Now().UTC(),
 	}
 
 	if err := h.orgs.Create(r.Context(), org); err != nil {

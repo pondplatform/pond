@@ -36,8 +36,14 @@ func buildLookupTable(contexts map[string]map[string]any, svcConfig *serviceconf
 	}
 
 	// Add service config fields: {{service.port}}
-	table["service.port"] = fmt.Sprintf("%d", svcConfig.Service.Port)
-	table["service.replicas"] = fmt.Sprintf("%d", svcConfig.Service.Replicas)
+	if svcConfig.Service != nil {
+		if svcConfig.Service.Port != nil {
+			table["service.port"] = fmt.Sprintf("%d", *svcConfig.Service.Port)
+		}
+		if svcConfig.Service.Replicas != nil {
+			table["service.replicas"] = fmt.Sprintf("%d", *svcConfig.Service.Replicas)
+		}
+	}
 
 	// Add env vars: {{env.VAR_NAME}}
 	for k, v := range svcConfig.Env {
