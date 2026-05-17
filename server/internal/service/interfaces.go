@@ -13,9 +13,17 @@ import (
 	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
+// DeploymentDetail is the enriched view of a deployment returned by GetStatus.
+// It includes the dependency states and their associated commands.
+type DeploymentDetail struct {
+	Deployment   *domain.Deployment
+	Dependencies []domain.DependencyDeployment
+	Commands     []*domain.Command
+}
+
 type DeploymentService interface {
 	Submit(ctx context.Context, req api.SubmitRequest) (*domain.Deployment, error)
-	GetStatus(ctx context.Context, deploymentID uuid.UUID) (*domain.Deployment, error)
+	GetStatus(ctx context.Context, deploymentID uuid.UUID) (*DeploymentDetail, error)
 	Validate(ctx context.Context, req api.SubmitRequest) (*ValidationResult, error)
 	// ListByService returns deployments for a service, optionally filtered by environment and status.
 	ListByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)

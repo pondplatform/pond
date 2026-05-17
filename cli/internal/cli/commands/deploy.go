@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/cli/internal/cli/client"
-	"github.com/pondplatform/pond/shared/serviceconfig/config"
 	api "github.com/pondplatform/pond/shared/server/api"
+	"github.com/pondplatform/pond/shared/serviceconfig/config"
 	"github.com/spf13/cobra"
 )
 
@@ -88,6 +88,10 @@ func waitForDeployment(cmd *cobra.Command, c client.ServerClient, id uuid.UUID) 
 			printDeploymentLogs(cmd, c, d)
 			fmt.Fprintln(os.Stderr, "Error: deployment failed")
 			os.Exit(1)
+		case "awaiting_input":
+			fmt.Printf("Deployment is awaiting user input. To provide it, run:\n")
+			fmt.Printf("  pond deployment configure --deployment-id %s --file <config.json>\n", id)
+			return
 		default:
 			log.Printf("Status: %s, waiting...", d.Status)
 			time.Sleep(2 * time.Second)
@@ -96,5 +100,5 @@ func waitForDeployment(cmd *cobra.Command, c client.ServerClient, id uuid.UUID) 
 }
 
 func printDeploymentLogs(cmd *cobra.Command, c client.ServerClient, d *api.Deployment) {
-	_ = d
+	printDeploymentStatus(cmd.Context(), c, d)
 }

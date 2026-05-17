@@ -226,12 +226,42 @@ func (s *deploymentService) ConfigureDeployment(ctx context.Context, deploymentI
 	return nil
 }
 
-func (s *deploymentService) GetStatus(ctx context.Context, deploymentID uuid.UUID) (*domain.Deployment, error) {
+func (s *deploymentService) GetStatus(ctx context.Context, deploymentID uuid.UUID) (*DeploymentDetail, error) {
 	d, err := s.deploymentInfo.GetByID(ctx, deploymentID)
 	if err != nil {
 		return nil, fmt.Errorf("get deployment: %w", err)
 	}
-	return d, nil
+
+	deps, err := s.deploymentInfo.ListDepConfigs(ctx, deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("list dep configs: %w", err)
+	}
+
+	// Collect the unique command IDs referenced by deps plus the helm command.
+	commandIDs := make(map[uuid.UUID]struct{})
+	for _, dep := range deps {
+		if dep.CommandID != nil {
+			commandIDs[*dep.CommandID] = struct{}{}
+		}
+	}
+	if d.HelmCommandID != nil {
+		commandIDs[*d.HelmCommandID] = struct{}{}
+	}
+
+	commands := make([]*domain.Command, 0, len(commandIDs))
+	for id := range commandIDs {
+		cmd, err := s.deploymentInfo.GetCommand(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("get command %s: %w", id, err)
+		}
+		commands = append(commands, cmd)
+	}
+
+	return &DeploymentDetail{
+		Deployment:   d,
+		Dependencies: deps,
+		Commands:     commands,
+	}, nil
 }
 
 func (s *deploymentService) Validate(ctx context.Context, req api.SubmitRequest) (*ValidationResult, error) {

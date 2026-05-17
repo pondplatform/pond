@@ -17,12 +17,54 @@ const (
 	DeploymentStatusFailed        DeploymentStatus = "failed"
 )
 
+type CommandStatus string
+
+const (
+	CommandStatusQueued     CommandStatus = "queued"
+	CommandStatusDispatched CommandStatus = "dispatched"
+	CommandStatusSucceeded  CommandStatus = "succeeded"
+	CommandStatusFailed     CommandStatus = "failed"
+	CommandStatusCancelled  CommandStatus = "cancelled"
+)
+
+type DependencyDeploymentStatus string
+
+const (
+	DependencyDeploymentStatusAwaitingInput DependencyDeploymentStatus = "awaiting_input"
+	DependencyDeploymentStatusPending       DependencyDeploymentStatus = "pending"
+	DependencyDeploymentStatusSucceeded     DependencyDeploymentStatus = "succeeded"
+	DependencyDeploymentStatusFailed        DependencyDeploymentStatus = "failed"
+)
+
+type CommandSummary struct {
+	ID        uuid.UUID     `json:"id"`
+	Type      string        `json:"type"`
+	Status    CommandStatus `json:"status"`
+	Error     string        `json:"error,omitempty"`
+	CreatedAt time.Time     `json:"createdAt"`
+	UpdatedAt time.Time     `json:"updatedAt"`
+}
+
+type DependencyDeploymentSummary struct {
+	Name        string                     `json:"name"`
+	Type        string                     `json:"type"`
+	Managed     *bool                      `json:"managed"`
+	Status      DependencyDeploymentStatus `json:"status"`
+	CommandID   *uuid.UUID                 `json:"commandId,omitempty"`
+	CompletedAt *time.Time                 `json:"completedAt,omitempty"`
+}
+
 type Deployment struct {
-	ID            uuid.UUID        `json:"id"`
-	ServiceID     uuid.UUID        `json:"serviceId"`
-	EnvironmentID uuid.UUID        `json:"environmentId"`
-	Status        DeploymentStatus `json:"status"`
-	CreatedAt     time.Time        `json:"createdAt"`
+	ID            uuid.UUID                     `json:"id"`
+	ServiceID     uuid.UUID                     `json:"serviceId"`
+	EnvironmentID uuid.UUID                     `json:"environmentId"`
+	ImageTag      string                        `json:"imageTag"`
+	TriggeredBy   string                        `json:"triggeredBy"`
+	Status        DeploymentStatus              `json:"status"`
+	CreatedAt     time.Time                     `json:"createdAt"`
+	CompletedAt   *time.Time                    `json:"completedAt,omitempty"`
+	Dependencies  []DependencyDeploymentSummary `json:"dependencies"`
+	Commands      []CommandSummary              `json:"commands"`
 }
 
 type DeploymentListItem struct {

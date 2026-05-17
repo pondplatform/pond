@@ -75,16 +75,53 @@ func (h *DeploymentHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid deployment id")
 		return
 	}
-	d, err := h.getStatus(r.Context(), id)
+	detail, err := h.svc.GetStatus(r.Context(), id)
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toDeploymentResponse(d))
+	writeJSON(w, http.StatusOK, toDeploymentDetailResponse(detail))
 }
 
-func (h *DeploymentHandler) getStatus(ctx context.Context, id uuid.UUID) (*domain.Deployment, error) {
-	return h.svc.GetStatus(ctx, id)
+func toDeploymentDetailResponse(detail *service.DeploymentDetail) shared.Deployment {
+	d := detail.Deployment
+
+	deps := make([]shared.DependencyDeploymentSummary, len(detail.Dependencies))
+	for i, dep := range detail.Dependencies {
+		deps[i] = shared.DependencyDeploymentSummary{
+			Name:        dep.DependencyName,
+			Type:        dep.DependencyType,
+			Managed:     dep.Managed,
+			Status:      shared.DependencyDeploymentStatus(dep.Status),
+			CommandID:   dep.CommandID,
+			CompletedAt: dep.CompletedAt,
+		}
+	}
+
+	cmds := make([]shared.CommandSummary, len(detail.Commands))
+	for i, cmd := range detail.Commands {
+		cmds[i] = shared.CommandSummary{
+			ID:        cmd.ID,
+			Type:      cmd.Type,
+			Status:    shared.CommandStatus(cmd.Status),
+			Error:     cmd.Error,
+			CreatedAt: cmd.CreatedAt,
+			UpdatedAt: cmd.UpdatedAt,
+		}
+	}
+
+	return shared.Deployment{
+		ID:            d.ID,
+		ServiceID:     d.ServiceID,
+		EnvironmentID: d.EnvironmentID,
+		ImageTag:      d.ImageTag,
+		TriggeredBy:   d.TriggeredBy,
+		Status:        d.Status,
+		CreatedAt:     d.CreatedAt,
+		CompletedAt:   d.CompletedAt,
+		Dependencies:  deps,
+		Commands:      cmds,
+	}
 }
 
 func toDeploymentResponse(d *domain.Deployment) shared.Deployment {
@@ -92,8 +129,13 @@ func toDeploymentResponse(d *domain.Deployment) shared.Deployment {
 		ID:            d.ID,
 		ServiceID:     d.ServiceID,
 		EnvironmentID: d.EnvironmentID,
+		ImageTag:      d.ImageTag,
+		TriggeredBy:   d.TriggeredBy,
 		Status:        d.Status,
 		CreatedAt:     d.CreatedAt,
+		CompletedAt:   d.CompletedAt,
+		Dependencies:  []shared.DependencyDeploymentSummary{},
+		Commands:      []shared.CommandSummary{},
 	}
 }
 

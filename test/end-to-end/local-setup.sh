@@ -94,6 +94,15 @@ helm upgrade --install "$SERVER_RELEASE" "$HELM_SERVER" \
   --wait --timeout 3m \
   || die "helm upgrade failed for pond-server (check: kubectl logs -n $NAMESPACE -l app=$SERVER_RELEASE)"
 
+
+helm repo add cnpg https://cloudnative-pg.github.io/charts
+helm upgrade --install cnpg \
+  --namespace cnpg-system \
+  --kube-context "$CONTEXT" \
+  --create-namespace \
+  --wait --timeout 3m \
+  cnpg/cloudnative-pg
+
 # ── 4. Wait for server pod + port-forward ─────────────────────────────────────
 step "Port-forwarding pond-server to localhost:$SERVER_PORT"
 pkill -f "kubectl port-forward.*$SERVER_PORT" 2>/dev/null || true

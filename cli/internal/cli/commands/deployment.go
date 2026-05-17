@@ -12,6 +12,7 @@ func NewDeploymentCmd(serverClient client.ServerClient) *cobra.Command {
 	}
 
 	cmd.AddCommand(NewConfigureCmd(serverClient))
+	cmd.AddCommand(NewStatusCmd(serverClient))
 
 	return cmd
 }
