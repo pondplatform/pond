@@ -12,6 +12,8 @@
 
 set -euo pipefail
 
+make build-cli
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Source the token file when POND_TOKEN is not already in the environment.
@@ -33,7 +35,7 @@ die()   { echo "${bold}${red}✖ ERROR: $*${reset}" >&2; exit 1; }
 # ── Deploy ────────────────────────────────────────────────────────────────────
 step "Deploying postgres-demo (tag: $IMAGE_TAG)"
 POND_SERVER_URL="$SERVER_URL" POND_TOKEN="$POND_TOKEN" \
-  pond deploy \
+  $SCRIPT_DIR/../../bin/pond deploy deploy \
     --config "$SCRIPT_DIR/../test-data/postgres/pond.yml" \
     --project "$PROJECT_ID" \
     --env staging \

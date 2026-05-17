@@ -26,7 +26,7 @@ services:
   pond-server:
     build:
       context: .
-      dockerfile: docker/Dockerfile.server
+      dockerfile: infra/docker/Dockerfile.server
     environment:
       DATABASE_URL: postgres://pond:pond@postgres:5432/pond?sslmode=disable
       LISTEN_ADDR: ":8080"

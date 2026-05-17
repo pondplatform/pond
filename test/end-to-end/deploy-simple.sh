@@ -11,6 +11,7 @@
 #   ./test/end-to-end/deploy-postgres.sh
 
 set -euo pipefail
+make build-cli
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

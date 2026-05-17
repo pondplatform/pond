@@ -7,7 +7,7 @@ ingress:
   enabled: false
 
 service:
-  port: 3000
+  port: 80
 
 
 env:

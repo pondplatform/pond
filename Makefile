@@ -1,10 +1,10 @@
 .PHONY: build build-images build-server-image build-agent-image build-cli-image build-todo-image \
-       test test-integration e2e e2e-setup e2e-run e2e-teardown
+       test test-integration
 
 # ---- Build targets ----
 
 build:
-	go build ./...
+	go build ./shared/... ./cli/... ./agent/... ./server/...
 
 build-server-image:
 	docker build -f infra/docker/Dockerfile.server -t pond-server:latest .
@@ -21,12 +21,12 @@ build-todo-image:
 build-images: build-server-image build-agent-image build-cli-image build-todo-image
 
 build-cli:
-	go build -o ./bin/pond ./cmd/pond-cli/main.go
+	go build -o ./bin/pond ./cli/
+
 # ---- Test targets ----
 
 test:
-	go test ./...
+	go test ./shared/... ./cli/... ./agent/... ./server/...
 
 test-integration:
-	go test -tags integration -v -timeout 120s ./internal/integration/...
-
+	go test -tags integration -v -timeout 120s ./server/internal/integration/...

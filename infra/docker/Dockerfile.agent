@@ -1,14 +1,17 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
-COPY go.mod go.sum ./
+COPY go.work go.work.sum* ./
+COPY shared/go.mod shared/go.sum* ./shared/
+COPY server/go.mod server/go.sum* ./server/
+COPY agent/go.mod agent/go.sum* ./agent/
+COPY cli/go.mod cli/go.sum* ./cli/
 RUN --mount=type=cache,target=/root/go/pkg/mod \
-    go mod download
-COPY cmd/pond-agent/ cmd/pond-agent/
-COPY internal/agent/ internal/agent/
-COPY internal/common/ internal/common/
+    cd agent && go mod download
+COPY shared/ ./shared/
+COPY agent/ ./agent/
 RUN --mount=type=cache,target=/root/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -o /pond-agent ./cmd/pond-agent
+    CGO_ENABLED=0 go build -o /pond-agent ./agent/
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates curl bash
