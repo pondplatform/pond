@@ -12,14 +12,11 @@ terraform {
   }
 }
 
-provider "kubernetes" {
-  config_path    = "~/.kube/config"
-  config_context = "microk8s"
-}
+provider "kubernetes" {}
 
 locals {
   cluster_name = lower("${var.environment_config.name}-${var.service_name}-${var.dependency_name}")
-  namespace    = "experiments"
+  namespace    = var.environment_config.namespace
   instances    = var.provider_user_input.instances
   postgres_version = lookup(var.dependency_config,"version","17")
   storage_size = "2Gi"

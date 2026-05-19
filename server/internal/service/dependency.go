@@ -23,17 +23,25 @@ func NewDependencyService(specs dependency.SpecRegistry) DependencyService {
 }
 
 // buildTofuPayload constructs the JSON payload for a tofu.apply command.
-func buildTofuPayload(serviceName, depName, depType string, depConfig map[string]any, providerInputs map[string]any) ([]byte, error) {
+func buildTofuPayload(serviceName, depName, depType string, depConfig map[string]any, providerInputs map[string]any, environmentInputs map[string]any) ([]byte, error) {
 	return wire.MarshalPayload(wire.TofuApplyPayload{
 		WorkDir:   fmt.Sprintf("/opt/pond/tofu-providers/%s", depType),
 		StatePath: fmt.Sprintf("/opt/pond/states/%s/%s/terraform.tfstate", serviceName, depName),
 		Vars: map[string]any{
 			"service_name":        serviceName,
 			"dependency_name":     depName,
-			"dependency_config":   depConfig,
-			"provider_user_input": providerInputs,
+			"dependency_config":   defaultEmptyMap(depConfig),
+			"provider_user_input": defaultEmptyMap(providerInputs),
+			"environment_config":  defaultEmptyMap(environmentInputs),
 		},
 	})
+}
+
+func defaultEmptyMap(value map[string]any) map[string]any {
+	if value == nil {
+		return make(map[string]any)
+	}
+	return value
 }
 
 // ScheduleCommands creates dependency_deployments rows for every dependency
@@ -108,6 +116,7 @@ func (s *dependencyService) scheduleDependency(ctx context.Context, tx TxRepos, 
 			dep.Type,
 			dep.Config,
 			previousConfig.ProviderInputs,
+			environmentProviderInput(environment),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("marshal tofu payload for %q: %w", dependencyName, err)
@@ -194,6 +203,7 @@ func (s *dependencyService) ScheduleAfterInput(ctx context.Context, tx TxRepos, 
 		dep.Type,
 		dep.Config,
 		cfg.ProviderInputs,
+		environmentProviderInput(env),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("marshal tofu payload for %q: %w", depName, err)
@@ -269,4 +279,12 @@ func (s *dependencyService) Validate(ctx context.Context, deps map[string]servic
 		return &errs
 	}
 	return nil
+}
+
+func environmentProviderInput(environment *domain.Environment) map[string]any {
+	result := make(map[string]any)
+	result["name"] = environment.Name
+	result["namespace"] = environment.Namespace
+	result["defaultIngressBaseHost"] = environment.DefaultIngressBaseHost
+	return result
 }
