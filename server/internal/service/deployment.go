@@ -98,8 +98,7 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 	// --- writes (all in one transaction) ---
 
 	var d *domain.Deployment
-	var deps []domain.DependencyDeployment
-
+	var status domain.DependencyDeploymentStatus
 	err = s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
 		now := time.Now()
 		d = &domain.Deployment{
@@ -108,7 +107,7 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 			EnvironmentID:         env.ID,
 			ImageTag:              req.ImageTag,
 			ServiceConfigSnapshot: *svcConfig,
-			Status:                api.DeploymentStatusPending,
+			Status:                api.DeploymentStatusAwaitingInput,
 			TriggeredBy:           req.TriggeredBy,
 			CreatedAt:             now,
 		}
@@ -117,26 +116,14 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 			return fmt.Errorf("create deployment: %w", err)
 		}
 
-		var schedErr error
-		deps, schedErr = s.depSvc.ScheduleCommands(ctx, tx, svc, env, d)
-		if schedErr != nil {
-			return schedErr
+		var err error
+		status, err = s.depSvc.CreateDependencyDeployments(ctx, tx, svc, d)
+		if err != nil {
+			return err
 		}
-
-		// Only enqueue helm if there are no dependencies at all
-		// If there are dependencies but none awaiting input, commands will be dispatched below
-		if len(deps) == 0 {
-			if _, err := s.enqueueHelm(ctx, tx, d, env); err != nil {
-				return err
-			}
-		} else if anyDepAwaitingInput(deps) {
-			// If any dependency needs input, don't enqueue anything yet.
-			// Wait for all inputs to be provided before scheduling.
-			d.Status = api.DeploymentStatusAwaitingInput
-			if err := tx.DeploymentInfo.UpdateStatus(ctx, d.ID, api.DeploymentStatusAwaitingInput, nil); err != nil {
-				return fmt.Errorf("set deployment awaiting_input status: %w", err)
-			}
-			return nil
+		err = s.advanceOnDependencyStatus(ctx, tx, d, env, status)
+		if err != nil {
+			return err
 		}
 		return nil
 	})
@@ -144,58 +131,17 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		return nil, err
 	}
 
-	// Publish events based on dependency state
-	s.publishSubmitEvents(ctx, deps, env, d, req.ProjectID)
-
 	return d, nil
 }
 
-// anyDepAwaitingInput returns true if any dependency is in awaiting_input status.
-func anyDepAwaitingInput(deps []domain.DependencyDeployment) bool {
-	for _, dep := range deps {
-		if dep.Status == domain.DependencyDeploymentStatusAwaitingInput {
-			return true
-		}
-	}
-	return false
-}
+func (s *deploymentService) launchCommand(ctx context.Context, tx TxRepos, command *domain.Command, deploymentId uuid.UUID) error {
+	s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(command.ClusterID), events.CommandQueued{
+		ClusterID:    command.ClusterID,
+		CommandID:    command.ID,
+		DeploymentID: deploymentId,
+	})
 
-// publishSubmitEvents publishes the appropriate events after a deployment is submitted.
-func (s *deploymentService) publishSubmitEvents(ctx context.Context, deps []domain.DependencyDeployment, env *domain.Environment, d *domain.Deployment, projectID uuid.UUID) {
-	if len(deps) == 0 {
-		// No dependencies: helm command was enqueued, notify agent
-		s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(env.ClusterID), events.CommandQueued{
-			ClusterID:    env.ClusterID,
-			CommandID:    *d.HelmCommandID,
-			DeploymentID: d.ID,
-		})
-		return
-	}
-
-	if anyDepAwaitingInput(deps) {
-		// Some dependencies need input - only publish UserInputRequired events
-		// Do NOT dispatch any commands until all inputs are provided
-		for _, dep := range deps {
-			if dep.Status == domain.DependencyDeploymentStatusAwaitingInput {
-				s.bus.Publish(ctx, events.ProjectUserInputRequiredTopic(projectID), events.UserInputRequired{
-					DeploymentId:   d.ID,
-					DependencyName: dep.DependencyName,
-				})
-			}
-		}
-		return
-	}
-
-	// All dependencies have config from previous deployments - dispatch commands
-	for _, dep := range deps {
-		if dep.Status == domain.DependencyDeploymentStatusPending && dep.CommandID != nil {
-			s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(env.ClusterID), events.CommandQueued{
-				ClusterID:    env.ClusterID,
-				CommandID:    *dep.CommandID,
-				DeploymentID: d.ID,
-			})
-		}
-	}
+	return tx.DeploymentInfo.CreateCommand(ctx, command)
 }
 
 func (s *deploymentService) ConfigureDeployment(ctx context.Context, deploymentID uuid.UUID, inputs map[string]api.DependencyInput) error {

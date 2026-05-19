@@ -10,11 +10,11 @@ import (
 type DeploymentStatus string
 
 const (
-	DeploymentStatusPending       DeploymentStatus = "pending"
 	DeploymentStatusRunning       DeploymentStatus = "running"
 	DeploymentStatusSucceeded     DeploymentStatus = "succeeded"
 	DeploymentStatusAwaitingInput DeploymentStatus = "awaiting_input"
 	DeploymentStatusFailed        DeploymentStatus = "failed"
+	DeploymentStatusCancelled     DeploymentStatus = "cancelled"
 )
 
 type CommandStatus string

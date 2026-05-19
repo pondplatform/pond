@@ -8,12 +8,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/pondplatform/pond/shared/agent/wire"
 	"github.com/pondplatform/pond/server/internal/auth"
 	"github.com/pondplatform/pond/server/internal/events"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/service"
 	"github.com/pondplatform/pond/server/internal/store"
+	"github.com/pondplatform/pond/shared/agent/wire"
 )
 
 var upgrader = websocket.Upgrader{
@@ -163,7 +163,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				log.Info("command acknowledged by agent", "command_id", ack.CommandID)
-				session.OnAck(ctx, ack.DeploymentID)
+				session.OnAck(ctx, ack.DeploymentID, ack.CommandID)
 
 			case "result":
 				var res events.CommandResult

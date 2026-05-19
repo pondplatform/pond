@@ -9,67 +9,37 @@ import (
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/server/internal/dependency"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
+	"github.com/pondplatform/pond/server/internal/store"
 	"github.com/pondplatform/pond/shared/agent/wire"
 	"github.com/pondplatform/pond/shared/server/api"
 	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
+func NewDependencyService(specs dependency.SpecRegistry, envs store.EnvironmentRepository) DependencyService {
+	return &dependencyService{specs: specs, envs: envs}
+}
+
 type dependencyService struct {
 	specs dependency.SpecRegistry
+	envs  store.EnvironmentRepository
 }
 
-func NewDependencyService(specs dependency.SpecRegistry) DependencyService {
-	return &dependencyService{specs: specs}
-}
-
-// buildTofuPayload constructs the JSON payload for a tofu.apply command.
-func buildTofuPayload(serviceName, depName, depType string, depConfig map[string]any, providerInputs map[string]any, environmentInputs map[string]any) ([]byte, error) {
-	return wire.MarshalPayload(wire.TofuApplyPayload{
-		WorkDir:   fmt.Sprintf("/opt/pond/tofu-providers/%s", depType),
-		StatePath: fmt.Sprintf("/opt/pond/states/%s/%s/terraform.tfstate", serviceName, depName),
-		Vars: map[string]any{
-			"service_name":        serviceName,
-			"dependency_name":     depName,
-			"dependency_config":   defaultEmptyMap(depConfig),
-			"provider_user_input": defaultEmptyMap(providerInputs),
-			"environment_config":  defaultEmptyMap(environmentInputs),
-		},
-	})
-}
-
-func defaultEmptyMap(value map[string]any) map[string]any {
-	if value == nil {
-		return make(map[string]any)
-	}
-	return value
-}
-
-// ScheduleCommands creates dependency_deployments rows for every dependency
-// declared in the deployment's service config snapshot. Depending on whether
-// previous config exists and the managed flag, deps are created in different states:
-// - awaiting_input: new dependency with no previous config
-// - pending: managed dependency with tofu.apply command queued
-// - succeeded: non-managed dependency (user_config used as output)
-//
-// Returns all created dependency deployments for the caller to decide what events to publish.
-func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error) {
-	var deps []domain.DependencyDeployment
+func (s *dependencyService) CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment) (domain.DependencyDeploymentStatus, error) {
+	deps := make([]domain.DependencyDeployment, 0, len(dep.ServiceConfigSnapshot.Dependencies))
 
 	for depName := range dep.ServiceConfigSnapshot.Dependencies {
-		depCfg, err := s.scheduleDependency(ctx, tx, service, environment, dep, depName)
+		cfg, err := s.createDependencyDeployment(ctx, tx, service, dep, depName)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
-		if depCfg != nil {
-			deps = append(deps, *depCfg)
-		}
+		deps = append(deps, *cfg)
 	}
 
-	return deps, nil
+	return s.computeStatus(deps), nil
 }
 
-func (s *dependencyService) scheduleDependency(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, deployment *domain.Deployment, dependencyName string) (*domain.DependencyDeployment, error) {
-	var previousConfig *domain.DependencyDeployment = nil
+func (s *dependencyService) createDependencyDeployment(ctx context.Context, tx TxRepos, service *domain.Service, deployment *domain.Deployment, dependencyName string) (*domain.DependencyDeployment, error) {
+	var previousConfig *domain.DependencyDeployment
 	var err error
 	if service.CurrentDeploymentID != nil {
 		previousConfig, err = tx.DeploymentInfo.GetDepConfig(ctx, *service.CurrentDeploymentID, dependencyName)
@@ -94,66 +64,156 @@ func (s *dependencyService) scheduleDependency(ctx context.Context, tx TxRepos, 
 			Output:         nil,
 			CompletedAt:    nil,
 		}
-
-	} else if !*previousConfig.Managed {
-		// Non-managed dependency with previous config: created with status=pending and
-		// no command. When user input is later provided via ScheduleAfterInput, it will
-		// be marked succeeded immediately with user_config as outputs (no tofu command).
+	} else {
 		cfg = domain.DependencyDeployment{
 			ID:             uuid.New(),
 			DeploymentId:   deployment.ID,
 			DependencyName: dependencyName,
 			DependencyType: dep.Type,
 			Managed:        previousConfig.Managed,
+			ProviderInputs: previousConfig.ProviderInputs,
 			UserConfig:     previousConfig.UserConfig,
 			Status:         domain.DependencyDeploymentStatusPending,
 			CommandID:      nil,
+			Output:         previousConfig.Output,
+			CompletedAt:    nil,
 		}
-	} else {
+	}
+
+	if err := tx.DeploymentInfo.CreateDepConfig(ctx, &cfg); err != nil {
+		return nil, fmt.Errorf("create dep config %q: %w", dependencyName, err)
+	}
+
+	return &cfg, nil
+}
+
+func (s *dependencyService) DependencyDeploymentStatus(ctx context.Context, tx TxRepos, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error) {
+	deps, err := tx.DeploymentInfo.ListDepConfigs(ctx, deploymentId)
+	if err != nil {
+		return "", fmt.Errorf("list dep configs: %w", err)
+	}
+
+	return s.computeStatus(deps), nil
+}
+
+func (s *dependencyService) computeStatus(deps []domain.DependencyDeployment) domain.DependencyDeploymentStatus {
+	for _, d := range deps {
+		if d.Status == domain.DependencyDeploymentStatusFailed {
+			return domain.DependencyDeploymentStatusFailed
+		}
+	}
+	for _, d := range deps {
+		if d.Status == domain.DependencyDeploymentStatusAwaitingInput {
+			return domain.DependencyDeploymentStatusAwaitingInput
+		}
+	}
+	for _, d := range deps {
+		if d.Status == domain.DependencyDeploymentStatusPending {
+			return domain.DependencyDeploymentStatusPending
+		}
+	}
+	return domain.DependencyDeploymentStatusSucceeded
+}
+
+func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, deploymentId uuid.UUID) error {
+	dep, err := tx.DeploymentInfo.GetByID(ctx, deploymentId)
+	if err != nil {
+		return fmt.Errorf("get deployment: %w", err)
+	}
+
+	env, err := s.envs.GetByID(ctx, dep.EnvironmentID)
+	if err != nil {
+		return fmt.Errorf("get environment: %w", err)
+	}
+
+	depConfigs, err := tx.DeploymentInfo.ListDepConfigs(ctx, deploymentId)
+	if err != nil {
+		return fmt.Errorf("list dep configs: %w", err)
+	}
+
+	for _, cfg := range depConfigs {
+		if cfg.Status != domain.DependencyDeploymentStatusPending {
+			continue
+		}
+
+		if cfg.Managed == nil {
+			return fmt.Errorf("dep %q has pending status but no managed flag set", cfg.DependencyName)
+		}
+
+		if !*cfg.Managed {
+			outputJSON, err := json.Marshal(cfg.UserConfig)
+			if err != nil {
+				return fmt.Errorf("marshal user config for dep %q: %w", cfg.DependencyName, err)
+			}
+			if err := tx.DeploymentInfo.MarkDepConfigSucceeded(ctx, deploymentId, cfg.DependencyName, outputJSON); err != nil {
+				return fmt.Errorf("mark dep %q succeeded: %w", cfg.DependencyName, err)
+			}
+			continue
+		}
+
+		decl := dep.ServiceConfigSnapshot.Dependencies[cfg.DependencyName]
 		payload, err := buildTofuPayload(
-			deployment.ServiceConfigSnapshot.Name,
-			dependencyName,
-			dep.Type,
-			dep.Config,
-			previousConfig.ProviderInputs,
-			environmentProviderInput(environment),
+			dep.ServiceConfigSnapshot.Name,
+			cfg.DependencyName,
+			decl.Type,
+			decl.Config,
+			cfg.ProviderInputs,
+			environmentProviderInput(env),
 		)
 		if err != nil {
-			return nil, fmt.Errorf("marshal tofu payload for %q: %w", dependencyName, err)
+			return fmt.Errorf("build tofu payload for dep %q: %w", cfg.DependencyName, err)
 		}
 
 		now := time.Now()
 		cmd := &domain.Command{
 			ID:           uuid.New(),
-			ClusterID:    environment.ClusterID,
-			DeploymentID: deployment.ID,
+			ClusterID:    env.ClusterID,
+			DeploymentID: deploymentId,
 			Type:         domain.CommandTypeTofuApply,
 			Payload:      payload,
 			Status:       domain.CommandStatusQueued,
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
-		managed := true
-		cfg = domain.DependencyDeployment{
-			ID:             uuid.New(),
-			DeploymentId:   deployment.ID,
-			DependencyName: dependencyName,
-			DependencyType: dep.Type,
-			Managed:        &managed,
-			UserConfig:     previousConfig.UserConfig,
-			Status:         domain.DependencyDeploymentStatusPending,
-			CommandID:      &cmd.ID,
-		}
-
 		if err := tx.DeploymentInfo.CreateCommand(ctx, cmd); err != nil {
-			return nil, fmt.Errorf("create tofu command for dep %q: %w", dependencyName, err)
+			return fmt.Errorf("create tofu command for dep %q: %w", cfg.DependencyName, err)
+		}
+		if err := tx.DeploymentInfo.SetDepConfigCommand(ctx, deploymentId, cfg.DependencyName, cmd.ID); err != nil {
+			return fmt.Errorf("set dep config command for %q: %w", cfg.DependencyName, err)
 		}
 	}
 
-	if err := tx.DeploymentInfo.CreateDepConfig(ctx, &cfg); err != nil {
-		return nil, fmt.Errorf("create dep config for %q: %w", dependencyName, err)
+	return nil
+}
+
+func (s *dependencyService) HandleCommandResult(ctx context.Context, tx TxRepos, commandID uuid.UUID) error {
+	cmd, err := tx.DeploymentInfo.GetCommand(ctx, commandID)
+	if err != nil {
+		return fmt.Errorf("get command: %w", err)
 	}
-	return &cfg, nil
+
+	deploymentID, cfg, err := tx.DeploymentInfo.GetDepConfigByCommandID(ctx, commandID)
+	if err != nil {
+		return fmt.Errorf("get dep config by command id: %w", err)
+	}
+	if cfg == nil {
+		return nil
+	}
+
+	if cmd.Status == domain.CommandStatusFailed {
+		if err := tx.DeploymentInfo.MarkDepConfigFailed(ctx, deploymentID, cfg.DependencyName); err != nil {
+			return fmt.Errorf("mark dep config failed: %w", err)
+		}
+		if err := tx.DeploymentInfo.UpdateCommandsByDeployment(ctx, deploymentID, domain.CommandStatusQueued, domain.CommandStatusCancelled); err != nil {
+			return fmt.Errorf("cancel sibling commands: %w", err)
+		}
+	} else {
+		if err := tx.DeploymentInfo.MarkDepConfigSucceeded(ctx, deploymentID, cfg.DependencyName, cmd.Output); err != nil {
+			return fmt.Errorf("mark dep config succeeded: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // BuildContexts unmarshals raw dependency outputs into a name→values map for
@@ -169,100 +229,6 @@ func (s *dependencyService) BuildContexts(rawOutputs map[string]json.RawMessage)
 		contexts[depName] = vals
 	}
 	return contexts, nil
-}
-
-// ScheduleAfterInput processes a dependency after user input is provided.
-// For managed deps, creates tofu.apply command and returns it.
-// For non-managed deps, marks succeeded immediately with user config as outputs.
-func (s *dependencyService) ScheduleAfterInput(ctx context.Context, tx TxRepos, deployment *domain.Deployment, env *domain.Environment, depName string) (*domain.DependencyDeployment, error) {
-	cfg, err := tx.DeploymentInfo.GetDepConfig(ctx, deployment.ID, depName)
-	if err != nil {
-		return nil, fmt.Errorf("get dep config: %w", err)
-	}
-
-	dep := deployment.ServiceConfigSnapshot.Dependencies[depName]
-
-	if !*cfg.Managed {
-		// Non-managed: mark succeeded immediately with user_config as output
-		outputJSON, err := json.Marshal(cfg.UserConfig)
-		if err != nil {
-			return nil, fmt.Errorf("marshal user config as output: %w", err)
-		}
-		if err := tx.DeploymentInfo.MarkDepConfigSucceeded(ctx, deployment.ID, depName, outputJSON); err != nil {
-			return nil, fmt.Errorf("mark dep config succeeded: %w", err)
-		}
-		cfg.Status = domain.DependencyDeploymentStatusSucceeded
-		cfg.Output = outputJSON
-		return cfg, nil
-	}
-
-	// Managed: create tofu.apply command
-	payload, err := buildTofuPayload(
-		deployment.ServiceConfigSnapshot.Name,
-		depName,
-		dep.Type,
-		dep.Config,
-		cfg.ProviderInputs,
-		environmentProviderInput(env),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("marshal tofu payload for %q: %w", depName, err)
-	}
-
-	now := time.Now()
-	cmd := &domain.Command{
-		ID:           uuid.New(),
-		ClusterID:    env.ClusterID,
-		DeploymentID: deployment.ID,
-		Type:         domain.CommandTypeTofuApply,
-		Payload:      payload,
-		Status:       domain.CommandStatusQueued,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-
-	if err := tx.DeploymentInfo.CreateCommand(ctx, cmd); err != nil {
-		return nil, fmt.Errorf("create tofu command for dep %q: %w", depName, err)
-	}
-
-	// Update the dep config with the command ID and set status to pending
-	cfg.CommandID = &cmd.ID
-	cfg.Status = domain.DependencyDeploymentStatusPending
-
-	// Note: We need a method to update just the command_id and status
-	// For now, we'll use a direct update approach
-	if err := tx.DeploymentInfo.SetDepConfigCommand(ctx, deployment.ID, depName, cmd.ID); err != nil {
-		return nil, fmt.Errorf("set dep config command: %w", err)
-	}
-
-	return cfg, nil
-}
-
-// AdvanceOnResult handles a tofu.apply result: marks the dep succeeded/failed,
-// cancels sibling commands on failure, and returns whether all deps are now complete.
-func (s *dependencyService) AdvanceOnResult(ctx context.Context, tx TxRepos, deploymentID uuid.UUID, cfg *domain.DependencyDeployment, success bool, output json.RawMessage) (allComplete bool, err error) {
-	if !success {
-		if err := tx.DeploymentInfo.MarkDepConfigFailed(ctx, deploymentID, cfg.DependencyName); err != nil {
-			return false, fmt.Errorf("mark dep config failed: %w", err)
-		}
-		if err := tx.DeploymentInfo.UpdateCommandsByDeployment(ctx, deploymentID, domain.CommandStatusQueued, domain.CommandStatusCancelled); err != nil {
-			return false, fmt.Errorf("cancel sibling commands for deployment %s: %w", deploymentID, err)
-		}
-		return false, nil
-	}
-
-	if err := tx.DeploymentInfo.MarkDepConfigSucceeded(ctx, deploymentID, cfg.DependencyName, output); err != nil {
-		return false, fmt.Errorf("mark dep config succeeded: %w", err)
-	}
-
-	// AllDepConfigsComplete runs in the same tx so it sees the MarkDepConfigSucceeded
-	// row above, eliminating the TOCTOU race between concurrent dependency completions.
-	allSucceeded, anyFailed, err := tx.DeploymentInfo.AllDepConfigsComplete(ctx, deploymentID)
-	if err != nil {
-		return false, fmt.Errorf("check all complete: %w", err)
-	}
-
-	return allSucceeded && !anyFailed, nil
 }
 
 // Validate checks that all declared dependency types are known.
@@ -287,4 +253,26 @@ func environmentProviderInput(environment *domain.Environment) map[string]any {
 	result["namespace"] = environment.Namespace
 	result["defaultIngressBaseHost"] = environment.DefaultIngressBaseHost
 	return result
+}
+
+// buildTofuPayload constructs the JSON payload for a tofu.apply command.
+func buildTofuPayload(serviceName, depName, depType string, depConfig map[string]any, providerInputs map[string]any, environmentInputs map[string]any) ([]byte, error) {
+	return wire.MarshalPayload(wire.TofuApplyPayload{
+		WorkDir:   fmt.Sprintf("/opt/pond/tofu-providers/%s", depType),
+		StatePath: fmt.Sprintf("/opt/pond/states/%s/%s/terraform.tfstate", serviceName, depName),
+		Vars: map[string]any{
+			"service_name":        serviceName,
+			"dependency_name":     depName,
+			"dependency_config":   defaultEmptyMap(depConfig),
+			"provider_user_input": defaultEmptyMap(providerInputs),
+			"environment_config":  defaultEmptyMap(environmentInputs),
+		},
+	})
+}
+
+func defaultEmptyMap(value map[string]any) map[string]any {
+	if value == nil {
+		return make(map[string]any)
+	}
+	return value
 }

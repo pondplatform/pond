@@ -85,9 +85,10 @@ func (s *agentSession) RequestNext(ctx context.Context) *domain.Command {
 	}
 }
 
-func (s *agentSession) OnAck(ctx context.Context, deploymentID uuid.UUID) {
+func (s *agentSession) OnAck(ctx context.Context, deploymentID uuid.UUID, commandId uuid.UUID) {
 	s.bus.Publish(ctx, events.TopicCommandStarted, events.CommandStarted{
 		DeploymentID: deploymentID,
+		CommandID:    commandId,
 	})
 }
 

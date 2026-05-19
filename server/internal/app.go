@@ -77,7 +77,7 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	log.Info("rabbitmq connected")
 
 	// Services
-	depSvc := service.NewDependencyService(specRegistry)
+	depSvc := service.NewDependencyService(specRegistry, envStore)
 	helmGenerator := helmgen.NewGenerator()
 	tmplRenderer := service.NewTemplateRenderer()
 	resolver := config.NewResolver()

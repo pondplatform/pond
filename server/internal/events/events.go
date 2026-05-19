@@ -54,6 +54,7 @@ type AgentReady struct {
 // from pending → running.
 type CommandStarted struct {
 	DeploymentID uuid.UUID
+	CommandID    uuid.UUID
 }
 
 // AgentDisconnected is published to TopicAgentDisconnected when an agent

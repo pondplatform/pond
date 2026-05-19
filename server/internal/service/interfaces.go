@@ -42,7 +42,6 @@ type DeploymentService interface {
 	Start(ctx context.Context) error
 }
 
-
 type SubmitRequest = api.SubmitRequest
 
 type ValidationResult struct {
@@ -61,31 +60,26 @@ type Transactor interface {
 	RunInTx(ctx context.Context, fn func(ctx context.Context, tx TxRepos) error) error
 }
 
-// PendingDep groups a queued tofu.apply command with its dependency config row.
-type PendingDep struct {
-	Cmd    *domain.Command
-	DepCfg *domain.DependencyDeployment
-}
-
 // DependencyService handles dependency command scheduling and context resolution.
 type DependencyService interface {
-	// ScheduleCommands queues tofu.apply commands for all managed deps in the
-	// deployment and creates DependencyDeploymentRequest rows inside tx.
-	ScheduleCommands(ctx context.Context, tx TxRepos, service *domain.Service, environment *domain.Environment, dep *domain.Deployment) ([]domain.DependencyDeployment, error)
+	// CreateDependencyDeployments Creates the dependency deployments
+	CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment) (domain.DependencyDeploymentStatus, error)
 
-	// ScheduleAfterInput processes a dependency after user input is provided.
-	// For managed deps, creates tofu.apply command and returns it.
-	// For non-managed deps, marks succeeded immediately with user config as outputs.
-	ScheduleAfterInput(ctx context.Context, tx TxRepos, deployment *domain.Deployment, env *domain.Environment, depName string) (*domain.DependencyDeployment, error)
+	// DependencyDeploymentStatus Get overall status of dependencies
+	DependencyDeploymentStatus(ctx context.Context, tx TxRepos, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error)
 
-	// AdvanceOnResult handles a tofu.apply result: marks the dep succeeded/failed,
-	// cancels sibling commands on failure, and returns whether all deps are now complete.
-	AdvanceOnResult(ctx context.Context, tx TxRepos, deploymentID uuid.UUID, cfg *domain.DependencyDeployment, success bool, output json.RawMessage) (allComplete bool, err error)
+	ScheduleCommands(ctx context.Context, tx TxRepos, deploymentId uuid.UUID) error
 
 	// BuildContexts unmarshals raw dependency outputs into a name→values map for
 	// helm value generation. rawOutputs comes from GetDepOutputsByDeployment and
 	// includes both managed (tofu) and non-managed (user_config) deps.
 	BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
+
+	// HandleCommandResult applies a completed tofu.apply command's outcome to the owning
+	// DependencyDeployment: marks it succeeded or failed, cancels sibling queued commands
+	// on failure, and returns the deploymentID and aggregate DependencyDeploymentStatus.
+	// Returns uuid.Nil + empty status if no dep config row is found for the command.
+	HandleCommandResult(ctx context.Context, tx TxRepos, commandID uuid.UUID) error
 
 	// Validate checks that all declared dep types are known.
 	Validate(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error
@@ -109,7 +103,7 @@ type AgentSession interface {
 	RequestNext(ctx context.Context) *domain.Command
 
 	// OnAck publishes CommandStarted when agent acknowledges a command.
-	OnAck(ctx context.Context, deploymentID uuid.UUID)
+	OnAck(ctx context.Context, deploymentID uuid.UUID, commandId uuid.UUID)
 
 	// OnResult publishes CommandResult.
 	OnResult(ctx context.Context, result events.CommandResult)
