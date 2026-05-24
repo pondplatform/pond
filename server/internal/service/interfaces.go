@@ -66,9 +66,9 @@ type DependencyService interface {
 	CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment) (domain.DependencyDeploymentStatus, error)
 
 	// DependencyDeploymentStatus Get overall status of dependencies
-	DependencyDeploymentStatus(ctx context.Context, tx TxRepos, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error)
+	DependencyDeploymentStatus(ctx context.Context, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error)
 
-	ScheduleCommands(ctx context.Context, tx TxRepos, deploymentId uuid.UUID) error
+	ScheduleCommands(ctx context.Context, deploymentId uuid.UUID) error
 
 	// BuildContexts unmarshals raw dependency outputs into a name→values map for
 	// helm value generation. rawOutputs comes from GetDepOutputsByDeployment and
@@ -79,7 +79,7 @@ type DependencyService interface {
 	// DependencyDeployment: marks it succeeded or failed, cancels sibling queued commands
 	// on failure, and returns the deploymentID and aggregate DependencyDeploymentStatus.
 	// Returns uuid.Nil + empty status if no dep config row is found for the command.
-	HandleCommandResult(ctx context.Context, tx TxRepos, commandID uuid.UUID) error
+	HandleCommandResult(ctx context.Context, commandID uuid.UUID) error
 
 	// Validate checks that all declared dep types are known.
 	Validate(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error

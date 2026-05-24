@@ -30,7 +30,7 @@ func (m *mockAgentConnectionService) NewSession(clusterID uuid.UUID, log *slog.L
 type mockAgentSession struct {
 	startFn       func(ctx context.Context) (<-chan *domain.Command, <-chan struct{}, error)
 	requestNextFn func(ctx context.Context) *domain.Command
-	onAckFn       func(ctx context.Context, deploymentID uuid.UUID)
+	onAckFn       func(ctx context.Context, deploymentID uuid.UUID, commandID uuid.UUID)
 	onResultFn    func(ctx context.Context, result events.CommandResult)
 	onLogFn       func(ctx context.Context, commandID uuid.UUID, line string)
 	closeFn       func(inFlightCommandID uuid.UUID)
@@ -50,9 +50,9 @@ func (m *mockAgentSession) RequestNext(ctx context.Context) *domain.Command {
 	return nil
 }
 
-func (m *mockAgentSession) OnAck(ctx context.Context, deploymentID uuid.UUID) {
+func (m *mockAgentSession) OnAck(ctx context.Context, deploymentID uuid.UUID, commandID uuid.UUID) {
 	if m.onAckFn != nil {
-		m.onAckFn(ctx, deploymentID)
+		m.onAckFn(ctx, deploymentID, commandID)
 	}
 }
 

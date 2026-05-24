@@ -83,7 +83,7 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 	}
 	t.Cleanup(closeBus)
 
-	depSvc := service.NewDependencyService(specRegistry, envStore)
+	depSvc := service.NewDependencyService(specRegistry, envStore, deploymentInfoStore)
 	helmGenerator := helmgen.NewGenerator()
 	tmplRenderer := service.NewTemplateRenderer()
 	resolver := config.NewResolver()

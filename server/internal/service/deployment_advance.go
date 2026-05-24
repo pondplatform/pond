@@ -15,61 +15,46 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// processResult persists the command outcome AND advances the state machine
-// atomically in one transaction, eliminating the race between result
-// persistence and state read.
 func (s *deploymentService) processResult(ctx context.Context, result events.CommandResult) error {
-	err := s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
-		cmd, err := tx.DeploymentInfo.GetCommand(ctx, result.CommandID)
-		if err != nil {
-			return fmt.Errorf("get command: %w", err)
-		}
-		if result.Success {
-			cmd.Status = domain.CommandStatusSucceeded
-			cmd.Output = result.Output
-		} else {
-			cmd.Status = domain.CommandStatusFailed
-			cmd.Error = result.Error
-		}
-		cmd.UpdatedAt = time.Now()
-		if err := tx.DeploymentInfo.UpdateCommand(ctx, cmd); err != nil {
-			return fmt.Errorf("update command: %w", err)
-		}
-		err = s.advance(ctx, tx, cmd, result)
-		return err
-	})
+	cmd, err := s.deploymentInfo.GetCommand(ctx, result.CommandID)
 	if err != nil {
-		return err
+		return fmt.Errorf("get command: %w", err)
 	}
-	return nil
+	if result.Success {
+		cmd.Status = domain.CommandStatusSucceeded
+		cmd.Output = result.Output
+	} else {
+		cmd.Status = domain.CommandStatusFailed
+		cmd.Error = result.Error
+	}
+	cmd.UpdatedAt = time.Now()
+	if err := s.deploymentInfo.UpdateCommand(ctx, cmd); err != nil {
+		return fmt.Errorf("update command: %w", err)
+	}
+	return s.advance(ctx, cmd, result)
 }
 
-// advance routes a command result to the appropriate handler within an
-// existing transaction, dispatching by command type.
-// Returns the helm command if one was enqueued as a result of this advance.
-func (s *deploymentService) advance(ctx context.Context, tx TxRepos, cmd *domain.Command, result events.CommandResult) error {
+func (s *deploymentService) advance(ctx context.Context, cmd *domain.Command, result events.CommandResult) error {
 	switch cmd.Type {
 	case domain.CommandTypeTofuApply:
-		return s.advanceTofuApply(ctx, tx, result)
+		return s.advanceTofuApply(ctx, result)
 	case domain.CommandTypeHelmUpgrade:
-		return s.advanceHelmUpgrade(ctx, tx, cmd, result)
+		return s.advanceHelmUpgrade(ctx, cmd, result)
 	default:
 		s.log.Warn("unmatched command type", "type", cmd.Type, "command_id", result.CommandID)
 		return nil
 	}
 }
 
-// advanceTofuApply handles the completion of a tofu.apply command.
-func (s *deploymentService) advanceTofuApply(ctx context.Context, tx TxRepos, result events.CommandResult) error {
-	err := s.depSvc.HandleCommandResult(ctx, tx, result.CommandID)
-	if err != nil {
+func (s *deploymentService) advanceTofuApply(ctx context.Context, result events.CommandResult) error {
+	if err := s.depSvc.HandleCommandResult(ctx, result.CommandID); err != nil {
 		return err
 	}
-	return s.advanceDependencyStatus(ctx, tx, result.DeploymentID)
+	return s.advanceDependencyStatus(ctx, result.DeploymentID)
 }
 
-func (s *deploymentService) advanceDependencyStatus(ctx context.Context, tx TxRepos, deploymentID uuid.UUID) error {
-	deployment, err := tx.DeploymentInfo.GetByID(ctx, deploymentID)
+func (s *deploymentService) advanceDependencyStatus(ctx context.Context, deploymentID uuid.UUID) error {
+	deployment, err := s.deploymentInfo.GetByID(ctx, deploymentID)
 	if err != nil {
 		return err
 	}
@@ -77,15 +62,38 @@ func (s *deploymentService) advanceDependencyStatus(ctx context.Context, tx TxRe
 	if err != nil {
 		return err
 	}
-	status, err := s.depSvc.DependencyDeploymentStatus(ctx, tx, deploymentID)
+	status, err := s.depSvc.DependencyDeploymentStatus(ctx, deploymentID)
 	if err != nil {
 		return err
 	}
-	return s.advanceOnDependencyStatus(ctx, tx, deployment, environment, status)
+	return s.advanceOnDependencyStatus(ctx, deployment, environment, status)
 }
 
-// advanceHelmUpgrade handles the completion of a helm.upgrade command.
-func (s *deploymentService) advanceHelmUpgrade(ctx context.Context, tx TxRepos, cmd *domain.Command, result events.CommandResult) error {
+func (s *deploymentService) advanceOnDependencyStatus(ctx context.Context, deployment *domain.Deployment, environment *domain.Environment, status domain.DependencyDeploymentStatus) error {
+	if status == domain.DependencyDeploymentStatusSucceeded {
+		if err := s.deploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusRunning, nil); err != nil {
+			return fmt.Errorf("set deployment DeploymentStatusRunning status: %w", err)
+		}
+		if err := s.enqueueHelm(ctx, deployment, environment); err != nil {
+			return err
+		}
+	} else if status == domain.DependencyDeploymentStatusAwaitingInput {
+		if err := s.deploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusAwaitingInput, nil); err != nil {
+			return fmt.Errorf("set deployment DeploymentStatusAwaitingInput status: %w", err)
+		}
+	} else {
+		if err := s.deploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusRunning, nil); err != nil {
+			return fmt.Errorf("set deployment running status: %w", err)
+		}
+		if err := s.depSvc.ScheduleCommands(ctx, deployment.ID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *deploymentService) advanceHelmUpgrade(ctx context.Context, cmd *domain.Command, result events.CommandResult) error {
 	dep, err := s.deploymentInfo.GetByID(ctx, cmd.DeploymentID)
 	if err != nil {
 		if errors.Is(err, api.ErrNotFound) {
@@ -101,39 +109,11 @@ func (s *deploymentService) advanceHelmUpgrade(ctx context.Context, tx TxRepos, 
 		status = api.DeploymentStatusFailed
 	}
 	s.log.Info("helm upgrade completed", "deployment_id", dep.ID, "status", status)
-	return tx.DeploymentInfo.UpdateStatus(ctx, dep.ID, status, &now)
+	return s.deploymentInfo.UpdateStatus(ctx, dep.ID, status, &now)
 }
 
-func (s *deploymentService) advanceOnDependencyStatus(ctx context.Context, tx TxRepos, deployment *domain.Deployment, environment *domain.Environment, status domain.DependencyDeploymentStatus) error {
-	if status == domain.DependencyDeploymentStatusSucceeded {
-		if err := tx.DeploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusRunning, nil); err != nil {
-			return fmt.Errorf("set deployment DeploymentStatusRunning status: %w", err)
-		}
-		if err := s.enqueueHelm(ctx, tx, deployment, environment); err != nil {
-			return err
-		}
-	} else if status == domain.DependencyDeploymentStatusAwaitingInput {
-		if err := tx.DeploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusAwaitingInput, nil); err != nil {
-			return fmt.Errorf("set deployment DeploymentStatusAwaitingInput status: %w", err)
-		}
-	} else {
-		if err := tx.DeploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusRunning, nil); err != nil {
-			return fmt.Errorf("set deployment awaiting_input status: %w", err)
-		}
-		if err := s.depSvc.ScheduleCommands(ctx, tx, deployment.ID); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// enqueueHelm builds helm values and creates the upgrade command inside the
-// provided transaction, so the command creation and the helm_command_id update
-// are atomic with the AllDepConfigsComplete check that called us.
-// Returns the created helm command so the caller can publish CommandQueued after commit.
-func (s *deploymentService) enqueueHelm(ctx context.Context, tx TxRepos, dep *domain.Deployment, env *domain.Environment) error {
-	rawOutputs, err := tx.DeploymentInfo.GetDepOutputsByDeployment(ctx, dep.ID)
+func (s *deploymentService) enqueueHelm(ctx context.Context, dep *domain.Deployment, env *domain.Environment) error {
+	rawOutputs, err := s.deploymentInfo.GetDepOutputsByDeployment(ctx, dep.ID)
 	if err != nil {
 		return fmt.Errorf("get dependency outputs: %w", err)
 	}
@@ -188,9 +168,9 @@ func (s *deploymentService) enqueueHelm(ctx context.Context, tx TxRepos, dep *do
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := tx.DeploymentInfo.SetHelmCommandID(ctx, dep.ID, cmd.ID); err != nil {
+	if err := s.deploymentInfo.SetHelmCommandID(ctx, dep.ID, cmd.ID); err != nil {
 		return fmt.Errorf("set helm command id: %w", err)
 	}
 
-	return s.launchCommand(ctx, tx, cmd, dep.ID)
+	return s.launchCommand(ctx, cmd, dep.ID)
 }

@@ -70,10 +70,7 @@ func (s *deploymentService) handleAgentDisconnected(ctx context.Context, e event
 // Only when ALL dependencies have input will it schedule ALL of them at once.
 func (s *deploymentService) handleUserInputProvided(ctx context.Context, e events.UserInputProvided) {
 	s.log.Info("user input provided", "deployment_id", e.DeploymentID)
-	err := s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
-		return s.advanceDependencyStatus(ctx, tx, e.DeploymentID)
-	})
-	if err != nil {
-		s.log.Error("Error handling user input provided event", "err", e)
+	if err := s.advanceDependencyStatus(ctx, e.DeploymentID); err != nil {
+		s.log.Error("Error handling user input provided event", "err", err)
 	}
 }

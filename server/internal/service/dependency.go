@@ -15,13 +15,14 @@ import (
 	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
-func NewDependencyService(specs dependency.SpecRegistry, envs store.EnvironmentRepository) DependencyService {
-	return &dependencyService{specs: specs, envs: envs}
+func NewDependencyService(specs dependency.SpecRegistry, envs store.EnvironmentRepository, deploymentInfo store.DeploymentInfoStore) DependencyService {
+	return &dependencyService{specs: specs, envs: envs, deploymentInfo: deploymentInfo}
 }
 
 type dependencyService struct {
-	specs dependency.SpecRegistry
-	envs  store.EnvironmentRepository
+	specs          dependency.SpecRegistry
+	envs           store.EnvironmentRepository
+	deploymentInfo store.DeploymentInfoStore
 }
 
 func (s *dependencyService) CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment) (domain.DependencyDeploymentStatus, error) {
@@ -87,8 +88,8 @@ func (s *dependencyService) createDependencyDeployment(ctx context.Context, tx T
 	return &cfg, nil
 }
 
-func (s *dependencyService) DependencyDeploymentStatus(ctx context.Context, tx TxRepos, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error) {
-	deps, err := tx.DeploymentInfo.ListDepConfigs(ctx, deploymentId)
+func (s *dependencyService) DependencyDeploymentStatus(ctx context.Context, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error) {
+	deps, err := s.deploymentInfo.ListDepConfigs(ctx, deploymentId)
 	if err != nil {
 		return "", fmt.Errorf("list dep configs: %w", err)
 	}
@@ -115,8 +116,8 @@ func (s *dependencyService) computeStatus(deps []domain.DependencyDeployment) do
 	return domain.DependencyDeploymentStatusSucceeded
 }
 
-func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, deploymentId uuid.UUID) error {
-	dep, err := tx.DeploymentInfo.GetByID(ctx, deploymentId)
+func (s *dependencyService) ScheduleCommands(ctx context.Context, deploymentId uuid.UUID) error {
+	dep, err := s.deploymentInfo.GetByID(ctx, deploymentId)
 	if err != nil {
 		return fmt.Errorf("get deployment: %w", err)
 	}
@@ -126,7 +127,7 @@ func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, de
 		return fmt.Errorf("get environment: %w", err)
 	}
 
-	depConfigs, err := tx.DeploymentInfo.ListDepConfigs(ctx, deploymentId)
+	depConfigs, err := s.deploymentInfo.ListDepConfigs(ctx, deploymentId)
 	if err != nil {
 		return fmt.Errorf("list dep configs: %w", err)
 	}
@@ -145,7 +146,7 @@ func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, de
 			if err != nil {
 				return fmt.Errorf("marshal user config for dep %q: %w", cfg.DependencyName, err)
 			}
-			if err := tx.DeploymentInfo.MarkDepConfigSucceeded(ctx, deploymentId, cfg.DependencyName, outputJSON); err != nil {
+			if err := s.deploymentInfo.MarkDepConfigSucceeded(ctx, deploymentId, cfg.DependencyName, outputJSON); err != nil {
 				return fmt.Errorf("mark dep %q succeeded: %w", cfg.DependencyName, err)
 			}
 			continue
@@ -175,10 +176,10 @@ func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, de
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
-		if err := tx.DeploymentInfo.CreateCommand(ctx, cmd); err != nil {
+		if err := s.deploymentInfo.CreateCommand(ctx, cmd); err != nil {
 			return fmt.Errorf("create tofu command for dep %q: %w", cfg.DependencyName, err)
 		}
-		if err := tx.DeploymentInfo.SetDepConfigCommand(ctx, deploymentId, cfg.DependencyName, cmd.ID); err != nil {
+		if err := s.deploymentInfo.SetDepConfigCommand(ctx, deploymentId, cfg.DependencyName, cmd.ID); err != nil {
 			return fmt.Errorf("set dep config command for %q: %w", cfg.DependencyName, err)
 		}
 	}
@@ -186,13 +187,13 @@ func (s *dependencyService) ScheduleCommands(ctx context.Context, tx TxRepos, de
 	return nil
 }
 
-func (s *dependencyService) HandleCommandResult(ctx context.Context, tx TxRepos, commandID uuid.UUID) error {
-	cmd, err := tx.DeploymentInfo.GetCommand(ctx, commandID)
+func (s *dependencyService) HandleCommandResult(ctx context.Context, commandID uuid.UUID) error {
+	cmd, err := s.deploymentInfo.GetCommand(ctx, commandID)
 	if err != nil {
 		return fmt.Errorf("get command: %w", err)
 	}
 
-	deploymentID, cfg, err := tx.DeploymentInfo.GetDepConfigByCommandID(ctx, commandID)
+	deploymentID, cfg, err := s.deploymentInfo.GetDepConfigByCommandID(ctx, commandID)
 	if err != nil {
 		return fmt.Errorf("get dep config by command id: %w", err)
 	}
@@ -201,14 +202,14 @@ func (s *dependencyService) HandleCommandResult(ctx context.Context, tx TxRepos,
 	}
 
 	if cmd.Status == domain.CommandStatusFailed {
-		if err := tx.DeploymentInfo.MarkDepConfigFailed(ctx, deploymentID, cfg.DependencyName); err != nil {
+		if err := s.deploymentInfo.MarkDepConfigFailed(ctx, deploymentID, cfg.DependencyName); err != nil {
 			return fmt.Errorf("mark dep config failed: %w", err)
 		}
-		if err := tx.DeploymentInfo.UpdateCommandsByDeployment(ctx, deploymentID, domain.CommandStatusQueued, domain.CommandStatusCancelled); err != nil {
+		if err := s.deploymentInfo.UpdateCommandsByDeployment(ctx, deploymentID, domain.CommandStatusQueued, domain.CommandStatusCancelled); err != nil {
 			return fmt.Errorf("cancel sibling commands: %w", err)
 		}
 	} else {
-		if err := tx.DeploymentInfo.MarkDepConfigSucceeded(ctx, deploymentID, cfg.DependencyName, cmd.Output); err != nil {
+		if err := s.deploymentInfo.MarkDepConfigSucceeded(ctx, deploymentID, cfg.DependencyName, cmd.Output); err != nil {
 			return fmt.Errorf("mark dep config succeeded: %w", err)
 		}
 	}

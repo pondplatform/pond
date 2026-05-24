@@ -118,30 +118,27 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 
 		var err error
 		status, err = s.depSvc.CreateDependencyDeployments(ctx, tx, svc, d)
-		if err != nil {
-			return err
-		}
-		err = s.advanceOnDependencyStatus(ctx, tx, d, env, status)
-		if err != nil {
-			return err
-		}
-		return nil
+		return err
 	})
 	if err != nil {
+		return nil, err
+	}
+
+	if err := s.advanceOnDependencyStatus(ctx, d, env, status); err != nil {
 		return nil, err
 	}
 
 	return d, nil
 }
 
-func (s *deploymentService) launchCommand(ctx context.Context, tx TxRepos, command *domain.Command, deploymentId uuid.UUID) error {
+func (s *deploymentService) launchCommand(ctx context.Context, command *domain.Command, deploymentId uuid.UUID) error {
 	s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(command.ClusterID), events.CommandQueued{
 		ClusterID:    command.ClusterID,
 		CommandID:    command.ID,
 		DeploymentID: deploymentId,
 	})
 
-	return tx.DeploymentInfo.CreateCommand(ctx, command)
+	return s.deploymentInfo.CreateCommand(ctx, command)
 }
 
 func (s *deploymentService) ConfigureDeployment(ctx context.Context, deploymentID uuid.UUID, inputs map[string]api.DependencyInput) error {
