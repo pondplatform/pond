@@ -4,8 +4,8 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/pondplatform/pond/shared/serviceconfig"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
+	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
 func TestGenerator_Generate_ConfigFiles(t *testing.T) {
@@ -30,7 +30,7 @@ func TestGenerator_Generate_ConfigFiles(t *testing.T) {
 		DefaultIngressBaseHost: "example.com",
 	}
 
-	vals, err := g.Generate(cfg, env, nil)
+	vals, err := g.Generate(cfg, env)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestGenerator_Generate_Ingress(t *testing.T) {
 		DefaultIngressBaseHost: "pond.local",
 	}
 
-	vals, err := g.Generate(cfg, env, nil)
+	vals, err := g.Generate(cfg, env)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}

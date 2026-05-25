@@ -53,7 +53,7 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	cluster, token, err := h.create(r.Context(), orgID, req)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusCreated, clusterToResponse(cluster, token))
@@ -109,7 +109,7 @@ func (h *ClusterHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	cluster, err := h.get(r.Context(), orgID, clusterID)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusOK, clusterToResponse(cluster, ""))
@@ -134,7 +134,7 @@ func (h *ClusterHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := h.list(r.Context(), orgID)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeList(w, items, nil)
@@ -170,7 +170,7 @@ func (h *ClusterHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := h.rotateToken(r.Context(), orgID, clusterID)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.RotateTokenResponse{AgentToken: token})

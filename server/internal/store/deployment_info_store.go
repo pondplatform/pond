@@ -270,6 +270,40 @@ func (s *deploymentInfoStore) ListQueuedCommandsByCluster(ctx context.Context, c
 	return cmds, rows.Err()
 }
 
+func (s *deploymentInfoStore) ListDispatchedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, cluster_id, deployment_id, type, payload, status, output, error, created_at, updated_at
+		   FROM commands
+		  WHERE cluster_id = $1 AND status = $2
+		  ORDER BY created_at ASC`,
+		clusterID, domain.CommandStatusDispatched,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list dispatched commands: %w", err)
+	}
+	defer rows.Close()
+
+	var cmds []*domain.Command
+	for rows.Next() {
+		var cmd domain.Command
+		var payload, output []byte
+		var errStr sql.NullString
+		if err := rows.Scan(&cmd.ID, &cmd.ClusterID, &cmd.DeploymentID, &cmd.Type, &payload, &cmd.Status,
+			&output, &errStr, &cmd.CreatedAt, &cmd.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan command: %w", err)
+		}
+		cmd.Payload = payload
+		if output != nil {
+			cmd.Output = output
+		}
+		if errStr.Valid {
+			cmd.Error = errStr.String
+		}
+		cmds = append(cmds, &cmd)
+	}
+	return cmds, rows.Err()
+}
+
 func (s *deploymentInfoStore) UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE commands SET status = $3, updated_at = NOW()

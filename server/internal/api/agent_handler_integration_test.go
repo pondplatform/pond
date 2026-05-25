@@ -141,8 +141,7 @@ func TestAgentHandler_EventFlow(t *testing.T) {
 	}
 
 	cmdID := uuid.New()
-	deploymentID := uuid.New()
-	enqueue(&domain.Command{ID: cmdID, DeploymentID: deploymentID, Type: "test.cmd"})
+	enqueue(&domain.Command{ID: cmdID, Type: "test.cmd"})
 
 	ts := httptest.NewServer(http.HandlerFunc(handler.ServeWS))
 	defer ts.Close()
@@ -173,7 +172,7 @@ func TestAgentHandler_EventFlow(t *testing.T) {
 	}
 
 	// Agent → "ack"
-	ackPayload := []byte(`{"command_id":"` + cmdID.String() + `","deployment_id":"` + deploymentID.String() + `"}`)
+	ackPayload := []byte(`{"command_id":"` + cmdID.String() + `"}`)
 	if err := ws.WriteJSON(wsEnvelope{Type: "ack", Data: ackPayload}); err != nil {
 		t.Fatalf("write ack: %v", err)
 	}
@@ -223,7 +222,7 @@ func TestAgentHandler_EventFlow(t *testing.T) {
 
 	startedMu.Lock()
 	defer startedMu.Unlock()
-	if len(commandStart) != 1 || commandStart[0].DeploymentID != deploymentID {
-		t.Errorf("expected one CommandStarted for deployment %v, got %+v", deploymentID, commandStart)
+	if len(commandStart) != 1 || commandStart[0].CommandID != cmdID {
+		t.Errorf("expected one CommandStarted for command %v, got %+v", cmdID, commandStart)
 	}
 }

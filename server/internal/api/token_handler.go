@@ -36,7 +36,7 @@ func (h *TokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.create(r.Context(), orgID, req)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusCreated, resp)

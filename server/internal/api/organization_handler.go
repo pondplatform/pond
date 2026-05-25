@@ -40,7 +40,7 @@ func (h *OrganizationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	org, err := h.create(r.Context(), req)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toOrganizationResponse(org))
@@ -80,7 +80,7 @@ func (h *OrganizationHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	org, err := h.get(r.Context(), id)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusOK, toOrganizationResponse(org))
@@ -94,7 +94,7 @@ func (h *OrganizationHandler) List(w http.ResponseWriter, r *http.Request) {
 	p := ParsePagination(r)
 	items, nextCursor, err := h.list(r.Context(), p)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeList(w, items, nextCursor)

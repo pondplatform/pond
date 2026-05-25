@@ -85,10 +85,9 @@ func (s *agentSession) RequestNext(ctx context.Context) *domain.Command {
 	}
 }
 
-func (s *agentSession) OnAck(ctx context.Context, deploymentID uuid.UUID, commandId uuid.UUID) {
+func (s *agentSession) OnAck(ctx context.Context, commandID uuid.UUID) {
 	s.bus.Publish(ctx, events.TopicCommandStarted, events.CommandStarted{
-		DeploymentID: deploymentID,
-		CommandID:    commandId,
+		CommandID: commandID,
 	})
 }
 
@@ -103,11 +102,10 @@ func (s *agentSession) OnLog(ctx context.Context, commandID uuid.UUID, line stri
 	})
 }
 
-func (s *agentSession) Close(inFlightCommandID uuid.UUID) {
-	s.log.Info("agent disconnected", "in_flight_command_id", inFlightCommandID)
+func (s *agentSession) Close() {
+	s.log.Info("agent disconnected")
 	s.bus.Publish(context.Background(), events.TopicAgentDisconnected, events.AgentDisconnected{
-		ClusterID:         s.clusterID,
-		InFlightCommandID: inFlightCommandID,
+		ClusterID: s.clusterID,
 	})
 	for _, unsub := range s.unsubs {
 		unsub()

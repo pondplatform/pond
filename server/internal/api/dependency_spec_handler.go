@@ -68,7 +68,7 @@ func (h *DependencySpecHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	spec, err := h.get(r.Context(), depType)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusOK, toDependencySpecResponse(spec))

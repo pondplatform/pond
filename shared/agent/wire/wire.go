@@ -36,8 +36,7 @@ type CommandPayload struct {
 // AckPayload is the "ack" message sent from agent to server when it starts
 // executing a command.
 type AckPayload struct {
-	CommandID    uuid.UUID `json:"command_id"`
-	DeploymentID uuid.UUID `json:"deployment_id"`
+	CommandID uuid.UUID `json:"command_id"`
 }
 
 // ResultPayload is the "result" message sent from agent to server after a

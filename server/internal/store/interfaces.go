@@ -17,6 +17,7 @@ type DeploymentInfoStore interface {
 	ListByServiceFiltered(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
 	Create(ctx context.Context, d *domain.Deployment) error
 	UpdateStatus(ctx context.Context, id uuid.UUID, status domain.DeploymentStatus, completedAt *time.Time) error
+	SetFailed(ctx context.Context, id uuid.UUID, error_message string, completedAt *time.Time) error
 	SetHelmCommandID(ctx context.Context, id uuid.UUID, cmdID uuid.UUID) error
 	GetByHelmCommandID(ctx context.Context, cmdID uuid.UUID) (*domain.Deployment, error)
 
@@ -25,6 +26,7 @@ type DeploymentInfoStore interface {
 	GetCommand(ctx context.Context, id uuid.UUID) (*domain.Command, error)
 	UpdateCommand(ctx context.Context, cmd *domain.Command) error
 	ListQueuedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
+	ListDispatchedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
 	UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error
 
 	// Command log operations

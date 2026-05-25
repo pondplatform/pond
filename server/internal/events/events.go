@@ -20,11 +20,10 @@ type CommandQueued struct {
 // after it updates the command row to status=succeeded or status=failed.
 // The deployment service subscribes to advance the state machine.
 type CommandResult struct {
-	CommandID    uuid.UUID
-	DeploymentID uuid.UUID
-	Success      bool
-	Output       json.RawMessage
-	Error        string
+	CommandID uuid.UUID
+	Success   bool
+	Output    json.RawMessage
+	Error     string
 }
 
 // CommandLog is published to TopicCommandLogs when the agent streams a log
@@ -53,16 +52,14 @@ type AgentReady struct {
 // command — the deployment service subscribes to transition the deployment
 // from pending → running.
 type CommandStarted struct {
-	DeploymentID uuid.UUID
-	CommandID    uuid.UUID
+	CommandID uuid.UUID
 }
 
 // AgentDisconnected is published to TopicAgentDisconnected when an agent
-// WebSocket closes. If InFlightCommandID is non-nil, the deployment service
-// requeues that command for redelivery.
+// WebSocket closes. The deployment service requeues any dispatched commands
+// for the cluster.
 type AgentDisconnected struct {
-	ClusterID         uuid.UUID
-	InFlightCommandID uuid.UUID
+	ClusterID uuid.UUID
 }
 
 // UserInputRequired is published to ProjectUserInputRequiredTopic(projectID)

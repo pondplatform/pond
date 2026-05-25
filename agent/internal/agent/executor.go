@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pondplatform/pond/shared/agent/wire"
 )
 
@@ -62,7 +63,7 @@ func (e *executor) executeHelmUpgrade(ctx context.Context, cmd *wire.CommandPayl
 		return nil, fmt.Errorf("unmarshal helm upgrade request: %w", err)
 	}
 
-	lw := newLogWriter(cmd.ID.String(), logSink)
+	lw := newLogWriter(cmd.ID, logSink)
 	defer lw.Close()
 
 	if err := e.helmRunner.Upgrade(ctx, req, lw); err != nil {
@@ -81,7 +82,7 @@ func (e *executor) executeTofuApply(ctx context.Context, cmd *wire.CommandPayloa
 		return nil, fmt.Errorf("unmarshal tofu apply request: %w", err)
 	}
 
-	lw := newLogWriter(cmd.ID.String(), logSink)
+	lw := newLogWriter(cmd.ID, logSink)
 	defer lw.Close()
 
 	if err := e.tofuRunner.Init(ctx, payload.WorkDir, lw); err != nil {
@@ -134,13 +135,13 @@ func (e *executor) executeTofuOutput(ctx context.Context, cmd *wire.CommandPaylo
 
 // logWriter is a line-buffered writer that sends each line to logSink.
 type logWriter struct {
-	cmdID   string
+	cmdID   uuid.UUID
 	logSink func(wire.LogPayload)
 	pw      *io.PipeWriter
 	done    chan struct{}
 }
 
-func newLogWriter(cmdID string, logSink func(wire.LogPayload)) *logWriter {
+func newLogWriter(cmdID uuid.UUID, logSink func(wire.LogPayload)) *logWriter {
 	pr, pw := io.Pipe()
 	lw := &logWriter{
 		cmdID:   cmdID,
@@ -153,6 +154,7 @@ func newLogWriter(cmdID string, logSink func(wire.LogPayload)) *logWriter {
 		scanner := bufio.NewScanner(pr)
 		for scanner.Scan() {
 			logSink(wire.LogPayload{
+				CommandID: lw.cmdID,
 				Line:      scanner.Text(),
 				Timestamp: time.Now(),
 				Stream:    "stdout",

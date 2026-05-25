@@ -74,13 +74,11 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Connection state — only mutated on the main goroutine below.
-	var activeCommandID uuid.UUID
+	var busy bool
 
 	// On disconnect, publish AgentDisconnected so the service can requeue
 	// whatever was in flight.
-	defer func() {
-		session.Close(activeCommandID)
-	}()
+	defer session.Close()
 
 	// Per-connection channels for WebSocket reader goroutine.
 	wsCh := make(chan wire.Envelope, 4)
@@ -127,7 +125,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// requestNext asks the service for next command and sends it or idle.
 	requestNext := func() {
 		if cmd := session.RequestNext(ctx); cmd != nil {
-			activeCommandID = cmd.ID
+			busy = true
 			sendCommand(cmd)
 		} else {
 			if err := conn.WriteJSON(wire.Envelope{Type: "idle"}); err != nil {
@@ -163,22 +161,26 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				log.Info("command acknowledged by agent", "command_id", ack.CommandID)
-				session.OnAck(ctx, ack.DeploymentID, ack.CommandID)
+				session.OnAck(ctx, ack.CommandID)
 
 			case "result":
-				var res events.CommandResult
+				var res wire.ResultPayload
 				if err := json.Unmarshal(env.Data, &res); err != nil {
 					log.Error("decode result", "err", err)
 					continue
 				}
-				if activeCommandID == uuid.Nil {
+				if !busy {
 					log.Warn("received result with no active command")
 					continue
 				}
-				log.Info("received command result", "command_id", activeCommandID, "success", res.Success)
-				res.CommandID = activeCommandID
-				activeCommandID = uuid.Nil
-				session.OnResult(ctx, res)
+				busy = false
+				log.Info("received command result", "command_id", res.CommandID, "success", res.Success)
+				session.OnResult(ctx, events.CommandResult{
+					CommandID: res.CommandID,
+					Success:   res.Success,
+					Output:    res.Output,
+					Error:     res.Error,
+				})
 				requestNext()
 
 			case "log":
@@ -187,10 +189,10 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 					log.Error("decode log", "err", err)
 					continue
 				}
-				if activeCommandID == uuid.Nil {
+				if msg.CommandID == uuid.Nil {
 					continue
 				}
-				session.OnLog(ctx, activeCommandID, msg.Line)
+				session.OnLog(ctx, msg.CommandID, msg.Line)
 
 			default:
 				log.Warn("unknown message type from agent", "type", env.Type)
@@ -198,11 +200,11 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 		case cmd := <-dispatchCh:
 			// An unsolicited dispatch arrived outside of requestNext.
-			if activeCommandID != uuid.Nil {
+			if busy {
 				log.Warn("dispatch arrived while busy, dropping", "command_id", cmd.ID)
 				continue
 			}
-			activeCommandID = cmd.ID
+			busy = true
 			log.Info("sending unsolicited command to agent", "command_id", cmd.ID, "type", cmd.Type)
 			sendCommand(cmd)
 
@@ -210,7 +212,7 @@ func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			// A new command was enqueued for this cluster. If we're idle,
 			// ask for it; otherwise the post-result requestNext will pick
 			// it up when the current command finishes.
-			if activeCommandID == uuid.Nil {
+			if !busy {
 				requestNext()
 			}
 		}

@@ -37,7 +37,7 @@ func (s *deploymentService) processResult(ctx context.Context, result events.Com
 func (s *deploymentService) advance(ctx context.Context, cmd *domain.Command, result events.CommandResult) error {
 	switch cmd.Type {
 	case domain.CommandTypeTofuApply:
-		return s.advanceTofuApply(ctx, result)
+		return s.advanceTofuApply(ctx, cmd)
 	case domain.CommandTypeHelmUpgrade:
 		return s.advanceHelmUpgrade(ctx, cmd, result)
 	default:
@@ -46,11 +46,11 @@ func (s *deploymentService) advance(ctx context.Context, cmd *domain.Command, re
 	}
 }
 
-func (s *deploymentService) advanceTofuApply(ctx context.Context, result events.CommandResult) error {
-	if err := s.depSvc.HandleCommandResult(ctx, result.CommandID); err != nil {
+func (s *deploymentService) advanceTofuApply(ctx context.Context, cmd *domain.Command) error {
+	if err := s.depSvc.HandleCommandResult(ctx, cmd.ID); err != nil {
 		return err
 	}
-	return s.advanceDependencyStatus(ctx, result.DeploymentID)
+	return s.advanceDependencyStatus(ctx, cmd.DeploymentID)
 }
 
 func (s *deploymentService) advanceDependencyStatus(ctx context.Context, deploymentID uuid.UUID) error {
@@ -70,24 +70,42 @@ func (s *deploymentService) advanceDependencyStatus(ctx context.Context, deploym
 }
 
 func (s *deploymentService) advanceOnDependencyStatus(ctx context.Context, deployment *domain.Deployment, environment *domain.Environment, status domain.DependencyDeploymentStatus) error {
-	if status == domain.DependencyDeploymentStatusSucceeded {
-		if err := s.deploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusRunning, nil); err != nil {
-			return fmt.Errorf("set deployment DeploymentStatusRunning status: %w", err)
+	switch status {
+	case domain.DependencyDeploymentStatusSucceeded:
+		if err := s.deploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusPending, nil); err != nil {
+			return fmt.Errorf("set deployment pending status: %w", err)
 		}
+		deployment.Status = api.DeploymentStatusPending
 		if err := s.enqueueHelm(ctx, deployment, environment); err != nil {
 			return err
 		}
-	} else if status == domain.DependencyDeploymentStatusAwaitingInput {
+
+	case domain.DependencyDeploymentStatusAwaitingInput:
 		if err := s.deploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusAwaitingInput, nil); err != nil {
-			return fmt.Errorf("set deployment DeploymentStatusAwaitingInput status: %w", err)
+			return fmt.Errorf("set deployment awaiting_input status: %w", err)
 		}
-	} else {
-		if err := s.deploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusRunning, nil); err != nil {
-			return fmt.Errorf("set deployment running status: %w", err)
+		deployment.Status = api.DeploymentStatusAwaitingInput
+
+	case domain.DependencyDeploymentStatusFailed:
+		now := time.Now()
+		if err := s.deploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusFailed, &now); err != nil {
+			return fmt.Errorf("set deployment failed status: %w", err)
 		}
+		deployment.Status = api.DeploymentStatusFailed
+
+	default:
+		// pending: deps need commands scheduled
+		if err := s.deploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusPending, nil); err != nil {
+			return fmt.Errorf("set deployment pending status: %w", err)
+		}
+		deployment.Status = api.DeploymentStatusPending
 		if err := s.depSvc.ScheduleCommands(ctx, deployment.ID); err != nil {
 			return err
 		}
+		s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(environment.ClusterID), events.CommandQueued{
+			ClusterID:    environment.ClusterID,
+			DeploymentID: deployment.ID,
+		})
 	}
 
 	return nil
@@ -138,7 +156,7 @@ func (s *deploymentService) enqueueHelm(ctx context.Context, dep *domain.Deploym
 		renderedCfg.Configs = renderedConfigs
 	}
 
-	helmVals, err := s.helmGen.Generate(&renderedCfg, env, contexts)
+	helmVals, err := s.helmGen.Generate(&renderedCfg, env)
 	if err != nil {
 		return fmt.Errorf("generate helm values: %w", err)
 	}

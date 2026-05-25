@@ -103,7 +103,7 @@ type AgentSession interface {
 	RequestNext(ctx context.Context) *domain.Command
 
 	// OnAck publishes CommandStarted when agent acknowledges a command.
-	OnAck(ctx context.Context, deploymentID uuid.UUID, commandId uuid.UUID)
+	OnAck(ctx context.Context, commandID uuid.UUID)
 
 	// OnResult publishes CommandResult.
 	OnResult(ctx context.Context, result events.CommandResult)
@@ -112,5 +112,5 @@ type AgentSession interface {
 	OnLog(ctx context.Context, commandID uuid.UUID, line string)
 
 	// Close publishes AgentDisconnected and unsubscribes from events.
-	Close(inFlightCommandID uuid.UUID)
+	Close()
 }

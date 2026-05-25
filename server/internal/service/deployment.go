@@ -276,7 +276,7 @@ func (s *deploymentService) Cancel(ctx context.Context, deploymentID uuid.UUID) 
 
 	// Update status to failed
 	now := time.Now()
-	if err := s.deploymentInfo.UpdateStatus(ctx, deploymentID, api.DeploymentStatusFailed, &now); err != nil {
+	if err := s.deploymentInfo.UpdateStatus(ctx, deploymentID, api.DeploymentStatusCancelled, &now); err != nil {
 		return fmt.Errorf("update deployment status: %w", err)
 	}
 
@@ -378,4 +378,9 @@ func (s *deploymentService) Start(ctx context.Context) error {
 		u()
 	}
 	return nil
+}
+
+func (s *deploymentService) storeDeploymentError(ctx context.Context, deploymentId uuid.UUID, err error) error {
+	now := time.Now()
+	return s.deploymentInfo.SetFailed(ctx, deploymentId, err.Error(), &now)
 }

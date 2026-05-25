@@ -80,8 +80,7 @@ func (c *connection) SendReady(ctx context.Context) error {
 
 func (c *connection) SendAck(ctx context.Context, cmd *wire.CommandPayload) error {
 	return c.send("ack", wire.AckPayload{
-		CommandID:    cmd.ID,
-		DeploymentID: cmd.DeploymentID,
+		CommandID: cmd.ID,
 	})
 }
 

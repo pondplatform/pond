@@ -40,7 +40,7 @@ func (h *ServiceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	svc, err := h.get(r.Context(), id)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusOK, toServiceResponse(svc))
@@ -58,7 +58,7 @@ func (h *ServiceHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := h.list(r.Context(), projectID)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeList(w, items, nil)

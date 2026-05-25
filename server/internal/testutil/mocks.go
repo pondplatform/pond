@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/shared/serviceconfig"
 	"github.com/pondplatform/pond/server/internal/events"
 	"github.com/pondplatform/pond/server/internal/helmgen"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
+	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
 // --- store.DeploymentInfoStore ---
@@ -27,11 +27,12 @@ type MockDeploymentInfoStore struct {
 	SetHelmCommandIDFn      func(ctx context.Context, id uuid.UUID, cmdID uuid.UUID) error
 	GetByHelmCommandIDFn    func(ctx context.Context, cmdID uuid.UUID) (*domain.Deployment, error)
 	// Command operations (pure CRUD)
-	CreateCommandFn               func(ctx context.Context, cmd *domain.Command) error
-	GetCommandFn                  func(ctx context.Context, id uuid.UUID) (*domain.Command, error)
-	UpdateCommandFn               func(ctx context.Context, cmd *domain.Command) error
-	ListQueuedCommandsByClusterFn func(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
-	UpdateCommandsByDeploymentFn  func(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error
+	CreateCommandFn                   func(ctx context.Context, cmd *domain.Command) error
+	GetCommandFn                      func(ctx context.Context, id uuid.UUID) (*domain.Command, error)
+	UpdateCommandFn                   func(ctx context.Context, cmd *domain.Command) error
+	ListQueuedCommandsByClusterFn     func(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
+	ListDispatchedCommandsByClusterFn func(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
+	UpdateCommandsByDeploymentFn      func(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error
 	// Command log operations
 	AppendLogFn      func(ctx context.Context, commandID uuid.UUID, line string) error
 	GetCommandLogsFn func(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error)
@@ -112,6 +113,12 @@ func (m *MockDeploymentInfoStore) UpdateCommand(ctx context.Context, cmd *domain
 func (m *MockDeploymentInfoStore) ListQueuedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error) {
 	if m.ListQueuedCommandsByClusterFn != nil {
 		return m.ListQueuedCommandsByClusterFn(ctx, clusterID)
+	}
+	return nil, nil
+}
+func (m *MockDeploymentInfoStore) ListDispatchedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error) {
+	if m.ListDispatchedCommandsByClusterFn != nil {
+		return m.ListDispatchedCommandsByClusterFn(ctx, clusterID)
 	}
 	return nil, nil
 }
@@ -362,7 +369,7 @@ type MockHelmValuesGenerator struct {
 	GenerateFn func(cfg *serviceconfig.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*helmgen.HelmValues, error)
 }
 
-func (m *MockHelmValuesGenerator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*helmgen.HelmValues, error) {
+func (m *MockHelmValuesGenerator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment) (*helmgen.HelmValues, error) {
 	if m.GenerateFn != nil {
 		return m.GenerateFn(cfg, env, contexts)
 	}

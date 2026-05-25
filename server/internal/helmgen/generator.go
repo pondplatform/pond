@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pondplatform/pond/shared/serviceconfig"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
+	"github.com/pondplatform/pond/shared/serviceconfig"
 	"gopkg.in/yaml.v3"
 )
 
@@ -27,7 +27,7 @@ func splitRepositoryTag(image string) (string, string) {
 	return split[0], tag
 }
 
-func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*HelmValues, error) {
+func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment) (*HelmValues, error) {
 	repository, tag := splitRepositoryTag(cfg.Image)
 
 	var replicaCount int
@@ -141,7 +141,7 @@ func encodeConfigFile(format string, values map[string]any) (string, error) {
 		data, err = yaml.Marshal(values)
 	case "json":
 		data, err = json.Marshal(values)
-	case "env":
+	case ".env":
 		data, err = marshalEnv(values)
 	default:
 		return "", fmt.Errorf("unsupported config format: %s", format)

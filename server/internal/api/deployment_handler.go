@@ -34,7 +34,7 @@ func (h *DeploymentHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := h.submit(r.Context(), req)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toDeploymentResponse(d))
@@ -77,7 +77,7 @@ func (h *DeploymentHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	detail, err := h.svc.GetStatus(r.Context(), id)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusOK, toDeploymentDetailResponse(detail))
@@ -165,7 +165,7 @@ func (h *DeploymentHandler) ListByService(w http.ResponseWriter, r *http.Request
 	p := ParsePagination(r)
 	items, nextCursor, err := h.listByService(r.Context(), serviceID, environmentID, status, p)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeList(w, items, nextCursor)
@@ -211,7 +211,7 @@ func (h *DeploymentHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.cancel(r.Context(), id); err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -237,7 +237,7 @@ func (h *DeploymentHandler) ConfigureDeployment(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := h.configureDeployment(r.Context(), id, req); err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -255,7 +255,7 @@ func (h *DeploymentHandler) GetCommandLogs(w http.ResponseWriter, r *http.Reques
 	}
 	items, err := h.getCommandLogs(r.Context(), commandID)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeList(w, items, nil)

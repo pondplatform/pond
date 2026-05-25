@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -76,7 +77,7 @@ func writeValidationError(w http.ResponseWriter, err *api.ValidationErrors) {
 	})
 }
 
-func writeServiceError(w http.ResponseWriter, err error) {
+func writeServiceError(w http.ResponseWriter, err error, log *slog.Logger) {
 	var ve *api.ValidationErrors
 	switch {
 	case errors.As(err, &ve):
@@ -94,6 +95,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, api.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden")
 	default:
+		log.Error("internal server error", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal server error")
 	}
 }

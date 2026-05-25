@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pondplatform/pond/server/internal/events"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 )
@@ -33,8 +32,7 @@ func (s *deploymentService) handleAgentReady(ctx context.Context, e events.Agent
 // handleCommandStarted transitions a deployment from pending -> running when
 // the agent acknowledges the command it just received.
 func (s *deploymentService) handleCommandStarted(ctx context.Context, e events.CommandStarted) {
-	s.log.Info("get deployment for command_started", "deployment_id", e.DeploymentID)
-	return
+	s.log.Info("command started", "command_id", e.CommandID)
 }
 
 // handleCommandLog persists a streamed log line from a running command.
@@ -44,25 +42,21 @@ func (s *deploymentService) handleCommandLog(ctx context.Context, e events.Comma
 	}
 }
 
-// handleAgentDisconnected requeues the in-flight command (if any) so it can
-// be redelivered to the next connected agent for the same cluster.
+// handleAgentDisconnected requeues any dispatched commands for the cluster so
+// they can be redelivered to the next connected agent.
 func (s *deploymentService) handleAgentDisconnected(ctx context.Context, e events.AgentDisconnected) {
-	if e.InFlightCommandID == uuid.Nil {
-		return
-	}
-	s.log.Info("agent disconnected with in-flight command, requeueing", "command_id", e.InFlightCommandID)
-	cmd, err := s.deploymentInfo.GetCommand(ctx, e.InFlightCommandID)
+	cmds, err := s.deploymentInfo.ListDispatchedCommandsByCluster(ctx, e.ClusterID)
 	if err != nil {
-		s.log.Error("get command on disconnect", "command_id", e.InFlightCommandID, "err", err)
+		s.log.Error("list dispatched commands on disconnect", "cluster_id", e.ClusterID, "err", err)
 		return
 	}
-	if cmd.Status != domain.CommandStatusDispatched {
-		return // already completed or cancelled
-	}
-	cmd.Status = domain.CommandStatusQueued
-	cmd.UpdatedAt = time.Now()
-	if err := s.deploymentInfo.UpdateCommand(ctx, cmd); err != nil {
-		s.log.Error("requeue command on disconnect", "command_id", e.InFlightCommandID, "err", err)
+	for _, cmd := range cmds {
+		s.log.Info("agent disconnected with in-flight command, requeueing", "command_id", cmd.ID)
+		cmd.Status = domain.CommandStatusQueued
+		cmd.UpdatedAt = time.Now()
+		if err := s.deploymentInfo.UpdateCommand(ctx, cmd); err != nil {
+			s.log.Error("requeue command on disconnect", "command_id", cmd.ID, "err", err)
+		}
 	}
 }
 

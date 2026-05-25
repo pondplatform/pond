@@ -146,6 +146,7 @@ func (a *FakeAgent) Run(ctx context.Context) error {
 
 			// Execute handler and send result
 			result := a.behavior.Handler(&cmd)
+			result.DeploymentID = cmd.DeploymentID
 			if err := a.conn.SendResult(ctx, result); err != nil {
 				return fmt.Errorf("send result: %w", err)
 			}

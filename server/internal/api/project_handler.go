@@ -49,7 +49,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	project, err := h.create(r.Context(), orgID, req)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toProjectResponse(project))
@@ -94,7 +94,7 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	project, err := h.get(r.Context(), id)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusOK, toProjectResponse(project))
@@ -112,7 +112,7 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := h.list(r.Context(), orgID)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeList(w, items, nil)
@@ -148,7 +148,7 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	project, err := h.update(r.Context(), id, req)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(w, err, h.log)
 		return
 	}
 	writeJSON(w, http.StatusOK, toProjectResponse(project))

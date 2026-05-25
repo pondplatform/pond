@@ -57,11 +57,13 @@ func Run(ctx context.Context, cfg Config, exec CommandExecutor, log *slog.Logger
 			if err != nil {
 				log.Error("execute command failed", "command_id", cmd.ID, "err", err)
 				result = &wire.ResultPayload{
-					CommandID: cmd.ID,
-					Success:   false,
-					Error:     err.Error(),
+					CommandID:    cmd.ID,
+					DeploymentID: cmd.DeploymentID,
+					Success:      false,
+					Error:        err.Error(),
 				}
 			} else {
+				result.CommandID = cmd.ID
 				log.Info("command completed", "command_id", cmd.ID, "success", result.Success)
 			}
 
