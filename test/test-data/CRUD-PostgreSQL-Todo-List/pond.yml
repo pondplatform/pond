@@ -12,6 +12,7 @@ service:
 dependencies:
   myDb:
     type: postgres
+    version: 17
 
 env:
   ENVIRONMENT: "testing"

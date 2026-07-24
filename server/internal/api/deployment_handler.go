@@ -119,6 +119,7 @@ func toDeploymentDetailResponse(detail *service.DeploymentDetail) shared.Deploym
 		Status:        d.Status,
 		CreatedAt:     d.CreatedAt,
 		CompletedAt:   d.CompletedAt,
+		Error:         d.Error,
 		Dependencies:  deps,
 		Commands:      cmds,
 	}
@@ -134,6 +135,7 @@ func toDeploymentResponse(d *domain.Deployment) shared.Deployment {
 		Status:        d.Status,
 		CreatedAt:     d.CreatedAt,
 		CompletedAt:   d.CompletedAt,
+		Error:         d.Error,
 		Dependencies:  []shared.DependencyDeploymentSummary{},
 		Commands:      []shared.CommandSummary{},
 	}

@@ -25,7 +25,7 @@ func NewDeploymentInfoStore(db DBTX) DeploymentInfoStore {
 func (s *deploymentInfoStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Deployment, error) {
 	return s.scanOneDeployment(ctx,
 		`SELECT id, service_id, environment_id, image_tag, service_config_snapshot,
-		        status, triggered_by, helm_command_id, created_at, completed_at
+		        status, triggered_by, helm_command_id, created_at, completed_at, error
 		   FROM deployments WHERE id = $1`,
 		id,
 	)
@@ -34,7 +34,7 @@ func (s *deploymentInfoStore) GetByID(ctx context.Context, id uuid.UUID) (*domai
 func (s *deploymentInfoStore) GetByHelmCommandID(ctx context.Context, cmdID uuid.UUID) (*domain.Deployment, error) {
 	return s.scanOneDeployment(ctx,
 		`SELECT id, service_id, environment_id, image_tag, service_config_snapshot,
-		        status, triggered_by, helm_command_id, created_at, completed_at
+		        status, triggered_by, helm_command_id, created_at, completed_at, error
 		   FROM deployments WHERE helm_command_id = $1`,
 		cmdID,
 	)
@@ -46,9 +46,10 @@ func (s *deploymentInfoStore) scanOneDeployment(ctx context.Context, query strin
 	var helmCmdID sql.NullString
 	var triggeredBy sql.NullString
 	var completedAt sql.NullTime
+	var errStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query, arg).Scan(
 		&d.ID, &d.ServiceID, &d.EnvironmentID, &d.ImageTag, &configJSON,
-		&d.Status, &triggeredBy, &helmCmdID, &d.CreatedAt, &completedAt,
+		&d.Status, &triggeredBy, &helmCmdID, &d.CreatedAt, &completedAt, &errStr,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("deployment: %w", api.ErrNotFound)
@@ -66,6 +67,9 @@ func (s *deploymentInfoStore) scanOneDeployment(ctx context.Context, query strin
 	if completedAt.Valid {
 		d.CompletedAt = &completedAt.Time
 	}
+	if errStr.Valid {
+		d.Error = &errStr.String
+	}
 	if err := json.Unmarshal(configJSON, &d.ServiceConfigSnapshot); err != nil {
 		return nil, fmt.Errorf("unmarshal config snapshot: %w", err)
 	}
@@ -78,7 +82,7 @@ func (s *deploymentInfoStore) ListByService(ctx context.Context, serviceID uuid.
 
 func (s *deploymentInfoStore) ListByServiceFiltered(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error) {
 	query := `SELECT id, service_id, environment_id, image_tag, service_config_snapshot,
-	                 status, triggered_by, helm_command_id, created_at, completed_at
+	                 status, triggered_by, helm_command_id, created_at, completed_at, error
 	            FROM deployments WHERE service_id = $1`
 	args := []any{serviceID}
 	argIdx := 2
@@ -117,8 +121,9 @@ func (s *deploymentInfoStore) ListByServiceFiltered(ctx context.Context, service
 		var helmCmdID sql.NullString
 		var triggeredBy sql.NullString
 		var completedAt sql.NullTime
+		var errStr sql.NullString
 		if err := rows.Scan(&d.ID, &d.ServiceID, &d.EnvironmentID, &d.ImageTag, &configJSON,
-			&d.Status, &triggeredBy, &helmCmdID, &d.CreatedAt, &completedAt); err != nil {
+			&d.Status, &triggeredBy, &helmCmdID, &d.CreatedAt, &completedAt, &errStr); err != nil {
 			return nil, fmt.Errorf("scan deployment: %w", err)
 		}
 		if triggeredBy.Valid {
@@ -130,6 +135,9 @@ func (s *deploymentInfoStore) ListByServiceFiltered(ctx context.Context, service
 		}
 		if completedAt.Valid {
 			d.CompletedAt = &completedAt.Time
+		}
+		if errStr.Valid {
+			d.Error = &errStr.String
 		}
 		if err := json.Unmarshal(configJSON, &d.ServiceConfigSnapshot); err != nil {
 			return nil, fmt.Errorf("unmarshal config snapshot: %w", err)
@@ -176,6 +184,17 @@ func (s *deploymentInfoStore) UpdateStatus(ctx context.Context, id uuid.UUID, st
 	)
 	if err != nil {
 		return fmt.Errorf("update deployment status: %w", err)
+	}
+	return nil
+}
+
+func (s *deploymentInfoStore) SetFailed(ctx context.Context, id uuid.UUID, errorMessage string, completedAt *time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE deployments SET status = 'failed', error = $1, completed_at = $2 WHERE id = $3`,
+		errorMessage, completedAt, id,
+	)
+	if err != nil {
+		return fmt.Errorf("set deployment failed: %w", err)
 	}
 	return nil
 }

@@ -24,6 +24,7 @@ type MockDeploymentInfoStore struct {
 	ListByServiceFilteredFn func(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
 	CreateFn                func(ctx context.Context, d *domain.Deployment) error
 	UpdateStatusFn          func(ctx context.Context, id uuid.UUID, status domain.DeploymentStatus, completedAt *time.Time) error
+	SetFailedFn             func(ctx context.Context, id uuid.UUID, errorMessage string, completedAt *time.Time) error
 	SetHelmCommandIDFn      func(ctx context.Context, id uuid.UUID, cmdID uuid.UUID) error
 	GetByHelmCommandIDFn    func(ctx context.Context, cmdID uuid.UUID) (*domain.Deployment, error)
 	// Command operations (pure CRUD)
@@ -77,6 +78,12 @@ func (m *MockDeploymentInfoStore) Create(ctx context.Context, d *domain.Deployme
 func (m *MockDeploymentInfoStore) UpdateStatus(ctx context.Context, id uuid.UUID, status domain.DeploymentStatus, completedAt *time.Time) error {
 	if m.UpdateStatusFn != nil {
 		return m.UpdateStatusFn(ctx, id, status, completedAt)
+	}
+	return nil
+}
+func (m *MockDeploymentInfoStore) SetFailed(ctx context.Context, id uuid.UUID, errorMessage string, completedAt *time.Time) error {
+	if m.SetFailedFn != nil {
+		return m.SetFailedFn(ctx, id, errorMessage, completedAt)
 	}
 	return nil
 }
@@ -366,12 +373,12 @@ func (m *MockBus) Publish(ctx context.Context, topic string, v any) {
 // --- helmgen.HelmValuesGenerator ---
 
 type MockHelmValuesGenerator struct {
-	GenerateFn func(cfg *serviceconfig.ServiceConfig, env *domain.Environment, contexts map[string]map[string]any) (*helmgen.HelmValues, error)
+	GenerateFn func(cfg *serviceconfig.ServiceConfig, env *domain.Environment) (*helmgen.HelmValues, error)
 }
 
 func (m *MockHelmValuesGenerator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment) (*helmgen.HelmValues, error) {
 	if m.GenerateFn != nil {
-		return m.GenerateFn(cfg, env, contexts)
+		return m.GenerateFn(cfg, env)
 	}
 	return &helmgen.HelmValues{}, nil
 }

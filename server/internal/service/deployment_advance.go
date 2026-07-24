@@ -88,7 +88,7 @@ func (s *deploymentService) advanceOnDependencyStatus(ctx context.Context, deplo
 
 	case domain.DependencyDeploymentStatusFailed:
 		now := time.Now()
-		if err := s.deploymentInfo.UpdateStatus(ctx, deployment.ID, api.DeploymentStatusFailed, &now); err != nil {
+		if err := s.deploymentInfo.SetFailed(ctx, deployment.ID, "dependency provisioning failed", &now); err != nil {
 			return fmt.Errorf("set deployment failed status: %w", err)
 		}
 		deployment.Status = api.DeploymentStatusFailed
@@ -122,12 +122,12 @@ func (s *deploymentService) advanceHelmUpgrade(ctx context.Context, cmd *domain.
 	}
 
 	now := time.Now()
-	status := api.DeploymentStatusSucceeded
-	if !result.Success {
-		status = api.DeploymentStatusFailed
+	if result.Success {
+		s.log.Info("helm upgrade completed", "deployment_id", dep.ID, "status", api.DeploymentStatusSucceeded)
+		return s.deploymentInfo.UpdateStatus(ctx, dep.ID, api.DeploymentStatusSucceeded, &now)
 	}
-	s.log.Info("helm upgrade completed", "deployment_id", dep.ID, "status", status)
-	return s.deploymentInfo.UpdateStatus(ctx, dep.ID, status, &now)
+	s.log.Info("helm upgrade completed", "deployment_id", dep.ID, "status", api.DeploymentStatusFailed)
+	return s.storeDeploymentError(ctx, dep.ID, errors.New(result.Error))
 }
 
 func (s *deploymentService) enqueueHelm(ctx context.Context, dep *domain.Deployment, env *domain.Environment) error {

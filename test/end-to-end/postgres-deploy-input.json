@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "db": {
+      "managed": true,
+      "values": {
+        "instances": 1
+      }
+    }
+  }
+}

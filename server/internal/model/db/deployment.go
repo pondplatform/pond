@@ -23,6 +23,7 @@ type Deployment struct {
 	HelmCommandID         *uuid.UUID                      `json:"helmCommandId"`
 	CreatedAt             time.Time                       `json:"createdAt"`
 	CompletedAt           *time.Time                      `json:"completedAt"`
+	Error                 *string                         `json:"error,omitempty"`
 }
 
 type DependencyDeployment struct {
