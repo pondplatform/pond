@@ -17,3 +17,10 @@ resources:
   requests:
     cpu: 100m
     memory: 128Mi
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  mountPath: /var/lib/pond-agent
