@@ -1,5 +1,7 @@
-.PHONY: build build-images build-server-image build-agent-image build-cli-image build-todo-image \
-       test test-integration
+.PHONY: build build-images build-server-image build-agent-image build-cli-image build-cli \
+        test test-integration vet verify \
+        helm-lint \
+        e2e-setup e2e-teardown e2e
 
 # ---- Build targets ----
 
@@ -15,10 +17,7 @@ build-agent-image:
 build-cli-image:
 	docker build -f infra/docker/Dockerfile.cli -t pond-cli:latest .
 
-build-todo-image:
-	docker build -t todo-app:latest ./test/test-data/CRUD-PostgreSQL-Todo-List/
-
-build-images: build-server-image build-agent-image build-cli-image build-todo-image
+build-images: build-server-image build-agent-image build-cli-image
 
 build-cli:
 	go build -o ./bin/pond ./cli/
@@ -30,3 +29,30 @@ test:
 
 test-integration:
 	go test -tags integration -v -timeout 120s ./server/internal/integration/...
+
+vet:
+	go vet ./shared/... ./cli/... ./agent/... ./server/...
+
+verify: vet test test-integration helm-lint
+
+# ---- Helm targets ----
+
+helm-lint:
+	helm lint infra/deploy/helm/pond-server
+	helm template ci infra/deploy/helm/pond-server >/dev/null
+	helm package infra/deploy/helm/pond-server --destination /tmp
+	helm lint infra/deploy/helm/pond-agent
+	helm template ci infra/deploy/helm/pond-agent >/dev/null
+	helm package infra/deploy/helm/pond-agent --destination /tmp
+
+# ---- E2E targets ----
+
+e2e-setup:
+	./test/end-to-end/local-setup.sh
+
+e2e-teardown:
+	./test/end-to-end/teardown.sh
+
+e2e: e2e-setup
+	./test/end-to-end/deploy-simple.sh
+	./test/end-to-end/deploy-postgres.sh
