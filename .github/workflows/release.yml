@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    uses: ./.github/workflows/_test.yml
+
+  build-images:
+    name: Build & Push ${{ matrix.image }}
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: pond-server
+            dockerfile: infra/docker/Dockerfile.server
+          - image: pond-agent
+            dockerfile: infra/docker/Dockerfile.agent
+          - image: pond-cli
+            dockerfile: infra/docker/Dockerfile.cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ steps.version.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  publish-helm:
+    name: Publish Helm ${{ matrix.chart }}
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        chart: [pond-server, pond-agent]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          echo "sem=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.1.4
+
+      - name: Patch Chart.yaml (version + appVersion)
+        run: |
+          SEM="${{ steps.version.outputs.sem }}"
+          CHART_YAML="infra/deploy/helm/${{ matrix.chart }}/Chart.yaml"
+          sed -i "s/^version: .*/version: ${SEM}/" "${CHART_YAML}"
+          sed -i "s/^appVersion:.*/appVersion: \"${SEM}\"/" "${CHART_YAML}"
+
+      - name: Patch values.yaml (image.repository -> full GHCR path)
+        run: |
+          sed -i \
+            "s|repository: ${{ matrix.chart }}|repository: ghcr.io/${{ github.repository_owner }}/${{ matrix.chart }}|" \
+            "infra/deploy/helm/${{ matrix.chart }}/values.yaml"
+
+      - name: Log in to GHCR (Helm OCI)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io \
+              --username "${{ github.repository_owner }}" \
+              --password-stdin
+
+      - name: Package chart
+        run: helm package infra/deploy/helm/${{ matrix.chart }}
+
+      - name: Push chart
+        run: |
+          helm push \
+            "${{ matrix.chart }}-${{ steps.version.outputs.sem }}.tgz" \
+            "oci://ghcr.io/${{ github.repository_owner }}/charts"

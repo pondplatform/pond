@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+# Superseded runs on the same ref are pointless; cancel them.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests
+    uses: ./.github/workflows/_test.yml
+
+  build-images:
+    name: Build ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: pond-server
+            dockerfile: infra/docker/Dockerfile.server
+          - image: pond-agent
+            dockerfile: infra/docker/Dockerfile.agent
+          - image: pond-cli
+            dockerfile: infra/docker/Dockerfile.cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Verify the image builds. Nothing is pushed; publishing happens
+      # only on a v* tag, in release.yml.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: ${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=min,scope=${{ matrix.image }}
+
+  lint-helm:
+    name: Lint Helm ${{ matrix.chart }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        chart: [pond-server, pond-agent]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.1.4
+
+      - name: Lint chart
+        run: helm lint infra/deploy/helm/${{ matrix.chart }}
+
+      - name: Render templates
+        run: helm template ci infra/deploy/helm/${{ matrix.chart }} >/dev/null
+
+      - name: Package chart
+        run: helm package infra/deploy/helm/${{ matrix.chart }} --destination /tmp

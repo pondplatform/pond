@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  workflow_call:
+
+jobs:
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+
+      - name: Run unit tests
+        run: go test ./shared/... ./cli/... ./agent/... ./server/...
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+
+      - name: Run integration tests
+        run: go test -tags integration -v -timeout 120s ./server/internal/integration/...
