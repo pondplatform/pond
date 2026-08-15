@@ -99,7 +99,8 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	// Auth components
 	jwtSecret := []byte(cfg.JWTSecret)
 	authenticator := auth.NewAdminKeyAuthenticator(cfg.AdminKey, auth.NewJWTAuthenticator(jwtSecret))
-	authorizer := auth.NewRoleAuthorizer()
+	authzRepo := store.NewAuthorizationStore(db)
+	authorizer := auth.NewRoleAuthorizer(authzRepo)
 
 	// HTTP router
 	router := api.NewRouter(api.RouterDeps{

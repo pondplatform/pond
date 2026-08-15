@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pondplatform/pond/server/internal/auth"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/service"
 	"github.com/pondplatform/pond/server/internal/store"
@@ -17,13 +18,14 @@ import (
 )
 
 type DeploymentHandler struct {
-	svc      service.DeploymentService
-	services store.ServiceRepository
-	log      *slog.Logger
+	svc        service.DeploymentService
+	services   store.ServiceRepository
+	authorizer auth.Authorizer
+	log        *slog.Logger
 }
 
-func NewDeploymentHandler(svc service.DeploymentService, services store.ServiceRepository, log *slog.Logger) *DeploymentHandler {
-	return &DeploymentHandler{svc: svc, services: services, log: log}
+func NewDeploymentHandler(svc service.DeploymentService, services store.ServiceRepository, authorizer auth.Authorizer, log *slog.Logger) *DeploymentHandler {
+	return &DeploymentHandler{svc: svc, services: services, authorizer: authorizer, log: log}
 }
 
 func (h *DeploymentHandler) Submit(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +34,23 @@ func (h *DeploymentHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+
+	// Project ID comes from the request body, not the path, so the middleware
+	// cannot do the ownership check — verify here via the authorizer.
+	identity, ok := IdentityFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := h.authorizer.Authorize(r.Context(), identity, auth.Action{
+		Resource:   auth.ResourceProject,
+		Verb:       auth.VerbWrite,
+		ResourceID: req.ProjectID,
+	}); err != nil {
+		writeServiceError(w, err, h.log)
+		return
+	}
+
 	d, err := h.submit(r.Context(), req)
 	if err != nil {
 		writeServiceError(w, err, h.log)
@@ -70,7 +89,7 @@ func defaultSubmitRequest() shared.SubmitRequest {
 }
 
 func (h *DeploymentHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(r.PathValue("deploymentId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid deployment id")
 		return
@@ -207,7 +226,7 @@ func (h *DeploymentHandler) listByService(ctx context.Context, serviceID uuid.UU
 }
 
 func (h *DeploymentHandler) Cancel(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(r.PathValue("deploymentId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid deployment id")
 		return
@@ -228,7 +247,7 @@ func (h *DeploymentHandler) cancel(ctx context.Context, id uuid.UUID) error {
 }
 
 func (h *DeploymentHandler) ConfigureDeployment(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(r.PathValue("deploymentId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid deployment id")
 		return

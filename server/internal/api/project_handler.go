@@ -87,7 +87,7 @@ func (h *ProjectHandler) create(ctx context.Context, orgID uuid.UUID, req api.Cr
 }
 
 func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(r.PathValue("projectId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid project id")
 		return
@@ -136,7 +136,7 @@ func (h *ProjectHandler) list(ctx context.Context, orgID uuid.UUID) ([]api.Proje
 }
 
 func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(r.PathValue("projectId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid project id")
 		return

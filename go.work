@@ -1,6 +1,9 @@
 go 1.25.5
 
 use ./shared
+
 use ./cli
+
 use ./server
+
 use ./agent

@@ -114,7 +114,7 @@ func (h *EnvironmentHandler) create(ctx context.Context, projectID uuid.UUID, re
 }
 
 func (h *EnvironmentHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(r.PathValue("envId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid environment id")
 		return
@@ -163,7 +163,7 @@ func (h *EnvironmentHandler) list(ctx context.Context, projectID uuid.UUID) ([]a
 }
 
 func (h *EnvironmentHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(r.PathValue("envId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid environment id")
 		return

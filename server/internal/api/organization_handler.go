@@ -73,7 +73,7 @@ func (h *OrganizationHandler) create(ctx context.Context, req api.CreateOrganiza
 }
 
 func (h *OrganizationHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(r.PathValue("orgId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid organization id")
 		return
@@ -91,8 +91,13 @@ func (h *OrganizationHandler) get(ctx context.Context, id uuid.UUID) (*domain.Or
 }
 
 func (h *OrganizationHandler) List(w http.ResponseWriter, r *http.Request) {
+	identity, ok := IdentityFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	p := ParsePagination(r)
-	items, nextCursor, err := h.list(r.Context(), p)
+	items, nextCursor, err := h.list(r.Context(), identity, p)
 	if err != nil {
 		writeServiceError(w, err, h.log)
 		return
@@ -100,7 +105,16 @@ func (h *OrganizationHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeList(w, items, nextCursor)
 }
 
-func (h *OrganizationHandler) list(ctx context.Context, p Pagination) ([]api.Organization, *string, error) {
+func (h *OrganizationHandler) list(ctx context.Context, identity *domain.Identity, p Pagination) ([]api.Organization, *string, error) {
+	// Admin keys see all organizations; org-scoped tokens see only their own.
+	if !identity.IsAdminKey {
+		org, err := h.orgs.GetByID(ctx, identity.OrganizationID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []api.Organization{toOrganizationResponse(org)}, nil, nil
+	}
+
 	orgs, err := h.orgs.List(ctx, p.Limit, p.Cursor)
 	if err != nil {
 		return nil, nil, err

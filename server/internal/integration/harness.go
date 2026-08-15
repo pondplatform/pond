@@ -69,7 +69,8 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 
 	jwtSecret := []byte(testJWTSecret)
 	authenticator := auth.NewJWTAuthenticator(jwtSecret)
-	authorizer := auth.NewRoleAuthorizer()
+	authzRepo := store.NewAuthorizationStore(db)
+	authorizer := auth.NewRoleAuthorizer(authzRepo)
 
 	tx := newTestTransactor(db)
 	specRegistry := dependency.NewSpecRegistry()

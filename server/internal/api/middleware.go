@@ -77,38 +77,57 @@ func requireAuth(authenticator auth.Authenticator, log *slog.Logger) func(http.H
 	}
 }
 
-// requireOrgAccess checks that the authenticated identity has permission for the action.
-// The orgID is extracted from the path using the provided pathParam (e.g., "orgId").
-// If pathParam is empty, the org check is skipped (for routes where org is implicit).
-// Returns 403 if forbidden.
-func requireOrgAccess(authorizer auth.Authorizer, action auth.Action, pathParam string, log *slog.Logger) func(http.Handler) http.Handler {
+// requireResourceAccess checks that the authenticated identity may perform action.
+//
+//   - orgParam:      path value key for the org ID (e.g. "orgId"). Empty means
+//     the authorizer uses identity.OrganizationID.
+//   - resourceParam: path value key for the specific resource being accessed
+//     (e.g. "projectId", "deploymentId"). Empty means no resource-level check.
+//
+// The middleware populates action.OrgID and action.ResourceID from the path,
+// then delegates all authorization logic (including resource ownership) to the
+// authorizer. Returns 403 if forbidden, 404 if the resource does not exist.
+func requireResourceAccess(
+	authorizer auth.Authorizer,
+	action auth.Action,
+	orgParam string,
+	resourceParam string,
+	log *slog.Logger,
+) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			identity, ok := IdentityFromContext(r.Context())
 			if !ok {
-				// Programming error: requireAuth should have run first
-				log.Error("requireOrgAccess called without identity in context")
+				log.Error("requireResourceAccess called without identity in context")
 				writeError(w, http.StatusInternalServerError, "internal server error")
 				return
 			}
 
-			var orgID uuid.UUID
-			if pathParam != "" {
-				orgIDStr := r.PathValue(pathParam)
-				var err error
-				orgID, err = uuid.Parse(orgIDStr)
+			if orgParam != "" {
+				orgID, err := uuid.Parse(r.PathValue(orgParam))
 				if err != nil {
 					writeError(w, http.StatusBadRequest, "invalid organization ID")
 					return
 				}
-			} else {
-				// No path param - use identity's org (for routes where org is implicit)
-				orgID = identity.OrganizationID
+				action.OrgID = orgID
 			}
 
-			if err := authorizer.Authorize(identity, action, orgID); err != nil {
+			if resourceParam != "" {
+				resourceID, err := uuid.Parse(r.PathValue(resourceParam))
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "invalid resource ID")
+					return
+				}
+				action.ResourceID = resourceID
+			}
+
+			if err := authorizer.Authorize(r.Context(), identity, action); err != nil {
 				if errors.Is(err, api.ErrForbidden) {
 					writeError(w, http.StatusForbidden, "forbidden")
+					return
+				}
+				if errors.Is(err, api.ErrNotFound) {
+					writeError(w, http.StatusNotFound, "not found")
 					return
 				}
 				log.Error("authorization error", "err", err)

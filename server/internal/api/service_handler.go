@@ -33,7 +33,7 @@ func toServiceResponse(s *domain.Service) api.Service {
 }
 
 func (h *ServiceHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(r.PathValue("serviceId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid service id")
 		return

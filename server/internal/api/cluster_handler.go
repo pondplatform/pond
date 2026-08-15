@@ -102,7 +102,7 @@ func (h *ClusterHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid organization id")
 		return
 	}
-	clusterID, err := uuid.Parse(r.PathValue("id"))
+	clusterID, err := uuid.Parse(r.PathValue("clusterId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid cluster id")
 		return
@@ -163,7 +163,7 @@ func (h *ClusterHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid organization id")
 		return
 	}
-	clusterID, err := uuid.Parse(r.PathValue("id"))
+	clusterID, err := uuid.Parse(r.PathValue("clusterId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid cluster id")
 		return
