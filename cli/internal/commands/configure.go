@@ -7,11 +7,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/cli/internal/client"
+	pondconfig "github.com/pondplatform/pond/cli/internal/config"
 	api "github.com/pondplatform/pond/shared/server/api"
 	"github.com/spf13/cobra"
 )
 
-func NewConfigureCmd(serverClient client.ServerClient) *cobra.Command {
+func NewConfigureCmd() *cobra.Command {
 	var (
 		deploymentID string
 		filePath     string
@@ -26,6 +27,8 @@ func NewConfigureCmd(serverClient client.ServerClient) *cobra.Command {
 				return fmt.Errorf("invalid deployment id: %w", err)
 			}
 
+			sc := cmd.Context().Value(pondconfig.ClientKey{}).(client.ServerClient)
+
 			data, err := os.ReadFile(filePath)
 			if err != nil {
 				return fmt.Errorf("read file %q: %w", filePath, err)
@@ -36,7 +39,7 @@ func NewConfigureCmd(serverClient client.ServerClient) *cobra.Command {
 				return fmt.Errorf("parse file %q: %w", filePath, err)
 			}
 
-			if err := serverClient.ConfigureDeployment(cmd.Context(), id, req); err != nil {
+			if err := sc.ConfigureDeployment(cmd.Context(), id, req); err != nil {
 				return fmt.Errorf("configure deployment: %w", err)
 			}
 

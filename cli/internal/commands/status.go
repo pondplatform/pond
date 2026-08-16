@@ -7,11 +7,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/cli/internal/client"
+	pondconfig "github.com/pondplatform/pond/cli/internal/config"
 	api "github.com/pondplatform/pond/shared/server/api"
 	"github.com/spf13/cobra"
 )
 
-func NewStatusCmd(serverClient client.ServerClient) *cobra.Command {
+func NewStatusCmd() *cobra.Command {
 	var deploymentID string
 
 	cmd := &cobra.Command{
@@ -23,12 +24,14 @@ func NewStatusCmd(serverClient client.ServerClient) *cobra.Command {
 				return fmt.Errorf("invalid deployment id: %w", err)
 			}
 
-			d, err := serverClient.GetDeployment(cmd.Context(), id)
+			sc := cmd.Context().Value(pondconfig.ClientKey{}).(client.ServerClient)
+
+			d, err := sc.GetDeployment(cmd.Context(), id)
 			if err != nil {
 				return fmt.Errorf("get deployment: %w", err)
 			}
 
-			printDeploymentStatus(cmd.Context(), serverClient, d)
+			printDeploymentStatus(cmd.Context(), sc, d)
 			return nil
 		},
 	}
