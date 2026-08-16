@@ -29,8 +29,6 @@ jobs:
             dockerfile: infra/docker/Dockerfile.server
           - image: pond-agent
             dockerfile: infra/docker/Dockerfile.agent
-          - image: pond-cli
-            dockerfile: infra/docker/Dockerfile.cli
     steps:
       - uses: actions/checkout@v4
 

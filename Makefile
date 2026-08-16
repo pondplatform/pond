@@ -1,4 +1,4 @@
-.PHONY: build build-images build-server-image build-agent-image build-cli-image build-cli \
+.PHONY: build build-images build-server-image build-agent-image build-cli \
         test test-integration vet verify \
         helm-lint \
         e2e-setup e2e-teardown e2e
@@ -14,10 +14,7 @@ build-server-image:
 build-agent-image:
 	docker build -f infra/docker/Dockerfile.agent -t pond-agent:latest .
 
-build-cli-image:
-	docker build -f infra/docker/Dockerfile.cli -t pond-cli:latest .
-
-build-images: build-server-image build-agent-image build-cli-image
+build-images: build-server-image build-agent-image
 
 build-cli:
 	go build -o ./bin/pond ./cli/
@@ -47,7 +44,7 @@ helm-lint:
 
 # ---- E2E targets ----
 
-e2e-setup:
+e2e-setup: build
 	./test/end-to-end/local-setup.sh
 
 e2e-teardown:
