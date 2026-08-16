@@ -1,7 +1,7 @@
 package commands
 
 import (
-	"github.com/pondplatform/pond/cli/internal/cli/client"
+	"github.com/pondplatform/pond/cli/internal/client"
 	"github.com/spf13/cobra"
 )
 

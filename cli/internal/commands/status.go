@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/cli/internal/cli/client"
+	"github.com/pondplatform/pond/cli/internal/client"
 	api "github.com/pondplatform/pond/shared/server/api"
 	"github.com/spf13/cobra"
 )

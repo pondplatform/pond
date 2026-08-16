@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
 
-	"github.com/pondplatform/pond/cli/internal/cli"
+	"github.com/pondplatform/pond/cli/internal/app"
 )
 
 func main() {
@@ -13,6 +15,10 @@ func main() {
 	}
 
 	token := os.Getenv("POND_TOKEN")
-	root := cli.NewRootCmd(serverURL, token)
-	root.Execute()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	root := app.NewRootCmd(serverURL, token)
+	root.ExecuteContext(ctx)
 }

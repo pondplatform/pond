@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/cli/internal/cli/client"
-	shared "github.com/pondplatform/pond/shared/server/api"
+	"github.com/pondplatform/pond/cli/internal/client"
+	api "github.com/pondplatform/pond/shared/server/api"
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +31,7 @@ func NewConfigureCmd(serverClient client.ServerClient) *cobra.Command {
 				return fmt.Errorf("read file %q: %w", filePath, err)
 			}
 
-			var req shared.ConfigureDeploymentRequest
+			var req api.ConfigureDeploymentRequest
 			if err := json.Unmarshal(data, &req); err != nil {
 				return fmt.Errorf("parse file %q: %w", filePath, err)
 			}

@@ -1,8 +1,8 @@
-package cli
+package app
 
 import (
-	"github.com/pondplatform/pond/cli/internal/cli/client"
-	"github.com/pondplatform/pond/cli/internal/cli/commands"
+	"github.com/pondplatform/pond/cli/internal/client"
+	"github.com/pondplatform/pond/cli/internal/commands"
 	"github.com/spf13/cobra"
 )
 
