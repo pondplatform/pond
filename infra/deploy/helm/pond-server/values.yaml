@@ -4,6 +4,7 @@ image:
   pullPolicy: IfNotPresent
 
 listenAddr: ":8080"
+managementAddr: ":9090"
 databaseUrl: "postgres://pond:pond@postgres:5432/pond?sslmode=disable"
 rabbitmqUrl: "amqp://guest:guest@rabbitmq:5672/"
 jwtSecret: ""

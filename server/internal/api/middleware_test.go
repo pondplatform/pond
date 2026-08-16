@@ -2,17 +2,19 @@ package api
 
 import (
 	"context"
-	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/google/uuid"
+	"github.com/gin-gonic/gin"
 	"github.com/pondplatform/pond/server/internal/auth"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/shared/server/api"
 )
+
+func init() {
+	gin.SetMode(gin.TestMode)
+}
 
 // --- test doubles ---
 
@@ -33,46 +35,59 @@ func (m *mockAuthorizer) Authorize(_ context.Context, _ *domain.Identity, _ auth
 	return m.err
 }
 
-// okHandler is a simple handler that writes 200.
-var okHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-})
-
-// --- requireAuth ---
-
-func TestRequireAuth_NoToken_Returns401(t *testing.T) {
-	mw := requireAuth(&mockAuthenticator{err: api.ErrUnauthorized}, slog.Default())
+// ginContext creates a gin test context with the given request.
+func ginContext(req *http.Request) (*gin.Context, *httptest.ResponseRecorder) {
 	rec := httptest.NewRecorder()
-	mw(okHandler).ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	return c, rec
+}
+
+// runMiddleware runs a single gin.HandlerFunc against a request, calling Next automatically.
+func runMiddleware(mw gin.HandlerFunc, req *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	c, router := gin.CreateTestContext(rec)
+	c.Request = req
+	router.GET("/test", mw, func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
+// --- GinRequireAuth ---
+
+func TestGinRequireAuth_NoToken_Returns401(t *testing.T) {
+	rec := runMiddleware(GinRequireAuth(&mockAuthenticator{err: api.ErrUnauthorized}, nil), httptest.NewRequest("GET", "/test", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
 }
 
-func TestRequireAuth_InvalidToken_Returns401(t *testing.T) {
-	mw := requireAuth(&mockAuthenticator{err: api.ErrUnauthorized}, slog.Default())
-	req := httptest.NewRequest("GET", "/", nil)
+func TestGinRequireAuth_InvalidToken_Returns401(t *testing.T) {
+	req := httptest.NewRequest("GET", "/test", nil)
 	req.Header.Set("Authorization", "Bearer bad-token")
-	rec := httptest.NewRecorder()
-	mw(okHandler).ServeHTTP(rec, req)
+	rec := runMiddleware(GinRequireAuth(&mockAuthenticator{err: api.ErrUnauthorized}, nil), req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
 }
 
-func TestRequireAuth_ValidToken_InjectsIdentityAndCallsNext(t *testing.T) {
+func TestGinRequireAuth_ValidToken_InjectsIdentityAndCallsNext(t *testing.T) {
 	expectedIdentity := &domain.Identity{Role: domain.RoleMember}
-	mw := requireAuth(&mockAuthenticator{identity: expectedIdentity}, slog.Default())
 
-	var capturedIdentity *domain.Identity
-	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		capturedIdentity, _ = IdentityFromContext(r.Context())
-	})
-
-	req := httptest.NewRequest("GET", "/", nil)
-	req.Header.Set("Authorization", "Bearer valid")
 	rec := httptest.NewRecorder()
-	mw(next).ServeHTTP(rec, req)
+	router := gin.New()
+	var capturedIdentity *domain.Identity
+	router.GET("/test",
+		GinRequireAuth(&mockAuthenticator{identity: expectedIdentity}, nil),
+		func(c *gin.Context) {
+			capturedIdentity, _ = IdentityFromContext(c.Request.Context())
+			c.Status(http.StatusOK)
+		},
+	)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer valid")
+	router.ServeHTTP(rec, req)
 
 	if capturedIdentity == nil {
 		t.Fatal("expected identity in context, got nil")
@@ -82,113 +97,56 @@ func TestRequireAuth_ValidToken_InjectsIdentityAndCallsNext(t *testing.T) {
 	}
 }
 
-func TestRequireAuth_UnexpectedError_Returns500(t *testing.T) {
-	mw := requireAuth(&mockAuthenticator{err: errors.New("db down")}, slog.Default())
-	rec := httptest.NewRecorder()
-	mw(okHandler).ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+func TestGinRequireAuth_UnexpectedError_Returns500(t *testing.T) {
+	rec := runMiddleware(GinRequireAuth(&mockAuthenticator{err: errInternal}, nil), httptest.NewRequest("GET", "/test", nil))
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500, got %d", rec.Code)
 	}
 }
 
-// --- requireResourceAccess ---
+// --- GinAuthorize ---
 
-func requestWithIdentity(identity *domain.Identity) *http.Request {
-	r := httptest.NewRequest("GET", "/", nil)
-	return r.WithContext(contextWithIdentity(r.Context(), identity))
+func requestWithIdentityGin(identity *domain.Identity) *http.Request {
+	req := httptest.NewRequest("GET", "/test", nil)
+	return req.WithContext(contextWithIdentity(req.Context(), identity))
 }
 
-func TestRequireResourceAccess_NoIdentityInContext_Returns500(t *testing.T) {
-	mw := requireResourceAccess(
-		&mockAuthorizer{},
-		auth.Action{Resource: auth.ResourceDeployment, Verb: auth.VerbRead},
-		"",
-		slog.Default(),
+func TestGinAuthorize_NoIdentityInContext_Returns500(t *testing.T) {
+	rec := runMiddleware(
+		GinAuthorize(&mockAuthorizer{}, auth.Action{Resource: auth.ResourceDeployment, Verb: auth.VerbRead}),
+		httptest.NewRequest("GET", "/test", nil),
 	)
-	rec := httptest.NewRecorder()
-	// Plain request — no identity injected
-	mw(okHandler).ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 when identity missing, got %d", rec.Code)
 	}
 }
 
-func TestRequireResourceAccess_Forbidden_Returns403(t *testing.T) {
-	mw := requireResourceAccess(
-		&mockAuthorizer{err: api.ErrForbidden},
-		auth.Action{Resource: auth.ResourceDeployment, Verb: auth.VerbWrite},
-		"",
-		slog.Default(),
+func TestGinAuthorize_Forbidden_Returns403(t *testing.T) {
+	rec := runMiddleware(
+		GinAuthorize(&mockAuthorizer{err: api.ErrForbidden}, auth.Action{Resource: auth.ResourceDeployment, Verb: auth.VerbWrite}),
+		requestWithIdentityGin(&domain.Identity{Role: domain.RoleViewer}),
 	)
-	rec := httptest.NewRecorder()
-	mw(okHandler).ServeHTTP(rec, requestWithIdentity(&domain.Identity{Role: domain.RoleViewer}))
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", rec.Code)
 	}
 }
 
-func TestRequireResourceAccess_Allowed_CallsNext(t *testing.T) {
-	mw := requireResourceAccess(
-		&mockAuthorizer{err: nil},
-		auth.Action{Resource: auth.ResourceDeployment, Verb: auth.VerbRead},
-		"",
-		slog.Default(),
-	)
+func TestGinAuthorize_Allowed_CallsNext(t *testing.T) {
 	var nextCalled bool
-	next := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { nextCalled = true })
 
 	rec := httptest.NewRecorder()
-	mw(next).ServeHTTP(rec, requestWithIdentity(&domain.Identity{Role: domain.RoleMember}))
+	router := gin.New()
+	router.GET("/test",
+		GinAuthorize(&mockAuthorizer{err: nil}, auth.Action{Resource: auth.ResourceDeployment, Verb: auth.VerbRead}),
+		func(c *gin.Context) {
+			nextCalled = true
+			c.Status(http.StatusOK)
+		},
+	)
+	router.ServeHTTP(rec, requestWithIdentityGin(&domain.Identity{Role: domain.RoleMember}))
+
 	if !nextCalled {
 		t.Error("expected next to be called when authorized")
-	}
-}
-
-func TestRequireResourceAccess_InvalidResourceID_Returns400(t *testing.T) {
-	mw := requireResourceAccess(
-		&mockAuthorizer{},
-		auth.Action{Resource: auth.ResourceDeployment, Verb: auth.VerbRead},
-		"deploymentId",
-		slog.Default(),
-	)
-	req := httptest.NewRequest("GET", "/deployments/not-a-uuid", nil)
-	req = req.WithContext(contextWithIdentity(req.Context(), &domain.Identity{Role: domain.RoleMember}))
-	// PathValue requires the router to set the path param; simulate by using
-	// a mux pattern match so PathValue works.
-	mux := http.NewServeMux()
-	mux.Handle("GET /deployments/{deploymentId}", mw(okHandler))
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for invalid UUID, got %d", rec.Code)
-	}
-}
-
-func TestRequireResourceAccess_ValidResourceID_PopulatesAction(t *testing.T) {
-	resourceID := uuid.New()
-	var capturedAction auth.Action
-
-	authorizer := &captureAuthorizer{}
-	mw := requireResourceAccess(
-		authorizer,
-		auth.Action{Resource: auth.ResourceDeployment, Verb: auth.VerbRead},
-		"deploymentId",
-		slog.Default(),
-	)
-
-	mux := http.NewServeMux()
-	mux.Handle("GET /deployments/{deploymentId}", mw(okHandler))
-
-	req := httptest.NewRequest("GET", "/deployments/"+resourceID.String(), nil)
-	req = req.WithContext(contextWithIdentity(req.Context(), &domain.Identity{Role: domain.RoleMember}))
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	capturedAction = authorizer.lastAction
-	if capturedAction.ResourceID != resourceID {
-		t.Errorf("expected resourceID %v, got %v", resourceID, capturedAction.ResourceID)
 	}
 }
 
@@ -201,3 +159,10 @@ func (c *captureAuthorizer) Authorize(_ context.Context, _ *domain.Identity, act
 	c.lastAction = action
 	return nil
 }
+
+// errInternal is a non-sentinel error for testing the 500 path.
+var errInternal = errInternalType{}
+
+type errInternalType struct{}
+
+func (errInternalType) Error() string { return "internal error" }

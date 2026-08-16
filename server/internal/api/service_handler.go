@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
@@ -32,36 +33,36 @@ func toServiceResponse(s *domain.Service) api.Service {
 	}
 }
 
-func (h *ServiceHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("serviceId"))
+func (h *ServiceHandler) Get(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("serviceId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid service id")
+		writeError(c, http.StatusBadRequest, "invalid service id")
 		return
 	}
-	svc, err := h.get(r.Context(), id)
+	svc, err := h.get(c.Request.Context(), id)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusOK, toServiceResponse(svc))
+	writeJSON(c, http.StatusOK, toServiceResponse(svc))
 }
 
 func (h *ServiceHandler) get(ctx context.Context, id uuid.UUID) (*domain.Service, error) {
 	return h.services.GetByID(ctx, id)
 }
 
-func (h *ServiceHandler) List(w http.ResponseWriter, r *http.Request) {
-	projectID, err := uuid.Parse(r.PathValue("projectId"))
+func (h *ServiceHandler) List(c *gin.Context) {
+	projectID, err := uuid.Parse(c.Param("projectId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid project id")
+		writeError(c, http.StatusBadRequest, "invalid project id")
 		return
 	}
-	items, err := h.list(r.Context(), projectID)
+	items, err := h.list(c.Request.Context(), projectID)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeList(w, items, nil)
+	writeList(c, items, nil)
 }
 
 func (h *ServiceHandler) list(ctx context.Context, projectID uuid.UUID) ([]api.Service, error) {

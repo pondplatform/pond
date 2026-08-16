@@ -2,12 +2,12 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/shared/server/api"
@@ -22,18 +22,18 @@ func NewTokenHandler(jwtSecret []byte, log *slog.Logger) *TokenHandler {
 	return &TokenHandler{jwtSecret: jwtSecret, log: log}
 }
 
-func (h *TokenHandler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *TokenHandler) Create(c *gin.Context) {
 	var req api.CreateTokenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	resp, err := h.create(r.Context(), req)
+	resp, err := h.create(c.Request.Context(), req)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusCreated, resp)
+	writeJSON(c, http.StatusCreated, resp)
 }
 
 func (h *TokenHandler) create(_ context.Context, req api.CreateTokenRequest) (api.CreateTokenResponse, error) {

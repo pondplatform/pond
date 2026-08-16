@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/server/internal/auth"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
@@ -28,35 +29,35 @@ func NewDeploymentHandler(svc service.DeploymentService, services store.ServiceR
 	return &DeploymentHandler{svc: svc, services: services, authorizer: authorizer, log: log}
 }
 
-func (h *DeploymentHandler) Submit(w http.ResponseWriter, r *http.Request) {
+func (h *DeploymentHandler) Submit(c *gin.Context) {
 	req := defaultSubmitRequest()
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	// Project ID comes from the request body, not the path, so the middleware
 	// cannot do the ownership check — verify here via the authorizer.
-	identity, ok := IdentityFromContext(r.Context())
+	identity, ok := IdentityFromContext(c.Request.Context())
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		writeError(c, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	if err := h.authorizer.Authorize(r.Context(), identity, auth.Action{
+	if err := h.authorizer.Authorize(c.Request.Context(), identity, auth.Action{
 		Resource:   auth.ResourceProject,
 		Verb:       auth.VerbWrite,
 		ResourceID: req.ProjectID,
 	}); err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
 
-	d, err := h.submit(r.Context(), req)
+	d, err := h.submit(c.Request.Context(), req)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toDeploymentResponse(d))
+	writeJSON(c, http.StatusCreated, toDeploymentResponse(d))
 }
 
 func (h *DeploymentHandler) submit(ctx context.Context, req shared.SubmitRequest) (*domain.Deployment, error) {
@@ -88,18 +89,18 @@ func defaultSubmitRequest() shared.SubmitRequest {
 	}
 }
 
-func (h *DeploymentHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("deploymentId"))
+func (h *DeploymentHandler) GetStatus(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("deploymentId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid deployment id")
+		writeError(c, http.StatusBadRequest, "invalid deployment id")
 		return
 	}
-	detail, err := h.svc.GetStatus(r.Context(), id)
+	detail, err := h.svc.GetStatus(c.Request.Context(), id)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusOK, toDeploymentDetailResponse(detail))
+	writeJSON(c, http.StatusOK, toDeploymentDetailResponse(detail))
 }
 
 func toDeploymentDetailResponse(detail *service.DeploymentDetail) shared.Deployment {
@@ -160,36 +161,36 @@ func toDeploymentResponse(d *domain.Deployment) shared.Deployment {
 	}
 }
 
-func (h *DeploymentHandler) ListByService(w http.ResponseWriter, r *http.Request) {
-	serviceID, err := uuid.Parse(r.PathValue("serviceId"))
+func (h *DeploymentHandler) ListByService(c *gin.Context) {
+	serviceID, err := uuid.Parse(c.Param("serviceId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid service id")
+		writeError(c, http.StatusBadRequest, "invalid service id")
 		return
 	}
 
 	var environmentID *uuid.UUID
-	if envStr := r.URL.Query().Get("environment_id"); envStr != "" {
+	if envStr := c.Query("environment_id"); envStr != "" {
 		id, err := uuid.Parse(envStr)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid environment_id")
+			writeError(c, http.StatusBadRequest, "invalid environment_id")
 			return
 		}
 		environmentID = &id
 	}
 
 	var status *domain.DeploymentStatus
-	if statusStr := r.URL.Query().Get("status"); statusStr != "" {
+	if statusStr := c.Query("status"); statusStr != "" {
 		s := domain.DeploymentStatus(statusStr)
 		status = &s
 	}
 
-	p := ParsePagination(r)
-	items, nextCursor, err := h.listByService(r.Context(), serviceID, environmentID, status, p)
+	p := ParsePagination(c.Request)
+	items, nextCursor, err := h.listByService(c.Request.Context(), serviceID, environmentID, status, p)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeList(w, items, nextCursor)
+	writeList(c, items, nextCursor)
 }
 
 func (h *DeploymentHandler) listByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, p Pagination) ([]shared.DeploymentListItem, *string, error) {
@@ -225,17 +226,17 @@ func (h *DeploymentHandler) listByService(ctx context.Context, serviceID uuid.UU
 	return items, nextCursor, nil
 }
 
-func (h *DeploymentHandler) Cancel(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("deploymentId"))
+func (h *DeploymentHandler) Cancel(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("deploymentId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid deployment id")
+		writeError(c, http.StatusBadRequest, "invalid deployment id")
 		return
 	}
-	if err := h.cancel(r.Context(), id); err != nil {
-		writeServiceError(w, err, h.log)
+	if err := h.cancel(c.Request.Context(), id); err != nil {
+		writeServiceError(c, err, h.log)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	c.Status(http.StatusNoContent)
 }
 
 func (h *DeploymentHandler) cancel(ctx context.Context, id uuid.UUID) error {
@@ -246,40 +247,40 @@ func (h *DeploymentHandler) cancel(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-func (h *DeploymentHandler) ConfigureDeployment(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("deploymentId"))
+func (h *DeploymentHandler) ConfigureDeployment(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("deploymentId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid deployment id")
+		writeError(c, http.StatusBadRequest, "invalid deployment id")
 		return
 	}
 	var req shared.ConfigureDeploymentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := h.configureDeployment(r.Context(), id, req); err != nil {
-		writeServiceError(w, err, h.log)
+	if err := h.configureDeployment(c.Request.Context(), id, req); err != nil {
+		writeServiceError(c, err, h.log)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	c.Status(http.StatusNoContent)
 }
 
 func (h *DeploymentHandler) configureDeployment(ctx context.Context, id uuid.UUID, req shared.ConfigureDeploymentRequest) error {
 	return h.svc.ConfigureDeployment(ctx, id, req.Dependencies)
 }
 
-func (h *DeploymentHandler) GetCommandLogs(w http.ResponseWriter, r *http.Request) {
-	commandID, err := uuid.Parse(r.PathValue("commandId"))
+func (h *DeploymentHandler) GetCommandLogs(c *gin.Context) {
+	commandID, err := uuid.Parse(c.Param("commandId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid command id")
+		writeError(c, http.StatusBadRequest, "invalid command id")
 		return
 	}
-	items, err := h.getCommandLogs(r.Context(), commandID)
+	items, err := h.getCommandLogs(c.Request.Context(), commandID)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeList(w, items, nil)
+	writeList(c, items, nil)
 }
 
 func (h *DeploymentHandler) getCommandLogs(ctx context.Context, commandID uuid.UUID) ([]shared.CommandLog, error) {

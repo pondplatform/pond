@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/pondplatform/pond/server/internal/auth"
@@ -38,17 +39,20 @@ func NewAgentHandler(clusters store.ClusterRepository, agentConn service.AgentCo
 	}
 }
 
-func (h *AgentHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
+func (h *AgentHandler) ServeWS(c *gin.Context) {
+	r := c.Request
+	w := c.Writer
+
 	token := auth.BearerToken(r)
 	if token == "" {
-		writeError(w, http.StatusUnauthorized, "missing authorization")
+		writeError(c, http.StatusUnauthorized, "missing authorization")
 		return
 	}
 
 	hash := auth.SHA256Hex(token)
 	cluster, err := h.clusters.GetByTokenHash(r.Context(), hash)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		writeError(c, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 

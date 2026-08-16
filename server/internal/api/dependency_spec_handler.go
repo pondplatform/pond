@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/dependency"
 	"github.com/pondplatform/pond/shared/server/api"
@@ -46,9 +47,9 @@ func toDependencySpecResponse(d domain.DependencySpec) api.DependencySpec {
 	}
 }
 
-func (h *DependencySpecHandler) List(w http.ResponseWriter, r *http.Request) {
+func (h *DependencySpecHandler) List(c *gin.Context) {
 	items := h.list()
-	writeList(w, items, nil)
+	writeList(c, items, nil)
 }
 
 func (h *DependencySpecHandler) list() []api.DependencySpec {
@@ -60,18 +61,18 @@ func (h *DependencySpecHandler) list() []api.DependencySpec {
 	return items
 }
 
-func (h *DependencySpecHandler) Get(w http.ResponseWriter, r *http.Request) {
-	depType := r.PathValue("type")
+func (h *DependencySpecHandler) Get(c *gin.Context) {
+	depType := c.Param("type")
 	if depType == "" {
-		writeError(w, http.StatusBadRequest, "missing type")
+		writeError(c, http.StatusBadRequest, "missing type")
 		return
 	}
-	spec, err := h.get(r.Context(), depType)
+	spec, err := h.get(c.Request.Context(), depType)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusOK, toDependencySpecResponse(spec))
+	writeJSON(c, http.StatusOK, toDependencySpecResponse(spec))
 }
 
 func (h *DependencySpecHandler) get(_ context.Context, depType string) (domain.DependencySpec, error) {

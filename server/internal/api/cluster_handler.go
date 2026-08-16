@@ -6,13 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
@@ -38,18 +38,18 @@ func clusterToResponse(c *domain.Cluster, token string) api.Cluster {
 	}
 }
 
-func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *ClusterHandler) Create(c *gin.Context) {
 	var req api.CreateClusterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	cluster, token, err := h.create(r.Context(), req)
+	cluster, token, err := h.create(c.Request.Context(), req)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusCreated, clusterToResponse(cluster, token))
+	writeJSON(c, http.StatusCreated, clusterToResponse(cluster, token))
 }
 
 func (h *ClusterHandler) create(ctx context.Context, req api.CreateClusterRequest) (*domain.Cluster, string, error) {
@@ -84,45 +84,45 @@ func (h *ClusterHandler) create(ctx context.Context, req api.CreateClusterReques
 	return cluster, token, nil
 }
 
-func (h *ClusterHandler) Get(w http.ResponseWriter, r *http.Request) {
-	clusterID, err := uuid.Parse(r.PathValue("clusterId"))
+func (h *ClusterHandler) Get(c *gin.Context) {
+	clusterID, err := uuid.Parse(c.Param("clusterId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid cluster id")
+		writeError(c, http.StatusBadRequest, "invalid cluster id")
 		return
 	}
-	cluster, err := h.clusters.GetByID(r.Context(), clusterID)
+	cluster, err := h.clusters.GetByID(c.Request.Context(), clusterID)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusOK, clusterToResponse(cluster, ""))
+	writeJSON(c, http.StatusOK, clusterToResponse(cluster, ""))
 }
 
-func (h *ClusterHandler) List(w http.ResponseWriter, r *http.Request) {
-	clusters, err := h.clusters.List(r.Context())
+func (h *ClusterHandler) List(c *gin.Context) {
+	clusters, err := h.clusters.List(c.Request.Context())
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
 	items := make([]api.Cluster, len(clusters))
-	for i, c := range clusters {
-		items[i] = clusterToResponse(&c, "")
+	for i, cl := range clusters {
+		items[i] = clusterToResponse(&cl, "")
 	}
-	writeList(w, items, nil)
+	writeList(c, items, nil)
 }
 
-func (h *ClusterHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
-	clusterID, err := uuid.Parse(r.PathValue("clusterId"))
+func (h *ClusterHandler) RotateToken(c *gin.Context) {
+	clusterID, err := uuid.Parse(c.Param("clusterId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid cluster id")
+		writeError(c, http.StatusBadRequest, "invalid cluster id")
 		return
 	}
-	token, err := h.rotateToken(r.Context(), clusterID)
+	token, err := h.rotateToken(c.Request.Context(), clusterID)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.RotateTokenResponse{AgentToken: token})
+	writeJSON(c, http.StatusOK, api.RotateTokenResponse{AgentToken: token})
 }
 
 func (h *ClusterHandler) rotateToken(ctx context.Context, clusterID uuid.UUID) (string, error) {

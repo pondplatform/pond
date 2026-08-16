@@ -20,9 +20,10 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string
-	ListenAddr  string
-	RabbitMQURL string
+	DatabaseURL    string
+	ListenAddr     string
+	ManagementAddr string
+	RabbitMQURL    string
 	// AdminKey grants unrestricted access to all API endpoints when set.
 	// Configured via the POND_ADMIN_KEY environment variable.
 	AdminKey  string
@@ -30,7 +31,7 @@ type Config struct {
 }
 
 func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
-	log.Info("starting server", "addr", cfg.ListenAddr)
+	log.Info("starting server", "addr", cfg.ListenAddr, "management_addr", cfg.ManagementAddr)
 
 	if cfg.JWTSecret == "" {
 		return fmt.Errorf("POND_JWT_SECRET must be set")
@@ -100,27 +101,30 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	authenticator := auth.NewAdminKeyAuthenticator(cfg.AdminKey, auth.NewJWTAuthenticator(jwtSecret))
 	authorizer := auth.NewRoleAuthorizer()
 
-	// HTTP router
-	router := api.NewRouter(api.RouterDeps{
-		DeploySvc:     deploySvc,
-		Projects:      projectStore,
-		Envs:          envStore,
-		Services:      serviceStore,
-		Clusters:      clusterStore,
-		JWTSecret:     jwtSecret,
-		SpecRegistry:  specRegistry,
-		AgentHandler:  agentHandler,
-		Authenticator: authenticator,
-		Authorizer:    authorizer,
-		Log:           log.WithGroup("http"),
-	})
-
-	log.Info("server listening", "addr", cfg.ListenAddr)
-	server := &http.Server{
-		Addr:    cfg.ListenAddr,
-		Handler: router,
+	// HTTP servers
+	apiServer := &http.Server{
+		Addr: cfg.ListenAddr,
+		Handler: api.NewRouter(api.RouterDeps{
+			DeploySvc:     deploySvc,
+			Projects:      projectStore,
+			Envs:          envStore,
+			Services:      serviceStore,
+			Clusters:      clusterStore,
+			JWTSecret:     jwtSecret,
+			SpecRegistry:  specRegistry,
+			AgentHandler:  agentHandler,
+			Authenticator: authenticator,
+			Authorizer:    authorizer,
+			Log:           log.WithGroup("http"),
+		}),
 	}
 
+	mgmtServer := &http.Server{
+		Addr:    cfg.ManagementAddr,
+		Handler: api.NewManagementRouter(db),
+	}
+
+	// Shutdown both servers when context is cancelled or deployment service exits.
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -130,10 +134,19 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 				log.Error("deployment service stopped", "err", err)
 			}
 		}
-		server.Shutdown(context.Background())
+		apiServer.Shutdown(context.Background())
+		mgmtServer.Shutdown(context.Background())
 	}()
 
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	log.Info("management server listening", "addr", cfg.ManagementAddr)
+	go func() {
+		if err := mgmtServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("management server error", "err", err)
+		}
+	}()
+
+	log.Info("api server listening", "addr", cfg.ListenAddr)
+	if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("listen: %w", err)
 	}
 	if err := <-svcErr; err != nil {

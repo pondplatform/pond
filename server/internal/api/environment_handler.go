@@ -2,13 +2,13 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
@@ -39,23 +39,23 @@ func toEnvironmentResponse(e *domain.Environment) api.Environment {
 	}
 }
 
-func (h *EnvironmentHandler) Create(w http.ResponseWriter, r *http.Request) {
-	projectID, err := uuid.Parse(r.PathValue("projectId"))
+func (h *EnvironmentHandler) Create(c *gin.Context) {
+	projectID, err := uuid.Parse(c.Param("projectId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid project id")
+		writeError(c, http.StatusBadRequest, "invalid project id")
 		return
 	}
 	var req api.CreateEnvironmentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	env, err := h.create(r.Context(), projectID, req)
+	env, err := h.create(c.Request.Context(), projectID, req)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toEnvironmentResponse(env))
+	writeJSON(c, http.StatusCreated, toEnvironmentResponse(env))
 }
 
 func (h *EnvironmentHandler) create(ctx context.Context, projectID uuid.UUID, req api.CreateEnvironmentRequest) (*domain.Environment, error) {
@@ -108,36 +108,36 @@ func (h *EnvironmentHandler) create(ctx context.Context, projectID uuid.UUID, re
 	return env, nil
 }
 
-func (h *EnvironmentHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("envId"))
+func (h *EnvironmentHandler) Get(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("envId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid environment id")
+		writeError(c, http.StatusBadRequest, "invalid environment id")
 		return
 	}
-	env, err := h.get(r.Context(), id)
+	env, err := h.get(c.Request.Context(), id)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusOK, toEnvironmentResponse(env))
+	writeJSON(c, http.StatusOK, toEnvironmentResponse(env))
 }
 
 func (h *EnvironmentHandler) get(ctx context.Context, id uuid.UUID) (*domain.Environment, error) {
 	return h.envs.GetByID(ctx, id)
 }
 
-func (h *EnvironmentHandler) List(w http.ResponseWriter, r *http.Request) {
-	projectID, err := uuid.Parse(r.PathValue("projectId"))
+func (h *EnvironmentHandler) List(c *gin.Context) {
+	projectID, err := uuid.Parse(c.Param("projectId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid project id")
+		writeError(c, http.StatusBadRequest, "invalid project id")
 		return
 	}
-	items, err := h.list(r.Context(), projectID)
+	items, err := h.list(c.Request.Context(), projectID)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeList(w, items, nil)
+	writeList(c, items, nil)
 }
 
 func (h *EnvironmentHandler) list(ctx context.Context, projectID uuid.UUID) ([]api.Environment, error) {
@@ -157,23 +157,23 @@ func (h *EnvironmentHandler) list(ctx context.Context, projectID uuid.UUID) ([]a
 	return items, nil
 }
 
-func (h *EnvironmentHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("envId"))
+func (h *EnvironmentHandler) Update(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("envId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid environment id")
+		writeError(c, http.StatusBadRequest, "invalid environment id")
 		return
 	}
 	var req api.UpdateEnvironmentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	env, err := h.update(r.Context(), id, req)
+	env, err := h.update(c.Request.Context(), id, req)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusOK, toEnvironmentResponse(env))
+	writeJSON(c, http.StatusOK, toEnvironmentResponse(env))
 }
 
 func (h *EnvironmentHandler) update(ctx context.Context, id uuid.UUID, req api.UpdateEnvironmentRequest) (*domain.Environment, error) {

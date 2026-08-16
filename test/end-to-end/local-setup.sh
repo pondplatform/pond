@@ -6,7 +6,7 @@
 #   1. Builds pond-server and pond-agent Docker images
 #   2. Installs the pond-server Helm chart (postgres + rabbitmq included)
 #   3. Waits for the server to be healthy, then port-forwards it
-#   4. Creates an org + cluster via the API using the admin key
+#   4. Creates a cluster via the API using the admin key
 #   5. Installs the pond-agent Helm chart with the cluster's agent token
 #   6. Mints a CLI token and writes test/end-to-end/.e2e-env
 #
@@ -119,7 +119,7 @@ SERVER_URL="http://localhost:$SERVER_PORT"
 info "Waiting for server at $SERVER_URL ..."
 SERVER_READY=0
 for i in $(seq 1 30); do
-  if curl -sf -o /dev/null "$SERVER_URL/api/v1/organizations" \
+  if curl -sf -o /dev/null "$SERVER_URL/api/v1/clusters" \
       -H "Authorization: Bearer $ADMIN_KEY"; then
     SERVER_READY=1
     break
@@ -129,34 +129,10 @@ for i in $(seq 1 30); do
 done
 [[ $SERVER_READY -eq 1 ]] || die "server did not become healthy after 60s (port-forward PID $PF_PID — check: kubectl logs -n $NAMESPACE -l app=$SERVER_RELEASE)"
 
-# ── 5. Create organisation (idempotent) ───────────────────────────────────────
-step "Creating organisation 'local-org'"
-ORG_HTTP=$(curl -s -o /tmp/pond_org_body -w "%{http_code}" \
-  -X POST "$SERVER_URL/api/v1/organizations" \
-  -H "Authorization: Bearer $ADMIN_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"local-org"}')
-ORG_BODY=$(cat /tmp/pond_org_body)
-if [[ "$ORG_HTTP" == "201" ]]; then
-  ORG_ID=$(echo "$ORG_BODY" | jq -r '.id')
-elif [[ "$ORG_HTTP" == "409" ]]; then
-  info "Organisation already exists — looking it up"
-  LIST_RESPONSE=$(curl_api "GET /organizations" \
-    "$SERVER_URL/api/v1/organizations" \
-    -H "Authorization: Bearer $ADMIN_KEY")
-  ORG_ID=$(echo "$LIST_RESPONSE" | jq -r '.items[] | select(.name=="local-org") | .id')
-else
-  error "POST /organizations failed (HTTP $ORG_HTTP)"
-  error "Response: $ORG_BODY"
-  exit 1
-fi
-[[ -n "$ORG_ID" && "$ORG_ID" != "null" ]] || die "could not determine org ID"
-info "Organisation ID: $ORG_ID"
-
-# ── 6. Create cluster + obtain agent token (idempotent) ───────────────────────
-step "Creating cluster 'rancher-desktop' in org"
+# ── 5. Create cluster + obtain agent token (idempotent) ───────────────────────
+step "Creating cluster 'rancher-desktop'"
 CLUSTER_HTTP=$(curl -s -o /tmp/pond_cluster_body -w "%{http_code}" \
-  -X POST "$SERVER_URL/api/v1/organizations/$ORG_ID/clusters" \
+  -X POST "$SERVER_URL/api/v1/clusters" \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"rancher-desktop"}')
@@ -166,17 +142,17 @@ if [[ "$CLUSTER_HTTP" == "201" ]]; then
   AGENT_TOKEN=$(echo "$CLUSTER_BODY" | jq -r '.agentToken')
 elif [[ "$CLUSTER_HTTP" == "409" ]]; then
   info "Cluster already exists — looking it up and rotating token"
-  LIST_RESPONSE=$(curl_api "GET /organizations/$ORG_ID/clusters" \
-    "$SERVER_URL/api/v1/organizations/$ORG_ID/clusters" \
+  LIST_RESPONSE=$(curl_api "GET /clusters" \
+    "$SERVER_URL/api/v1/clusters" \
     -H "Authorization: Bearer $ADMIN_KEY")
   CLUSTER_ID=$(echo "$LIST_RESPONSE" | jq -r '.items[] | select(.name=="rancher-desktop") | .id')
   [[ -n "$CLUSTER_ID" && "$CLUSTER_ID" != "null" ]] || die "could not find cluster ID in: $LIST_RESPONSE"
-  ROTATE_RESPONSE=$(curl_api "POST /organizations/$ORG_ID/clusters/$CLUSTER_ID/rotate-token" \
-    -X POST "$SERVER_URL/api/v1/organizations/$ORG_ID/clusters/$CLUSTER_ID/rotate-token" \
+  ROTATE_RESPONSE=$(curl_api "POST /clusters/$CLUSTER_ID/rotate-token" \
+    -X POST "$SERVER_URL/api/v1/clusters/$CLUSTER_ID/rotate-token" \
     -H "Authorization: Bearer $ADMIN_KEY")
   AGENT_TOKEN=$(echo "$ROTATE_RESPONSE" | jq -r '.agentToken')
 else
-  error "POST /organizations/$ORG_ID/clusters failed (HTTP $CLUSTER_HTTP)"
+  error "POST /clusters failed (HTTP $CLUSTER_HTTP)"
   error "Response: $CLUSTER_BODY"
   exit 1
 fi
@@ -200,18 +176,18 @@ helm upgrade --install "$AGENT_RELEASE" "$HELM_AGENT" \
 
 # ── 8. Mint CLI token ─────────────────────────────────────────────────────────
 step "Minting CLI token"
-TOKEN_BODY=$(curl_api "POST /organizations/$ORG_ID/tokens" \
-  -X POST "$SERVER_URL/api/v1/organizations/$ORG_ID/tokens" \
+TOKEN_BODY=$(curl_api "POST /tokens" \
+  -X POST "$SERVER_URL/api/v1/tokens" \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{"role":"admin","description":"local-dev"}')
 POND_TOKEN=$(echo "$TOKEN_BODY" | jq -r '.token')
-[[ -n "$POND_TOKEN" && "$POND_TOKEN" != "null" ]] || die "could not obtain org token"
+[[ -n "$POND_TOKEN" && "$POND_TOKEN" != "null" ]] || die "could not obtain token"
 
 # ── 9. Create e2e project + environment (idempotent) ──────────────────────────
 step "Creating project 'e2e-project'"
 PROJ_HTTP=$(curl -s -o /tmp/pond_proj_body -w "%{http_code}" \
-  -X POST "$SERVER_URL/api/v1/organizations/$ORG_ID/projects" \
+  -X POST "$SERVER_URL/api/v1/projects" \
   -H "Authorization: Bearer $POND_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"e2e-project"}')
@@ -220,12 +196,12 @@ if [[ "$PROJ_HTTP" == "201" ]]; then
   PROJECT_ID=$(echo "$PROJ_BODY" | jq -r '.id')
 elif [[ "$PROJ_HTTP" == "409" ]]; then
   info "Project already exists — looking it up"
-  LIST=$(curl_api "GET /organizations/$ORG_ID/projects" \
-    "$SERVER_URL/api/v1/organizations/$ORG_ID/projects" \
+  LIST=$(curl_api "GET /projects" \
+    "$SERVER_URL/api/v1/projects" \
     -H "Authorization: Bearer $POND_TOKEN")
   PROJECT_ID=$(echo "$LIST" | jq -r '.items[] | select(.name=="e2e-project") | .id')
 else
-  error "POST /organizations/$ORG_ID/projects failed (HTTP $PROJ_HTTP)"
+  error "POST /projects failed (HTTP $PROJ_HTTP)"
   error "Response: $PROJ_BODY"
   exit 1
 fi
@@ -254,8 +230,8 @@ fi
 E2E_ENV="${E2E_ENV:-$REPO_ROOT/test/end-to-end/.e2e-env}"
 step "Writing $E2E_ENV"
 mkdir -p "$(dirname "$E2E_ENV")"
-printf 'export POND_SERVER_URL=%s\nexport POND_TOKEN=%s\nexport POND_ORG_ID=%s\nexport POND_CLUSTER_ID=%s\nexport POND_PROJECT_ID=%s\n' \
-  "$SERVER_URL" "$POND_TOKEN" "$ORG_ID" "$CLUSTER_ID" "$PROJECT_ID" > "$E2E_ENV"
+printf 'export POND_SERVER_URL=%s\nexport POND_TOKEN=%s\nexport POND_CLUSTER_ID=%s\nexport POND_PROJECT_ID=%s\n' \
+  "$SERVER_URL" "$POND_TOKEN" "$CLUSTER_ID" "$PROJECT_ID" > "$E2E_ENV"
 info "Written: $E2E_ENV"
 
 # ── 11. Summary ───────────────────────────────────────────────────────────────
@@ -265,7 +241,6 @@ echo "${bold}Environment:${reset}"
 echo "  Server URL:  $SERVER_URL"
 echo "  Admin key:   $ADMIN_KEY"
 echo "  JWT secret:  $JWT_SECRET"
-echo "  Org ID:      $ORG_ID"
 echo "  Cluster ID:  $CLUSTER_ID"
 echo "  Project ID:  $PROJECT_ID"
 echo "  Env file:    $E2E_ENV"

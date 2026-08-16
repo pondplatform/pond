@@ -1,12 +1,12 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 
+	"github.com/gin-gonic/gin"
 	"github.com/pondplatform/pond/shared/server/api"
 )
 
@@ -47,55 +47,50 @@ func ParsePagination(r *http.Request) Pagination {
 	return p
 }
 
-// writeJSON encodes v as JSON and writes it to w with the given status code.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+func writeJSON(c *gin.Context, status int, v any) {
+	c.JSON(status, v)
 }
 
-// writeList writes a paginated list response.
-func writeList[T any](w http.ResponseWriter, items []T, nextCursor *string) {
+func writeList[T any](c *gin.Context, items []T, nextCursor *string) {
 	if items == nil {
 		items = []T{}
 	}
-	writeJSON(w, http.StatusOK, ListResponse[T]{
+	c.JSON(http.StatusOK, ListResponse[T]{
 		Items:      items,
 		NextCursor: nextCursor,
 	})
 }
 
-func writeError(w http.ResponseWriter, status int, msg string) {
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+func writeError(c *gin.Context, status int, msg string) {
+	c.JSON(status, gin.H{"error": msg})
 }
 
-func writeValidationError(w http.ResponseWriter, err *api.ValidationErrors) {
-	w.WriteHeader(http.StatusUnprocessableEntity)
-	json.NewEncoder(w).Encode(map[string]any{
+func writeValidationError(c *gin.Context, err *api.ValidationErrors) {
+	c.JSON(http.StatusUnprocessableEntity, gin.H{
 		"error":  "validation failed",
 		"errors": err.Errors,
 	})
 }
 
-func writeServiceError(w http.ResponseWriter, err error, log *slog.Logger) {
+func writeServiceError(c *gin.Context, err error, log *slog.Logger) {
 	var ve *api.ValidationErrors
 	switch {
 	case errors.As(err, &ve):
-		writeValidationError(w, ve)
+		writeValidationError(c, ve)
 	case errors.Is(err, api.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not found")
+		writeError(c, http.StatusNotFound, "not found")
 	case errors.Is(err, api.ErrAlreadyExists):
-		writeError(w, http.StatusConflict, "already exists")
+		writeError(c, http.StatusConflict, "already exists")
 	case errors.Is(err, api.ErrConflict):
-		writeError(w, http.StatusConflict, "conflict")
+		writeError(c, http.StatusConflict, "conflict")
 	case errors.Is(err, api.ErrInvalidInput):
-		writeError(w, http.StatusBadRequest, "invalid input")
+		writeError(c, http.StatusBadRequest, "invalid input")
 	case errors.Is(err, api.ErrUnauthorized):
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		writeError(c, http.StatusUnauthorized, "unauthorized")
 	case errors.Is(err, api.ErrForbidden):
-		writeError(w, http.StatusForbidden, "forbidden")
+		writeError(c, http.StatusForbidden, "forbidden")
 	default:
 		log.Error("internal server error", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal server error")
+		writeError(c, http.StatusInternalServerError, "internal server error")
 	}
 }

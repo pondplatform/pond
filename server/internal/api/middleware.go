@@ -1,139 +1,75 @@
 package api
 
 import (
-	"bufio"
 	"errors"
-	"fmt"
 	"log/slog"
-	"net"
-	"net/http"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/gin-gonic/gin"
 	"github.com/pondplatform/pond/server/internal/auth"
 	"github.com/pondplatform/pond/shared/server/api"
 )
 
-// statusRecorder wraps ResponseWriter to capture the HTTP status code.
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(code int) {
-	r.status = code
-	r.ResponseWriter.WriteHeader(code)
-}
-
-func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	h, ok := r.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
-	}
-	return h.Hijack()
-}
-
-func loggingMiddleware(log *slog.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			start := time.Now()
-			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-			next.ServeHTTP(rec, r)
-			log.Info("request",
-				"method", r.Method,
-				"path", r.URL.Path,
-				"status", rec.status,
-				"duration_ms", time.Since(start).Milliseconds(),
-			)
-		})
+// GinLogger is a gin middleware that logs each request using slog.
+func GinLogger(log *slog.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		log.Info("request",
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"status", c.Writer.Status(),
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 	}
 }
 
-func jsonContentType(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		next.ServeHTTP(w, r)
-	})
-}
-
-// requireAuth validates the bearer token and injects *domain.Identity into context.
-// Returns 401 if no/invalid token.
-func requireAuth(authenticator auth.Authenticator, log *slog.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			identity, err := authenticator.Authenticate(r.Context(), r)
-			if err != nil {
-				if errors.Is(err, api.ErrUnauthorized) {
-					writeError(w, http.StatusUnauthorized, "unauthorized")
-					return
-				}
-				log.Error("authentication error", "err", err)
-				writeError(w, http.StatusInternalServerError, "internal server error")
+// GinRequireAuth validates the bearer token and injects *domain.Identity into the request context.
+// Aborts with 401 if the token is missing or invalid.
+func GinRequireAuth(authenticator auth.Authenticator, log *slog.Logger) gin.HandlerFunc {
+	if log == nil {
+		log = slog.Default()
+	}
+	return func(c *gin.Context) {
+		identity, err := authenticator.Authenticate(c.Request.Context(), c.Request)
+		if err != nil {
+			if errors.Is(err, api.ErrUnauthorized) {
+				c.AbortWithStatusJSON(401, gin.H{"error": "unauthorized"})
 				return
 			}
-			ctx := contextWithIdentity(r.Context(), identity)
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
-	}
-}
-
-// requireResourceAccess checks that the authenticated identity may perform action.
-//
-//   - resourceParam: path value key for the specific resource being accessed
-//     (e.g. "projectId", "deploymentId"). Empty means no resource-level check.
-//
-// The middleware populates action.ResourceID from the path, then delegates all
-// authorization logic to the authorizer. Returns 403 if forbidden, 404 if the
-// resource does not exist.
-func requireResourceAccess(
-	authorizer auth.Authorizer,
-	action auth.Action,
-	resourceParam string,
-	log *slog.Logger,
-) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			identity, ok := IdentityFromContext(r.Context())
-			if !ok {
-				log.Error("requireResourceAccess called without identity in context")
-				writeError(w, http.StatusInternalServerError, "internal server error")
-				return
-			}
-
-			if resourceParam != "" {
-				resourceID, err := uuid.Parse(r.PathValue(resourceParam))
-				if err != nil {
-					writeError(w, http.StatusBadRequest, "invalid resource ID")
-					return
-				}
-				action.ResourceID = resourceID
-			}
-
-			if err := authorizer.Authorize(r.Context(), identity, action); err != nil {
-				if errors.Is(err, api.ErrForbidden) {
-					writeError(w, http.StatusForbidden, "forbidden")
-					return
-				}
-				if errors.Is(err, api.ErrNotFound) {
-					writeError(w, http.StatusNotFound, "not found")
-					return
-				}
-				log.Error("authorization error", "err", err)
-				writeError(w, http.StatusInternalServerError, "internal server error")
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-// chain composes multiple middleware functions.
-func chain(middlewares ...func(http.Handler) http.Handler) func(http.Handler) http.Handler {
-	return func(final http.Handler) http.Handler {
-		for i := len(middlewares) - 1; i >= 0; i-- {
-			final = middlewares[i](final)
+			log.Error("authentication error", "err", err)
+			c.AbortWithStatusJSON(500, gin.H{"error": "internal server error"})
+			return
 		}
-		return final
+		c.Request = c.Request.WithContext(contextWithIdentity(c.Request.Context(), identity))
+		c.Next()
+	}
+}
+
+// GinAuthorize checks that the authenticated identity may perform action.
+// Must be used after GinRequireAuth. Aborts with 403/404 on denial.
+func GinAuthorize(authorizer auth.Authorizer, action auth.Action) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		identity, ok := IdentityFromContext(c.Request.Context())
+		if !ok {
+			log := slog.Default()
+			log.Error("GinAuthorize called without identity in context")
+			c.AbortWithStatusJSON(500, gin.H{"error": "internal server error"})
+			return
+		}
+		if err := authorizer.Authorize(c.Request.Context(), identity, action); err != nil {
+			if errors.Is(err, api.ErrForbidden) {
+				c.AbortWithStatusJSON(403, gin.H{"error": "forbidden"})
+				return
+			}
+			if errors.Is(err, api.ErrNotFound) {
+				c.AbortWithStatusJSON(404, gin.H{"error": "not found"})
+				return
+			}
+			slog.Default().Error("authorization error", "err", err)
+			c.AbortWithStatusJSON(500, gin.H{"error": "internal server error"})
+			return
+		}
+		c.Next()
 	}
 }

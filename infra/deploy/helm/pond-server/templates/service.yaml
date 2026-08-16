@@ -6,5 +6,9 @@ spec:
   selector:
     app: pond-server
   ports:
-    - port: 8080
-      targetPort: 8080
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: management
+      port: 9090
+      targetPort: management

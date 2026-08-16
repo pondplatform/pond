@@ -13,18 +13,27 @@ spec:
     metadata:
       labels:
         app: pond-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: pond-server
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
-            - containerPort: 8080
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9090
           env:
             - name: DATABASE_URL
               value: {{ .Values.databaseUrl | quote }}
             - name: LISTEN_ADDR
               value: {{ .Values.listenAddr | quote }}
+            - name: MANAGEMENT_ADDR
+              value: {{ .Values.managementAddr | quote }}
             - name: RABBITMQ_URL
               value: {{ .Values.rabbitmqUrl | quote }}
             - name: POND_JWT_SECRET
@@ -36,5 +45,17 @@ spec:
             - name: POND_ADMIN_KEY
               value: {{ .Values.adminKey | quote }}
             {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: management
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: management
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

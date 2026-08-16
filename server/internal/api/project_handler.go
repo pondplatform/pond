@@ -2,13 +2,13 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
@@ -34,18 +34,18 @@ func toProjectResponse(p *domain.Project) api.Project {
 	}
 }
 
-func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *ProjectHandler) Create(c *gin.Context) {
 	var req api.CreateProjectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	project, err := h.create(r.Context(), req)
+	project, err := h.create(c.Request.Context(), req)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toProjectResponse(project))
+	writeJSON(c, http.StatusCreated, toProjectResponse(project))
 }
 
 func (h *ProjectHandler) create(ctx context.Context, req api.CreateProjectRequest) (*domain.Project, error) {
@@ -74,50 +74,50 @@ func (h *ProjectHandler) create(ctx context.Context, req api.CreateProjectReques
 	return project, nil
 }
 
-func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("projectId"))
+func (h *ProjectHandler) Get(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("projectId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid project id")
+		writeError(c, http.StatusBadRequest, "invalid project id")
 		return
 	}
-	project, err := h.projects.GetByID(r.Context(), id)
+	project, err := h.projects.GetByID(c.Request.Context(), id)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusOK, toProjectResponse(project))
+	writeJSON(c, http.StatusOK, toProjectResponse(project))
 }
 
-func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
-	projects, err := h.projects.List(r.Context())
+func (h *ProjectHandler) List(c *gin.Context) {
+	projects, err := h.projects.List(c.Request.Context())
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
 	items := make([]api.Project, len(projects))
 	for i, p := range projects {
 		items[i] = toProjectResponse(&p)
 	}
-	writeList(w, items, nil)
+	writeList(c, items, nil)
 }
 
-func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("projectId"))
+func (h *ProjectHandler) Update(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("projectId"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid project id")
+		writeError(c, http.StatusBadRequest, "invalid project id")
 		return
 	}
 	var req api.UpdateProjectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	project, err := h.update(r.Context(), id, req)
+	project, err := h.update(c.Request.Context(), id, req)
 	if err != nil {
-		writeServiceError(w, err, h.log)
+		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(w, http.StatusOK, toProjectResponse(project))
+	writeJSON(c, http.StatusOK, toProjectResponse(project))
 }
 
 func (h *ProjectHandler) update(ctx context.Context, id uuid.UUID, req api.UpdateProjectRequest) (*domain.Project, error) {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/server/internal/auth"
 	"github.com/pondplatform/pond/server/internal/events"
@@ -74,16 +75,22 @@ func (m *mockAgentSession) Close() {
 	}
 }
 
+// serveWS runs the handler via a gin router (matches the registered signature).
+func serveWS(handler *AgentHandler, req *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	r := gin.New()
+	r.GET("/ws", handler.ServeWS)
+	r.ServeHTTP(rec, req)
+	return rec
+}
+
 func TestAgentHandler_ServeWS_Auth(t *testing.T) {
 	clusterRepo := &testutil.MockClusterRepository{}
 	handler := NewAgentHandler(clusterRepo, &mockAgentConnectionService{}, slog.Default())
 
 	t.Run("Unauthorized - no token", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/ws", nil)
-		rr := httptest.NewRecorder()
-
-		handler.ServeWS(rr, req)
-
+		rr := serveWS(handler, req)
 		if rr.Code != http.StatusUnauthorized {
 			t.Errorf("expected 401, got %d", rr.Code)
 		}
@@ -101,10 +108,7 @@ func TestAgentHandler_ServeWS_Auth(t *testing.T) {
 
 		req := httptest.NewRequest("GET", "/ws", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
-		rr := httptest.NewRecorder()
-
-		handler.ServeWS(rr, req)
-
+		rr := serveWS(handler, req)
 		if rr.Code != http.StatusUnauthorized {
 			t.Errorf("expected 401, got %d", rr.Code)
 		}
