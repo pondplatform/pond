@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/server/internal/auth"
 	"github.com/pondplatform/pond/server/internal/events"
 	"github.com/pondplatform/pond/server/internal/helmgen"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
@@ -293,13 +292,13 @@ func (m *MockEnvironmentRepository) Update(ctx context.Context, env *domain.Envi
 // --- store.ClusterRepository ---
 
 type MockClusterRepository struct {
-	GetByIDFn            func(ctx context.Context, id uuid.UUID) (*domain.Cluster, error)
-	GetByNameFn          func(ctx context.Context, orgID uuid.UUID, name string) (*domain.Cluster, error)
-	GetByTokenHashFn     func(ctx context.Context, hash string) (*domain.Cluster, error)
-	ListByOrganizationFn func(ctx context.Context, orgID uuid.UUID) ([]domain.Cluster, error)
-	CreateFn             func(ctx context.Context, cluster *domain.Cluster) error
-	UpdateLastSeenFn     func(ctx context.Context, id uuid.UUID, lastSeen time.Time) error
-	UpdateTokenHashFn    func(ctx context.Context, id uuid.UUID, tokenHash string) error
+	GetByIDFn        func(ctx context.Context, id uuid.UUID) (*domain.Cluster, error)
+	GetByNameFn      func(ctx context.Context, name string) (*domain.Cluster, error)
+	GetByTokenHashFn func(ctx context.Context, hash string) (*domain.Cluster, error)
+	ListFn           func(ctx context.Context) ([]domain.Cluster, error)
+	CreateFn         func(ctx context.Context, cluster *domain.Cluster) error
+	UpdateLastSeenFn func(ctx context.Context, id uuid.UUID, lastSeen time.Time) error
+	UpdateTokenHashFn func(ctx context.Context, id uuid.UUID, tokenHash string) error
 }
 
 func (m *MockClusterRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Cluster, error) {
@@ -308,9 +307,9 @@ func (m *MockClusterRepository) GetByID(ctx context.Context, id uuid.UUID) (*dom
 	}
 	return nil, nil
 }
-func (m *MockClusterRepository) GetByName(ctx context.Context, orgID uuid.UUID, name string) (*domain.Cluster, error) {
+func (m *MockClusterRepository) GetByName(ctx context.Context, name string) (*domain.Cluster, error) {
 	if m.GetByNameFn != nil {
-		return m.GetByNameFn(ctx, orgID, name)
+		return m.GetByNameFn(ctx, name)
 	}
 	return nil, nil
 }
@@ -320,9 +319,9 @@ func (m *MockClusterRepository) GetByTokenHash(ctx context.Context, hash string)
 	}
 	return nil, nil
 }
-func (m *MockClusterRepository) ListByOrganization(ctx context.Context, orgID uuid.UUID) ([]domain.Cluster, error) {
-	if m.ListByOrganizationFn != nil {
-		return m.ListByOrganizationFn(ctx, orgID)
+func (m *MockClusterRepository) List(ctx context.Context) ([]domain.Cluster, error) {
+	if m.ListFn != nil {
+		return m.ListFn(ctx)
 	}
 	return nil, nil
 }
@@ -397,66 +396,10 @@ func (m *MockTemplateRenderer) Render(values map[string]any, contexts map[string
 	return values, nil
 }
 
-// --- auth.AuthorizationRepository ---
-
-type MockAuthorizationRepository struct {
-	OrgIDForOrganizationFn func(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
-	OrgIDForClusterFn      func(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
-	OrgIDForProjectFn      func(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
-	OrgIDForEnvironmentFn  func(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
-	OrgIDForServiceFn      func(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
-	OrgIDForDeploymentFn   func(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
-	OrgIDForCommandFn      func(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
-}
-
-func (m *MockAuthorizationRepository) OrgIDForOrganization(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	if m.OrgIDForOrganizationFn != nil {
-		return m.OrgIDForOrganizationFn(ctx, id)
-	}
-	return uuid.Nil, nil
-}
-func (m *MockAuthorizationRepository) OrgIDForCluster(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	if m.OrgIDForClusterFn != nil {
-		return m.OrgIDForClusterFn(ctx, id)
-	}
-	return uuid.Nil, nil
-}
-func (m *MockAuthorizationRepository) OrgIDForProject(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	if m.OrgIDForProjectFn != nil {
-		return m.OrgIDForProjectFn(ctx, id)
-	}
-	return uuid.Nil, nil
-}
-func (m *MockAuthorizationRepository) OrgIDForEnvironment(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	if m.OrgIDForEnvironmentFn != nil {
-		return m.OrgIDForEnvironmentFn(ctx, id)
-	}
-	return uuid.Nil, nil
-}
-func (m *MockAuthorizationRepository) OrgIDForService(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	if m.OrgIDForServiceFn != nil {
-		return m.OrgIDForServiceFn(ctx, id)
-	}
-	return uuid.Nil, nil
-}
-func (m *MockAuthorizationRepository) OrgIDForDeployment(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	if m.OrgIDForDeploymentFn != nil {
-		return m.OrgIDForDeploymentFn(ctx, id)
-	}
-	return uuid.Nil, nil
-}
-func (m *MockAuthorizationRepository) OrgIDForCommand(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	if m.OrgIDForCommandFn != nil {
-		return m.OrgIDForCommandFn(ctx, id)
-	}
-	return uuid.Nil, nil
-}
-
 // Compile-time interface checks.
 var (
-	_ store.DeploymentInfoStore    = (*MockDeploymentInfoStore)(nil)
-	_ store.ClusterRepository      = (*MockClusterRepository)(nil)
-	_ events.Bus                   = (*MockBus)(nil)
-	_ helmgen.HelmValuesGenerator  = (*MockHelmValuesGenerator)(nil)
-	_ auth.AuthorizationRepository = (*MockAuthorizationRepository)(nil)
+	_ store.DeploymentInfoStore = (*MockDeploymentInfoStore)(nil)
+	_ store.ClusterRepository   = (*MockClusterRepository)(nil)
+	_ events.Bus                = (*MockBus)(nil)
+	_ helmgen.HelmValuesGenerator = (*MockHelmValuesGenerator)(nil)
 )

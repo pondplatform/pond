@@ -72,19 +72,11 @@ type EnvironmentRepository interface {
 	Update(ctx context.Context, env *domain.Environment) error
 }
 
-// OrganizationRepository manages organization persistence.
-type OrganizationRepository interface {
-	GetByID(ctx context.Context, id uuid.UUID) (*domain.Organization, error)
-	GetByName(ctx context.Context, name string) (*domain.Organization, error)
-	List(ctx context.Context, limit int, cursor string) ([]domain.Organization, error)
-	Create(ctx context.Context, org *domain.Organization) error
-}
-
 // ProjectRepository manages project persistence.
 type ProjectRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Project, error)
-	GetByName(ctx context.Context, orgID uuid.UUID, name string) (*domain.Project, error)
-	ListByOrganization(ctx context.Context, orgID uuid.UUID) ([]domain.Project, error)
+	GetByName(ctx context.Context, name string) (*domain.Project, error)
+	List(ctx context.Context) ([]domain.Project, error)
 	Create(ctx context.Context, project *domain.Project) error
 	SetRootEnvironment(ctx context.Context, projectID, envID uuid.UUID) error
 }
@@ -92,8 +84,8 @@ type ProjectRepository interface {
 // ClusterRepository manages cluster persistence.
 type ClusterRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Cluster, error)
-	GetByName(ctx context.Context, orgID uuid.UUID, name string) (*domain.Cluster, error)
-	ListByOrganization(ctx context.Context, orgID uuid.UUID) ([]domain.Cluster, error)
+	GetByName(ctx context.Context, name string) (*domain.Cluster, error)
+	List(ctx context.Context) ([]domain.Cluster, error)
 	Create(ctx context.Context, cluster *domain.Cluster) error
 	UpdateLastSeen(ctx context.Context, id uuid.UUID, t time.Time) error
 	UpdateTokenHash(ctx context.Context, id uuid.UUID, tokenHash string) error

@@ -79,18 +79,15 @@ func requireAuth(authenticator auth.Authenticator, log *slog.Logger) func(http.H
 
 // requireResourceAccess checks that the authenticated identity may perform action.
 //
-//   - orgParam:      path value key for the org ID (e.g. "orgId"). Empty means
-//     the authorizer uses identity.OrganizationID.
 //   - resourceParam: path value key for the specific resource being accessed
 //     (e.g. "projectId", "deploymentId"). Empty means no resource-level check.
 //
-// The middleware populates action.OrgID and action.ResourceID from the path,
-// then delegates all authorization logic (including resource ownership) to the
-// authorizer. Returns 403 if forbidden, 404 if the resource does not exist.
+// The middleware populates action.ResourceID from the path, then delegates all
+// authorization logic to the authorizer. Returns 403 if forbidden, 404 if the
+// resource does not exist.
 func requireResourceAccess(
 	authorizer auth.Authorizer,
 	action auth.Action,
-	orgParam string,
 	resourceParam string,
 	log *slog.Logger,
 ) func(http.Handler) http.Handler {
@@ -101,15 +98,6 @@ func requireResourceAccess(
 				log.Error("requireResourceAccess called without identity in context")
 				writeError(w, http.StatusInternalServerError, "internal server error")
 				return
-			}
-
-			if orgParam != "" {
-				orgID, err := uuid.Parse(r.PathValue(orgParam))
-				if err != nil {
-					writeError(w, http.StatusBadRequest, "invalid organization ID")
-					return
-				}
-				action.OrgID = orgID
 			}
 
 			if resourceParam != "" {

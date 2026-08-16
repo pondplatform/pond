@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/google/uuid"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 )
 
@@ -28,10 +27,9 @@ func (a *AdminKeyAuthenticator) Authenticate(ctx context.Context, r *http.Reques
 		token := BearerToken(r)
 		if token == a.adminKey {
 			return &domain.Identity{
-				OrganizationID: uuid.Nil,
-				Role:           domain.RoleAdmin,
-				Description:    "admin key",
-				IsAdminKey:     true,
+				Role:        domain.RoleAdmin,
+				Description: "admin key",
+				IsAdminKey:  true,
 			}, nil
 		}
 	}

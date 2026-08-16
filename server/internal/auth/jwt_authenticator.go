@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/shared/server/api"
 )
@@ -47,26 +46,16 @@ func (a *JWTAuthenticator) Authenticate(_ context.Context, r *http.Request) (*do
 
 	description, _ := claims["description"].(string)
 
-	// Admin token: cross-org, full access.
+	// Admin token: full access.
 	if isAdmin, _ := claims["is_admin"].(bool); isAdmin {
 		return &domain.Identity{
-			OrganizationID: uuid.Nil,
-			Role:           domain.RoleAdmin,
-			Description:    description,
-			IsAdminKey:     true,
+			Role:        domain.RoleAdmin,
+			Description: description,
+			IsAdminKey:  true,
 		}, nil
 	}
 
-	// Org-scoped token: must have org_id and role.
-	orgIDStr, ok := claims["org_id"].(string)
-	if !ok || orgIDStr == "" {
-		return nil, api.ErrUnauthorized
-	}
-	orgID, err := uuid.Parse(orgIDStr)
-	if err != nil {
-		return nil, api.ErrUnauthorized
-	}
-
+	// Role-scoped token: must have role.
 	roleStr, ok := claims["role"].(string)
 	if !ok || roleStr == "" {
 		return nil, api.ErrUnauthorized
@@ -77,8 +66,7 @@ func (a *JWTAuthenticator) Authenticate(_ context.Context, r *http.Request) (*do
 	}
 
 	return &domain.Identity{
-		OrganizationID: orgID,
-		Role:           role,
-		Description:    description,
+		Role:        role,
+		Description: description,
 	}, nil
 }

@@ -68,8 +68,8 @@ type envSetupResult struct {
 	ID uuid.UUID `json:"id"`
 }
 
-func (c *scenarioClient) createCluster(ctx context.Context, orgID uuid.UUID, name string) (clusterSetupResult, error) {
-	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/organizations/%s/clusters", orgID), map[string]any{"name": name})
+func (c *scenarioClient) createCluster(ctx context.Context, name string) (clusterSetupResult, error) {
+	resp, err := c.do(ctx, http.MethodPost, "/api/v1/clusters", map[string]any{"name": name})
 	if err != nil {
 		return clusterSetupResult{}, err
 	}
@@ -84,8 +84,8 @@ func (c *scenarioClient) createCluster(ctx context.Context, orgID uuid.UUID, nam
 	return result, nil
 }
 
-func (c *scenarioClient) createProject(ctx context.Context, orgID uuid.UUID, name string) (projectSetupResult, error) {
-	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/organizations/%s/projects", orgID), map[string]any{"name": name})
+func (c *scenarioClient) createProject(ctx context.Context, name string) (projectSetupResult, error) {
+	resp, err := c.do(ctx, http.MethodPost, "/api/v1/projects", map[string]any{"name": name})
 	if err != nil {
 		return projectSetupResult{}, err
 	}

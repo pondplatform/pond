@@ -59,8 +59,7 @@ func (h *EnvironmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EnvironmentHandler) create(ctx context.Context, projectID uuid.UUID, req api.CreateEnvironmentRequest) (*domain.Environment, error) {
-	project, err := h.projects.GetByID(ctx, projectID)
-	if err != nil {
+	if _, err := h.projects.GetByID(ctx, projectID); err != nil {
 		return nil, err
 	}
 
@@ -81,12 +80,8 @@ func (h *EnvironmentHandler) create(ctx context.Context, projectID uuid.UUID, re
 		CreatedAt:              time.Now().UTC(),
 	}
 
-	cluster, err := h.clusters.GetByID(ctx, req.ClusterID)
-	if err != nil {
+	if _, err := h.clusters.GetByID(ctx, req.ClusterID); err != nil {
 		return nil, err
-	}
-	if cluster.OrganizationID != project.OrganizationID {
-		return nil, api.ErrInvalidInput
 	}
 
 	existing, err := h.envs.GetByName(ctx, projectID, req.Name)
@@ -191,18 +186,9 @@ func (h *EnvironmentHandler) update(ctx context.Context, id uuid.UUID, req api.U
 		return nil, err
 	}
 
-	project, err := h.projects.GetByID(ctx, env.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-
 	if req.ClusterID != nil {
-		cluster, err := h.clusters.GetByID(ctx, *req.ClusterID)
-		if err != nil {
+		if _, err := h.clusters.GetByID(ctx, *req.ClusterID); err != nil {
 			return nil, err
-		}
-		if cluster.OrganizationID != project.OrganizationID {
-			return nil, api.ErrInvalidInput
 		}
 		env.ClusterID = *req.ClusterID
 	}

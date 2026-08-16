@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -13,7 +14,6 @@ import (
 
 // ScenarioResult contains the IDs and credentials created by BuildScenario.
 type ScenarioResult struct {
-	OrgID      uuid.UUID
 	ClusterID  uuid.UUID
 	ProjectID  uuid.UUID
 	EnvID      uuid.UUID
@@ -26,13 +26,14 @@ func BuildScenario(ctx context.Context, t *testing.T, h *TestHarness) ScenarioRe
 	t.Helper()
 
 	sc := newScenarioClient(h.BaseURL, h.AdminToken)
+	id := uuid.New().String()[:8]
 
-	cluster, err := sc.createCluster(ctx, h.OrgID, "test-cluster")
+	cluster, err := sc.createCluster(ctx, fmt.Sprintf("test-cluster-%s", id))
 	if err != nil {
 		t.Fatalf("create cluster: %v", err)
 	}
 
-	project, err := sc.createProject(ctx, h.OrgID, "test-project")
+	project, err := sc.createProject(ctx, fmt.Sprintf("test-project-%s", id))
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -43,7 +44,6 @@ func BuildScenario(ctx context.Context, t *testing.T, h *TestHarness) ScenarioRe
 	}
 
 	return ScenarioResult{
-		OrgID:      h.OrgID,
 		ClusterID:  cluster.ID,
 		ProjectID:  project.ID,
 		EnvID:      env.ID,

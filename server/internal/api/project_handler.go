@@ -17,19 +17,17 @@ import (
 
 type ProjectHandler struct {
 	projects store.ProjectRepository
-	orgs     store.OrganizationRepository
 	envs     store.EnvironmentRepository
 	log      *slog.Logger
 }
 
-func NewProjectHandler(projects store.ProjectRepository, orgs store.OrganizationRepository, envs store.EnvironmentRepository, log *slog.Logger) *ProjectHandler {
-	return &ProjectHandler{projects: projects, orgs: orgs, envs: envs, log: log}
+func NewProjectHandler(projects store.ProjectRepository, envs store.EnvironmentRepository, log *slog.Logger) *ProjectHandler {
+	return &ProjectHandler{projects: projects, envs: envs, log: log}
 }
 
 func toProjectResponse(p *domain.Project) api.Project {
 	return api.Project{
 		ID:                p.ID,
-		OrganizationID:    p.OrganizationID,
 		Name:              p.Name,
 		RootEnvironmentID: p.RootEnvironmentID,
 		CreatedAt:         p.CreatedAt,
@@ -37,17 +35,12 @@ func toProjectResponse(p *domain.Project) api.Project {
 }
 
 func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
-	orgID, err := uuid.Parse(r.PathValue("orgId"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid organization id")
-		return
-	}
 	var req api.CreateProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	project, err := h.create(r.Context(), orgID, req)
+	project, err := h.create(r.Context(), req)
 	if err != nil {
 		writeServiceError(w, err, h.log)
 		return
@@ -55,24 +48,19 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toProjectResponse(project))
 }
 
-func (h *ProjectHandler) create(ctx context.Context, orgID uuid.UUID, req api.CreateProjectRequest) (*domain.Project, error) {
-	if _, err := h.orgs.GetByID(ctx, orgID); err != nil {
-		return nil, err
-	}
-
+func (h *ProjectHandler) create(ctx context.Context, req api.CreateProjectRequest) (*domain.Project, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
 
 	project := &domain.Project{
-		ID:             uuid.New(),
-		OrganizationID: orgID,
-		Name:           req.Name,
-		CreatedAt:      time.Now().UTC(),
+		ID:        uuid.New(),
+		Name:      req.Name,
+		CreatedAt: time.Now().UTC(),
 	}
 
-	existing, err := h.projects.GetByName(ctx, orgID, req.Name)
+	existing, err := h.projects.GetByName(ctx, req.Name)
 	if err == nil && existing != nil {
 		return nil, api.ErrAlreadyExists
 	}
@@ -92,7 +80,7 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid project id")
 		return
 	}
-	project, err := h.get(r.Context(), id)
+	project, err := h.projects.GetByID(r.Context(), id)
 	if err != nil {
 		writeServiceError(w, err, h.log)
 		return
@@ -100,39 +88,17 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toProjectResponse(project))
 }
 
-func (h *ProjectHandler) get(ctx context.Context, id uuid.UUID) (*domain.Project, error) {
-	return h.projects.GetByID(ctx, id)
-}
-
 func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
-	orgID, err := uuid.Parse(r.PathValue("orgId"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid organization id")
-		return
-	}
-	items, err := h.list(r.Context(), orgID)
+	projects, err := h.projects.List(r.Context())
 	if err != nil {
 		writeServiceError(w, err, h.log)
 		return
 	}
-	writeList(w, items, nil)
-}
-
-func (h *ProjectHandler) list(ctx context.Context, orgID uuid.UUID) ([]api.Project, error) {
-	if _, err := h.orgs.GetByID(ctx, orgID); err != nil {
-		return nil, err
-	}
-
-	projects, err := h.projects.ListByOrganization(ctx, orgID)
-	if err != nil {
-		return nil, err
-	}
-
 	items := make([]api.Project, len(projects))
 	for i, p := range projects {
 		items[i] = toProjectResponse(&p)
 	}
-	return items, nil
+	writeList(w, items, nil)
 }
 
 func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {

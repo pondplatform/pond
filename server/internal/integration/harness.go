@@ -11,10 +11,8 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	"github.com/pondplatform/pond/cli/client"
 	"github.com/pondplatform/pond/shared/serviceconfig/config"
@@ -32,10 +30,9 @@ const testJWTSecret = "test-secret-for-integration-tests-only"
 // TestHarness owns a running server, its database connection, and test URLs.
 type TestHarness struct {
 	DB         *sql.DB
-	BaseURL    string    // "http://127.0.0.1:<port>"
-	WsAddr     string    // "127.0.0.1:<port>" (without ws:// prefix, for agent connection)
-	OrgID      uuid.UUID // bootstrapped org for this harness
-	AdminToken string    // JWT admin token for this harness
+	BaseURL    string // "http://127.0.0.1:<port>"
+	WsAddr     string // "127.0.0.1:<port>" (without ws:// prefix, for agent connection)
+	AdminToken string // JWT admin token for this harness
 
 	server *httptest.Server
 	cancel context.CancelFunc
@@ -64,13 +61,11 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 	envStore := store.NewEnvironmentStore(db)
 	serviceStore := store.NewServiceStore(db)
 	clusterStore := store.NewClusterStore(db)
-	orgStore := store.NewOrganizationStore(db)
 	projectStore := store.NewProjectStore(db)
 
 	jwtSecret := []byte(testJWTSecret)
 	authenticator := auth.NewJWTAuthenticator(jwtSecret)
-	authzRepo := store.NewAuthorizationStore(db)
-	authorizer := auth.NewRoleAuthorizer(authzRepo)
+	authorizer := auth.NewRoleAuthorizer()
 
 	tx := newTestTransactor(db)
 	specRegistry := dependency.NewSpecRegistry()
@@ -109,7 +104,6 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 	agentHandler := api.NewAgentHandler(clusterStore, agentConnSvc, log.WithGroup("agent_handler"))
 	router := api.NewRouter(api.RouterDeps{
 		DeploySvc:     deploySvc,
-		Orgs:          orgStore,
 		Projects:      projectStore,
 		Envs:          envStore,
 		Services:      serviceStore,
@@ -128,16 +122,12 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 	// Extract host:port for WebSocket connections
 	wsAddr := strings.TrimPrefix(server.URL, "http://")
 
-	// Bootstrap org and mint an admin JWT directly (chicken-and-egg: HTTP endpoints
-	// for org creation require a token, but token creation requires an org that was
-	// created by an admin).
-	orgID, adminToken := bootstrapOrgAndToken(t, db)
+	adminToken := mintAdminToken(t)
 
 	h := &TestHarness{
 		DB:         db,
 		BaseURL:    server.URL,
 		WsAddr:     wsAddr,
-		OrgID:      orgID,
 		AdminToken: adminToken,
 		server:     server,
 		cancel:     cancel,
@@ -185,26 +175,11 @@ func (t *testTransactor) RunInTx(ctx context.Context, fn func(ctx context.Contex
 	return sqlTx.Commit()
 }
 
-// bootstrapOrgAndToken inserts a minimal org directly in the DB and mints an
-// admin JWT. This bypasses the HTTP API to avoid the chicken-and-egg problem
-// where every endpoint requires a token, but token creation requires an org
-// that was created by an admin.
-func bootstrapOrgAndToken(t *testing.T, db *sql.DB) (orgID uuid.UUID, adminJWT string) {
+// mintAdminToken mints a JWT admin token for tests.
+func mintAdminToken(t *testing.T) string {
 	t.Helper()
 
-	orgID = uuid.New()
-	now := time.Now().UTC()
-
-	_, err := db.Exec(
-		`INSERT INTO organizations (id, name, created_at) VALUES ($1, $2, $3)`,
-		orgID, "test-org-"+orgID.String()[:8], now,
-	)
-	if err != nil {
-		t.Fatalf("bootstrap org: %v", err)
-	}
-
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"org_id":      orgID.String(),
 		"role":        "admin",
 		"description": "test-harness",
 	})
@@ -212,7 +187,5 @@ func bootstrapOrgAndToken(t *testing.T, db *sql.DB) (orgID uuid.UUID, adminJWT s
 	if err != nil {
 		t.Fatalf("sign bootstrap jwt: %v", err)
 	}
-
-	return orgID, signed
+	return signed
 }
-

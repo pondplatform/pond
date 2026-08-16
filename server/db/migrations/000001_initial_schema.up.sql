@@ -1,18 +1,10 @@
 -- Pond platform database schema
 -- Derived from internal/server/store/ SQL queries
 
-CREATE TABLE organizations
-(
-    id         UUID PRIMARY KEY,
-    name       TEXT        NOT NULL UNIQUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 CREATE TABLE clusters
 (
     id               UUID PRIMARY KEY,
-    organization_id  UUID        NOT NULL REFERENCES organizations (id),
-    name             TEXT        NOT NULL,
+    name             TEXT        NOT NULL UNIQUE,
     agent_token_hash TEXT        NOT NULL,
     last_seen_at     TIMESTAMPTZ,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -21,11 +13,9 @@ CREATE TABLE clusters
 CREATE TABLE projects
 (
     id                  UUID PRIMARY KEY,
-    organization_id     UUID        NOT NULL REFERENCES organizations (id),
-    name                TEXT        NOT NULL,
+    name                TEXT        NOT NULL UNIQUE,
     root_environment_id UUID,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (organization_id, name)
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE environments

@@ -56,7 +56,6 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 
 	// Repositories
 	deploymentInfoStore := store.NewDeploymentInfoStore(db)
-	orgStore := store.NewOrganizationStore(db)
 	projectStore := store.NewProjectStore(db)
 	envStore := store.NewEnvironmentStore(db)
 	serviceStore := store.NewServiceStore(db)
@@ -99,13 +98,11 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	// Auth components
 	jwtSecret := []byte(cfg.JWTSecret)
 	authenticator := auth.NewAdminKeyAuthenticator(cfg.AdminKey, auth.NewJWTAuthenticator(jwtSecret))
-	authzRepo := store.NewAuthorizationStore(db)
-	authorizer := auth.NewRoleAuthorizer(authzRepo)
+	authorizer := auth.NewRoleAuthorizer()
 
 	// HTTP router
 	router := api.NewRouter(api.RouterDeps{
 		DeploySvc:     deploySvc,
-		Orgs:          orgStore,
 		Projects:      projectStore,
 		Envs:          envStore,
 		Services:      serviceStore,

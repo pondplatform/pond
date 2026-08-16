@@ -2,9 +2,7 @@ package auth
 
 import (
 	"context"
-	"fmt"
 
-	"github.com/google/uuid"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/shared/server/api"
 )
@@ -13,41 +11,17 @@ import (
 // admin  → everything
 // member → Read/Write on all resources except ResourceToken and VerbManage
 // viewer → VerbRead on all resources except ResourceToken
-type RoleAuthorizer struct {
-	authzRepo AuthorizationRepository
-}
+type RoleAuthorizer struct{}
 
 // NewRoleAuthorizer creates a new RoleAuthorizer.
-func NewRoleAuthorizer(authzRepo AuthorizationRepository) *RoleAuthorizer {
-	return &RoleAuthorizer{authzRepo: authzRepo}
+func NewRoleAuthorizer() *RoleAuthorizer {
+	return &RoleAuthorizer{}
 }
 
 // Authorize checks whether the identity may perform action.
-// If action.OrgID is set it is used as the target org; otherwise the identity's
-// own org is used. If action.ResourceID is non-nil the authorizer resolves the
-// resource's owning org and verifies it matches before checking role permissions.
-func (a *RoleAuthorizer) Authorize(ctx context.Context, identity *domain.Identity, action Action) error {
+func (a *RoleAuthorizer) Authorize(_ context.Context, identity *domain.Identity, action Action) error {
 	if identity.IsAdminKey {
 		return nil
-	}
-
-	orgID := action.OrgID
-	if orgID == uuid.Nil {
-		orgID = identity.OrganizationID
-	}
-
-	if action.ResourceID != uuid.Nil {
-		resourceOrgID, err := a.resolveResourceOrgID(ctx, action)
-		if err != nil {
-			return err
-		}
-		if resourceOrgID != orgID {
-			return api.ErrForbidden
-		}
-	}
-
-	if identity.OrganizationID != orgID {
-		return api.ErrForbidden
 	}
 
 	if identity.Role == domain.RoleAdmin {
@@ -74,26 +48,4 @@ func (a *RoleAuthorizer) Authorize(ctx context.Context, identity *domain.Identit
 	}
 
 	return api.ErrForbidden
-}
-
-func (a *RoleAuthorizer) resolveResourceOrgID(ctx context.Context, action Action) (uuid.UUID, error) {
-	id := action.ResourceID
-	switch action.Resource {
-	case ResourceOrganization:
-		return a.authzRepo.OrgIDForOrganization(ctx, id)
-	case ResourceCluster:
-		return a.authzRepo.OrgIDForCluster(ctx, id)
-	case ResourceProject:
-		return a.authzRepo.OrgIDForProject(ctx, id)
-	case ResourceEnvironment:
-		return a.authzRepo.OrgIDForEnvironment(ctx, id)
-	case ResourceService:
-		return a.authzRepo.OrgIDForService(ctx, id)
-	case ResourceDeployment:
-		return a.authzRepo.OrgIDForDeployment(ctx, id)
-	case ResourceCommand:
-		return a.authzRepo.OrgIDForCommand(ctx, id)
-	default:
-		return uuid.Nil, fmt.Errorf("resolveResourceOrgID: unsupported resource type %q", action.Resource)
-	}
 }

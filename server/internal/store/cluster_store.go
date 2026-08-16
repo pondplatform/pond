@@ -23,8 +23,8 @@ func (s *ClusterStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Clust
 	var c domain.Cluster
 	var lastSeen sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, organization_id, name, agent_token_hash, last_seen_at, created_at FROM clusters WHERE id = $1", id,
-	).Scan(&c.ID, &c.OrganizationID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt)
+		"SELECT id, name, agent_token_hash, last_seen_at, created_at FROM clusters WHERE id = $1", id,
+	).Scan(&c.ID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("cluster %s: %w", id, api.ErrNotFound)
 	}
@@ -37,13 +37,13 @@ func (s *ClusterStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Clust
 	return &c, nil
 }
 
-func (s *ClusterStore) GetByName(ctx context.Context, orgID uuid.UUID, name string) (*domain.Cluster, error) {
+func (s *ClusterStore) GetByName(ctx context.Context, name string) (*domain.Cluster, error) {
 	var c domain.Cluster
 	var lastSeen sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, organization_id, name, agent_token_hash, last_seen_at, created_at FROM clusters WHERE organization_id = $1 AND name = $2",
-		orgID, name,
-	).Scan(&c.ID, &c.OrganizationID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt)
+		"SELECT id, name, agent_token_hash, last_seen_at, created_at FROM clusters WHERE name = $1",
+		name,
+	).Scan(&c.ID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("cluster %q: %w", name, api.ErrNotFound)
 	}
@@ -56,9 +56,9 @@ func (s *ClusterStore) GetByName(ctx context.Context, orgID uuid.UUID, name stri
 	return &c, nil
 }
 
-func (s *ClusterStore) ListByOrganization(ctx context.Context, orgID uuid.UUID) ([]domain.Cluster, error) {
+func (s *ClusterStore) List(ctx context.Context) ([]domain.Cluster, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, organization_id, name, agent_token_hash, last_seen_at, created_at FROM clusters WHERE organization_id = $1", orgID,
+		"SELECT id, name, agent_token_hash, last_seen_at, created_at FROM clusters",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list clusters: %w", err)
@@ -69,7 +69,7 @@ func (s *ClusterStore) ListByOrganization(ctx context.Context, orgID uuid.UUID) 
 	for rows.Next() {
 		var c domain.Cluster
 		var lastSeen sql.NullTime
-		if err := rows.Scan(&c.ID, &c.OrganizationID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan cluster: %w", err)
 		}
 		if lastSeen.Valid {
@@ -82,8 +82,8 @@ func (s *ClusterStore) ListByOrganization(ctx context.Context, orgID uuid.UUID) 
 
 func (s *ClusterStore) Create(ctx context.Context, cluster *domain.Cluster) error {
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO clusters (id, organization_id, name, agent_token_hash, last_seen_at, created_at) VALUES ($1, $2, $3, $4, $5, $6)",
-		cluster.ID, cluster.OrganizationID, cluster.Name, cluster.AgentTokenHash, cluster.LastSeenAt, cluster.CreatedAt,
+		"INSERT INTO clusters (id, name, agent_token_hash, last_seen_at, created_at) VALUES ($1, $2, $3, $4, $5)",
+		cluster.ID, cluster.Name, cluster.AgentTokenHash, cluster.LastSeenAt, cluster.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("create cluster: %w", err)
@@ -115,8 +115,8 @@ func (s *ClusterStore) GetByTokenHash(ctx context.Context, tokenHash string) (*d
 	var c domain.Cluster
 	var lastSeen sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, organization_id, name, agent_token_hash, last_seen_at, created_at FROM clusters WHERE agent_token_hash = $1", tokenHash,
-	).Scan(&c.ID, &c.OrganizationID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt)
+		"SELECT id, name, agent_token_hash, last_seen_at, created_at FROM clusters WHERE agent_token_hash = $1", tokenHash,
+	).Scan(&c.ID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("cluster with token: %w", api.ErrNotFound)
 	}

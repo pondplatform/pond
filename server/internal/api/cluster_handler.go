@@ -21,37 +21,30 @@ import (
 
 type ClusterHandler struct {
 	clusters store.ClusterRepository
-	orgs     store.OrganizationRepository
 	log      *slog.Logger
 }
 
-func NewClusterHandler(clusters store.ClusterRepository, orgs store.OrganizationRepository, log *slog.Logger) *ClusterHandler {
-	return &ClusterHandler{clusters: clusters, orgs: orgs, log: log}
+func NewClusterHandler(clusters store.ClusterRepository, log *slog.Logger) *ClusterHandler {
+	return &ClusterHandler{clusters: clusters, log: log}
 }
 
 func clusterToResponse(c *domain.Cluster, token string) api.Cluster {
 	return api.Cluster{
-		ID:             c.ID,
-		OrganizationID: c.OrganizationID,
-		Name:           c.Name,
-		AgentToken:     token,
-		LastSeenAt:     c.LastSeenAt,
-		CreatedAt:      c.CreatedAt,
+		ID:         c.ID,
+		Name:       c.Name,
+		AgentToken: token,
+		LastSeenAt: c.LastSeenAt,
+		CreatedAt:  c.CreatedAt,
 	}
 }
 
 func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
-	orgID, err := uuid.Parse(r.PathValue("orgId"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid organization id")
-		return
-	}
 	var req api.CreateClusterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	cluster, token, err := h.create(r.Context(), orgID, req)
+	cluster, token, err := h.create(r.Context(), req)
 	if err != nil {
 		writeServiceError(w, err, h.log)
 		return
@@ -59,11 +52,7 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, clusterToResponse(cluster, token))
 }
 
-func (h *ClusterHandler) create(ctx context.Context, orgID uuid.UUID, req api.CreateClusterRequest) (*domain.Cluster, string, error) {
-	if _, err := h.orgs.GetByID(ctx, orgID); err != nil {
-		return nil, "", err
-	}
-
+func (h *ClusterHandler) create(ctx context.Context, req api.CreateClusterRequest) (*domain.Cluster, string, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if err := req.Validate(); err != nil {
 		return nil, "", err
@@ -76,13 +65,12 @@ func (h *ClusterHandler) create(ctx context.Context, orgID uuid.UUID, req api.Cr
 
 	cluster := &domain.Cluster{
 		ID:             uuid.New(),
-		OrganizationID: orgID,
 		Name:           req.Name,
 		AgentTokenHash: tokenHash,
 		CreatedAt:      time.Now().UTC(),
 	}
 
-	existing, err := h.clusters.GetByName(ctx, orgID, req.Name)
+	existing, err := h.clusters.GetByName(ctx, req.Name)
 	if err == nil && existing != nil {
 		return nil, "", api.ErrAlreadyExists
 	}
@@ -97,17 +85,12 @@ func (h *ClusterHandler) create(ctx context.Context, orgID uuid.UUID, req api.Cr
 }
 
 func (h *ClusterHandler) Get(w http.ResponseWriter, r *http.Request) {
-	orgID, err := uuid.Parse(r.PathValue("orgId"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid organization id")
-		return
-	}
 	clusterID, err := uuid.Parse(r.PathValue("clusterId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid cluster id")
 		return
 	}
-	cluster, err := h.get(r.Context(), orgID, clusterID)
+	cluster, err := h.clusters.GetByID(r.Context(), clusterID)
 	if err != nil {
 		writeServiceError(w, err, h.log)
 		return
@@ -115,60 +98,26 @@ func (h *ClusterHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, clusterToResponse(cluster, ""))
 }
 
-func (h *ClusterHandler) get(ctx context.Context, orgID, clusterID uuid.UUID) (*domain.Cluster, error) {
-	cluster, err := h.clusters.GetByID(ctx, clusterID)
-	if err != nil {
-		return nil, err
-	}
-	if cluster.OrganizationID != orgID {
-		return nil, api.ErrNotFound
-	}
-	return cluster, nil
-}
-
 func (h *ClusterHandler) List(w http.ResponseWriter, r *http.Request) {
-	orgID, err := uuid.Parse(r.PathValue("orgId"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid organization id")
-		return
-	}
-	items, err := h.list(r.Context(), orgID)
+	clusters, err := h.clusters.List(r.Context())
 	if err != nil {
 		writeServiceError(w, err, h.log)
 		return
 	}
-	writeList(w, items, nil)
-}
-
-func (h *ClusterHandler) list(ctx context.Context, orgID uuid.UUID) ([]api.Cluster, error) {
-	if _, err := h.orgs.GetByID(ctx, orgID); err != nil {
-		return nil, err
-	}
-
-	clusters, err := h.clusters.ListByOrganization(ctx, orgID)
-	if err != nil {
-		return nil, err
-	}
-
 	items := make([]api.Cluster, len(clusters))
 	for i, c := range clusters {
 		items[i] = clusterToResponse(&c, "")
 	}
-	return items, nil
+	writeList(w, items, nil)
 }
 
 func (h *ClusterHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
-	orgID, err := uuid.Parse(r.PathValue("orgId"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid organization id")
-		return
-	}
 	clusterID, err := uuid.Parse(r.PathValue("clusterId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid cluster id")
 		return
 	}
-	token, err := h.rotateToken(r.Context(), orgID, clusterID)
+	token, err := h.rotateToken(r.Context(), clusterID)
 	if err != nil {
 		writeServiceError(w, err, h.log)
 		return
@@ -176,13 +125,9 @@ func (h *ClusterHandler) RotateToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.RotateTokenResponse{AgentToken: token})
 }
 
-func (h *ClusterHandler) rotateToken(ctx context.Context, orgID, clusterID uuid.UUID) (string, error) {
-	cluster, err := h.clusters.GetByID(ctx, clusterID)
-	if err != nil {
+func (h *ClusterHandler) rotateToken(ctx context.Context, clusterID uuid.UUID) (string, error) {
+	if _, err := h.clusters.GetByID(ctx, clusterID); err != nil {
 		return "", err
-	}
-	if cluster.OrganizationID != orgID {
-		return "", api.ErrNotFound
 	}
 
 	token, tokenHash, err := generateToken()
