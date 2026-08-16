@@ -119,16 +119,7 @@ func TestDeployment_SimpleSucceeds(t *testing.T) {
 	h := NewTestHarness(t, testConnStr, testAMQPURL)
 	scenario := BuildScenario(ctx, t, h)
 
-	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, DefaultBehavior)
-	if err := fa.Connect(ctx); err != nil {
-		t.Fatalf("connect fake agent: %v", err)
-	}
-	go func() {
-		if err := fa.Run(ctx); err != nil {
-			t.Logf("fake agent run error: %v", err)
-		}
-	}()
-	defer fa.Stop()
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, DefaultBehavior)
 
 	c := h.Client()
 	cfg := MinimalServiceConfig("test-service")
@@ -175,16 +166,7 @@ func TestDeployment_HelmFails(t *testing.T) {
 	h := NewTestHarness(t, testConnStr, testAMQPURL)
 	scenario := BuildScenario(ctx, t, h)
 
-	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, FailingBehavior("helm upgrade failed: release not found"))
-	if err := fa.Connect(ctx); err != nil {
-		t.Fatalf("connect fake agent: %v", err)
-	}
-	go func() {
-		if err := fa.Run(ctx); err != nil {
-			t.Logf("fake agent run error: %v", err)
-		}
-	}()
-	defer fa.Stop()
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, FailingBehavior("helm upgrade failed: release not found"))
 
 	c := h.Client()
 	cfg := MinimalServiceConfig("test-service")
@@ -221,16 +203,7 @@ func TestDeployment_WithTofuDep(t *testing.T) {
 		"database": "testdb",
 	})
 
-	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, behavior)
-	if err := fa.Connect(ctx); err != nil {
-		t.Fatalf("connect fake agent: %v", err)
-	}
-	go func() {
-		if err := fa.Run(ctx); err != nil {
-			t.Logf("fake agent run error: %v", err)
-		}
-	}()
-	defer fa.Stop()
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, behavior)
 
 	c := h.Client()
 	cfg := ServiceConfigWithDep("test-service")
@@ -287,16 +260,7 @@ func TestDeployment_TofuFails(t *testing.T) {
 		},
 	})
 
-	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, behavior)
-	if err := fa.Connect(ctx); err != nil {
-		t.Fatalf("connect fake agent: %v", err)
-	}
-	go func() {
-		if err := fa.Run(ctx); err != nil {
-			t.Logf("fake agent run error: %v", err)
-		}
-	}()
-	defer fa.Stop()
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, behavior)
 
 	c := h.Client()
 	cfg := ServiceConfigWithDep("test-service")
@@ -349,16 +313,7 @@ func TestDeployment_WithLogs(t *testing.T) {
 		Logs:    []string{"Starting helm upgrade...", "Waiting for pods...", "Upgrade complete"},
 	}
 
-	fa := NewFakeAgent(h.WsAddr, scenario.AgentToken, behavior)
-	if err := fa.Connect(ctx); err != nil {
-		t.Fatalf("connect fake agent: %v", err)
-	}
-	go func() {
-		if err := fa.Run(ctx); err != nil {
-			t.Logf("fake agent run error: %v", err)
-		}
-	}()
-	defer fa.Stop()
+	h.StartFakeAgent(ctx, t, scenario.AgentToken, behavior)
 
 	c := h.Client()
 	cfg := MinimalServiceConfig("test-service")
@@ -420,17 +375,3 @@ func pollDeploymentStatus(ctx context.Context, t *testing.T, c client.ServerClie
 	}
 }
 
-func waitForCommands(t *testing.T, fa *FakeAgent, count int, timeout time.Duration) {
-	t.Helper()
-
-	deadline := time.Now().Add(timeout)
-	for {
-		if len(fa.ReceivedCommands()) >= count {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timeout waiting for %d commands", count)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-}

@@ -48,3 +48,4 @@ Thumbs.db
 *.pem
 *.key
 test/end-to-end/.e2e-env
+test/end-to-end/.e2e-pids

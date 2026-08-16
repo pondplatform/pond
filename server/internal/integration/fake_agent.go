@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	agentconn "github.com/pondplatform/pond/agent/connection"
 	"github.com/pondplatform/pond/shared/agent/wire"
 )
@@ -222,56 +221,3 @@ func PerCommandBehavior(handlers map[wire.CommandType]func(cmd *wire.CommandPayl
 	}
 }
 
-// BlockingBehavior creates a behavior that blocks on a channel before returning.
-// Useful for testing agent disconnect scenarios.
-func BlockingBehavior(unblock <-chan struct{}) Behavior {
-	return Behavior{
-		Handler: func(cmd *wire.CommandPayload) *wire.ResultPayload {
-			<-unblock
-			return &wire.ResultPayload{
-				CommandID: cmd.ID,
-				Success:   true,
-			}
-		},
-	}
-}
-
-// CommandCountBehavior tracks the number of commands received and can fail
-// specific command indices.
-func CommandCountBehavior(failIndices map[int]string) Behavior {
-	var count int
-	var mu sync.Mutex
-	return Behavior{
-		Handler: func(cmd *wire.CommandPayload) *wire.ResultPayload {
-			mu.Lock()
-			idx := count
-			count++
-			mu.Unlock()
-
-			if errMsg, shouldFail := failIndices[idx]; shouldFail {
-				return &wire.ResultPayload{
-					CommandID: cmd.ID,
-					Success:   false,
-					Error:     errMsg,
-				}
-			}
-			return &wire.ResultPayload{
-				CommandID: cmd.ID,
-				Success:   true,
-			}
-		},
-	}
-}
-
-// Used by tests to generate stable output for tofu commands
-func MakeTofuOutput(host string, port int) json.RawMessage {
-	output := map[string]any{
-		"host": host,
-		"port": port,
-	}
-	data, _ := json.Marshal(output)
-	return data
-}
-
-// Compile-time check that FakeAgent uses the same interface concepts
-var _ = uuid.New // ensure uuid is used

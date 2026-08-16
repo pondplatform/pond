@@ -113,7 +113,6 @@ kubectl port-forward \
   "svc/$SERVER_RELEASE" \
   "${SERVER_PORT}:8080" &
 PF_PID=$!
-trap 'kill $PF_PID 2>/dev/null || true' EXIT
 
 SERVER_URL="http://localhost:$SERVER_PORT"
 info "Waiting for server at $SERVER_URL ..."
@@ -234,6 +233,10 @@ printf 'export POND_SERVER_URL=%s\nexport POND_TOKEN=%s\nexport POND_CLUSTER_ID=
   "$SERVER_URL" "$POND_TOKEN" "$CLUSTER_ID" "$PROJECT_ID" > "$E2E_ENV"
 info "Written: $E2E_ENV"
 
+E2E_PIDS="$SCRIPT_DIR/.e2e-pids"
+echo "$PF_PID" > "$E2E_PIDS"
+info "Port-forward PID $PF_PID saved to $E2E_PIDS (teardown.sh will stop it)"
+
 # ── 11. Summary ───────────────────────────────────────────────────────────────
 step "Done"
 echo
@@ -257,6 +260,5 @@ echo "${bold}Tear down:${reset}"
 echo "  helm uninstall $SERVER_RELEASE $AGENT_RELEASE -n $NAMESPACE"
 echo "  kubectl delete namespace $NAMESPACE"
 echo
-echo "  Port-forward PID $PF_PID is running. Press Ctrl-C to stop it."
-# Keep port-forward alive until the user interrupts
-wait $PF_PID
+echo "  Port-forward PID $PF_PID is running in the background."
+echo "  Run teardown.sh to stop it, or: kill $PF_PID"

@@ -51,6 +51,17 @@ else
   info "No matching port-forward process found"
 fi
 
+E2E_PIDS="${E2E_PIDS:-$SCRIPT_DIR/.e2e-pids}"
+if [[ -f "$E2E_PIDS" ]]; then
+  while IFS= read -r pid; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null && info "Stopped port-forward PID $pid" || true
+    fi
+  done < "$E2E_PIDS"
+  rm -f "$E2E_PIDS"
+  info "Removed: $E2E_PIDS"
+fi
+
 # ── 2. Uninstall Helm releases ────────────────────────────────────────────────
 step "Uninstalling Helm releases from namespace '$NAMESPACE'"
 for release in "$SERVER_RELEASE" "$AGENT_RELEASE"; do

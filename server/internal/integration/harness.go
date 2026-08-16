@@ -144,6 +144,23 @@ func (h *TestHarness) Client() client.ServerClient {
 	return client.NewHTTPClientWithToken(h.BaseURL, h.AdminToken)
 }
 
+// StartFakeAgent creates, connects, and starts a FakeAgent in a background goroutine.
+// It registers t.Cleanup to stop the agent when the test ends.
+func (h *TestHarness) StartFakeAgent(ctx context.Context, t *testing.T, token string, b Behavior) *FakeAgent {
+	t.Helper()
+	fa := NewFakeAgent(h.WsAddr, token, b)
+	if err := fa.Connect(ctx); err != nil {
+		t.Fatalf("start fake agent: %v", err)
+	}
+	go func() {
+		if err := fa.Run(ctx); err != nil {
+			t.Logf("fake agent run error: %v", err)
+		}
+	}()
+	t.Cleanup(fa.Stop)
+	return fa
+}
+
 // Cleanup stops the server and closes the database connection.
 func (h *TestHarness) Cleanup() {
 	h.cancel()

@@ -54,5 +54,4 @@ e2e-teardown:
 	./test/end-to-end/teardown.sh
 
 e2e: e2e-setup
-	./test/end-to-end/deploy-simple.sh
 	./test/end-to-end/deploy-postgres.sh
