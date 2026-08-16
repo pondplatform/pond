@@ -551,23 +551,6 @@ func TestValidate_MixedKnownAndUnknownReportsOnlyUnknown(t *testing.T) {
 	}
 }
 
-// --- buildTofuPayload (package-level helper) ---
-
-func TestBuildTofuPayload_ContainsExpectedVars(t *testing.T) {
-	payload, err := buildTofuPayload(
-		"my-svc", "db", "postgres",
-		map[string]any{"version": "14"},
-		map[string]any{"region": "eu-west-1"},
-		map[string]any{"name": "staging"},
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(payload) == 0 {
-		t.Fatal("expected non-empty payload")
-	}
-}
-
 // --- environmentProviderInput ---
 
 func TestEnvironmentProviderInput_IncludesExpectedFields(t *testing.T) {

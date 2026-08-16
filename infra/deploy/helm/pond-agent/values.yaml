@@ -23,4 +23,4 @@ persistence:
   storageClass: ""
   accessMode: ReadWriteOnce
   size: 1Gi
-  mountPath: /var/lib/pond-agent
+  mountPath: /states

@@ -154,6 +154,7 @@ func (s *dependencyService) ScheduleCommands(ctx context.Context, deploymentId u
 
 		decl := dep.ServiceConfigSnapshot.Dependencies[cfg.DependencyName]
 		payload, err := buildTofuPayload(
+		    dep.EnvironmentID,
 			dep.ServiceConfigSnapshot.Name,
 			cfg.DependencyName,
 			decl.Type,
@@ -257,10 +258,10 @@ func environmentProviderInput(environment *domain.Environment) map[string]any {
 }
 
 // buildTofuPayload constructs the JSON payload for a tofu.apply command.
-func buildTofuPayload(serviceName, depName, depType string, depConfig map[string]any, providerInputs map[string]any, environmentInputs map[string]any) ([]byte, error) {
+func buildTofuPayload(environmentId uuid.UUID, serviceName, depName, depType string, depConfig map[string]any, providerInputs map[string]any, environmentInputs map[string]any) ([]byte, error) {
 	return wire.MarshalPayload(wire.TofuApplyPayload{
 		WorkDir:   fmt.Sprintf("/opt/pond/tofu-providers/%s", depType),
-		StatePath: fmt.Sprintf("/opt/pond/states/%s/%s/terraform.tfstate", serviceName, depName),
+		StatePath: fmt.Sprintf("/states/%s/%s/%s/terraform.tfstate", environmentId, serviceName, depName),
 		Vars: map[string]any{
 			"service_name":        serviceName,
 			"dependency_name":     depName,
