@@ -22,10 +22,6 @@ func NewRootCmd(serverURL, token string) *cobra.Command {
 
 	root.AddCommand(commands.NewDeployCmd(serverClient))
 	root.AddCommand(commands.NewDeploymentCmd(serverClient))
-	root.AddCommand(commands.NewRunCmd())
-	root.AddCommand(commands.NewPsqlCmd())
-	root.AddCommand(commands.NewPortForwardCmd())
-	root.AddCommand(commands.NewConfigGenerateCmd())
 
 	return root
 }
