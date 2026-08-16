@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"time"
-
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/shared/agent/wire"
 )
@@ -153,6 +152,15 @@ func newLogWriter(cmdID uuid.UUID, logSink func(wire.LogPayload)) *logWriter {
 		defer close(lw.done)
 		scanner := bufio.NewScanner(pr)
 		for scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				logSink(wire.LogPayload{
+					CommandID: lw.cmdID,
+					Line:      "~~~~FAILED TO READ COMMAND OUTPUT~~~~",
+					Timestamp: time.Now(),
+					Stream:    "stderr",
+				})
+				break;
+			}
 			logSink(wire.LogPayload{
 				CommandID: lw.cmdID,
 				Line:      scanner.Text(),
