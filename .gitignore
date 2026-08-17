@@ -1,5 +1,5 @@
 # Go
-bin/
+build/
 *.exe
 *.exe~
 *.dll

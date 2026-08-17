@@ -1,0 +1,12 @@
+[book]
+title = "Pond"
+description = "A deployment platform for Kubernetes"
+src = "docs"
+language = "en"
+
+[build]
+build-dir = "./build/docs"
+
+[output.html]
+git-repository-url = "https://github.com/pondplatform/pond"
+edit-url-template = "https://github.com/pondplatform/pond/edit/main/{path}"

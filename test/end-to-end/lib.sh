@@ -27,7 +27,7 @@ load_env() {
   POND_TOKEN="${POND_TOKEN:?POND_TOKEN must be set — run local-setup.sh first}"
   PROJECT_ID="${POND_PROJECT_ID:?POND_PROJECT_ID must be set — run local-setup.sh first}"
   IMAGE_TAG="${POND_IMAGE_TAG:-latest}"
-  POND="$_E2E_DIR/../../bin/pond"
+  POND="$_E2E_DIR/../../build/pond"
   [[ -x "$POND" ]] || die "CLI binary not found at $POND — run: make build-cli"
 }
 

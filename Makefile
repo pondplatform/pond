@@ -1,4 +1,4 @@
-.PHONY: build build-images build-server-image build-agent-image build-cli \
+.PHONY: build build-images build-server-image build-agent-image build-cli build \
         test test-integration vet verify \
         helm-lint \
         e2e-setup e2e-teardown e2e
@@ -17,7 +17,10 @@ build-agent-image:
 build-images: build-server-image build-agent-image
 
 build-cli:
-	go build -o ./bin/pond ./cli/
+	go build -o ./build/pond ./cli/
+
+docs:
+	mdbook build
 
 # ---- Test targets ----
 
