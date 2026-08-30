@@ -1,4 +1,4 @@
-.PHONY: build build-images build-server-image build-agent-image build-cli build \
+.PHONY: build build-images build-server-image build-agent-image build-cli \
         test test-integration vet verify \
         helm-lint \
         e2e-setup e2e-teardown e2e
