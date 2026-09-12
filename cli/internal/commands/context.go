@@ -75,10 +75,13 @@ func newContextUseCmd(cfgPathFn func() (string, error)) *cobra.Command {
 
 func newContextAddCmd(cfgPathFn func() (string, error)) *cobra.Command {
 	var (
-		server  string
-		token   string
-		project string
-		env     string
+		server        string
+		token         string
+		project       string
+		env           string
+		kubeContext   string
+		kubeNamespace string
+		kubeService   string
 	)
 
 	cmd := &cobra.Command{
@@ -93,10 +96,13 @@ func newContextAddCmd(cfgPathFn func() (string, error)) *cobra.Command {
 			name := args[0]
 			_, exists := cfg.Contexts[name]
 			cfg.Contexts[name] = pondconfig.Context{
-				Server:  server,
-				Token:   token,
-				Project: project,
-				Env:     env,
+				Server:        server,
+				Token:         token,
+				Project:       project,
+				Env:           env,
+				KubeContext:   kubeContext,
+				KubeNamespace: kubeNamespace,
+				KubeService:   kubeService,
 			}
 			if err := pondconfig.Save(path, cfg); err != nil {
 				return err
@@ -114,6 +120,9 @@ func newContextAddCmd(cfgPathFn func() (string, error)) *cobra.Command {
 	cmd.Flags().StringVar(&token, "token", "", "Bearer token")
 	cmd.Flags().StringVar(&project, "project", "", "Project ID")
 	cmd.Flags().StringVar(&env, "env", "", "Target environment")
+	cmd.Flags().StringVar(&kubeContext, "kube-context", "", "kubectl context for port-forward")
+	cmd.Flags().StringVar(&kubeNamespace, "kube-namespace", "", "Kubernetes namespace for port-forward")
+	cmd.Flags().StringVar(&kubeService, "kube-service", "", "Kubernetes service for port-forward (default: pond-server)")
 	cmd.MarkFlagRequired("server")
 
 	return cmd
@@ -170,11 +179,14 @@ func newContextShowCmd(cfgPathFn func() (string, error)) *cobra.Command {
 			} else if token != "" {
 				token = "***"
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Context: %s\n", name)
-			fmt.Fprintf(cmd.OutOrStdout(), "Server:  %s\n", ctx.Server)
-			fmt.Fprintf(cmd.OutOrStdout(), "Token:   %s\n", token)
-			fmt.Fprintf(cmd.OutOrStdout(), "Project: %s\n", ctx.Project)
-			fmt.Fprintf(cmd.OutOrStdout(), "Env:     %s\n", ctx.Env)
+			fmt.Fprintf(cmd.OutOrStdout(), "Context:        %s\n", name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Server:         %s\n", ctx.Server)
+			fmt.Fprintf(cmd.OutOrStdout(), "Token:          %s\n", token)
+			fmt.Fprintf(cmd.OutOrStdout(), "Project:        %s\n", ctx.Project)
+			fmt.Fprintf(cmd.OutOrStdout(), "Env:            %s\n", ctx.Env)
+			fmt.Fprintf(cmd.OutOrStdout(), "KubeContext:    %s\n", ctx.KubeContext)
+			fmt.Fprintf(cmd.OutOrStdout(), "KubeNamespace:  %s\n", ctx.KubeNamespace)
+			fmt.Fprintf(cmd.OutOrStdout(), "KubeService:    %s\n", ctx.KubeService)
 			return nil
 		},
 	}

@@ -9,10 +9,13 @@ import (
 )
 
 type Context struct {
-	Server  string `yaml:"server,omitempty"`
-	Token   string `yaml:"token,omitempty"`
-	Project string `yaml:"project,omitempty"`
-	Env     string `yaml:"env,omitempty"`
+	Server        string `yaml:"server,omitempty"`
+	Token         string `yaml:"token,omitempty"`
+	Project       string `yaml:"project,omitempty"`
+	Env           string `yaml:"env,omitempty"`
+	KubeContext   string `yaml:"kube-context,omitempty"`
+	KubeNamespace string `yaml:"kube-namespace,omitempty"`
+	KubeService   string `yaml:"kube-service,omitempty"`
 }
 
 type Config struct {

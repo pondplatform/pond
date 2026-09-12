@@ -3,11 +3,6 @@
         helm-lint \
         e2e-setup e2e-teardown e2e
 
-# ---- Build targets ----
-
-build:
-	go build ./shared/... ./cli/... ./agent/... ./server/...
-
 build-server-image:
 	docker build -f infra/docker/Dockerfile.server -t pond-server:latest .
 

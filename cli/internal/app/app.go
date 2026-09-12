@@ -59,6 +59,18 @@ func NewRootCmd() *cobra.Command {
 			return err
 		}
 
+		activeCtxName := gf.context
+		if activeCtxName == "" {
+			activeCtxName = cfg.CurrentContext
+		}
+		if activeCtxName != "" {
+			if activeCtx, ok := cfg.Contexts[activeCtxName]; ok {
+				if err := maybeStartPortForward(activeCtx, resolved.Server); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", err)
+				}
+			}
+		}
+
 		var sc client.ServerClient
 		if resolved.Token != "" {
 			sc = client.NewHTTPClientWithToken(resolved.Server, resolved.Token)
