@@ -61,10 +61,16 @@ pond deploy --tag v1.2.3 --wait
 ## 5. Check status
 
 ```sh
-pond deployment status --deployment-id <id>
+pond deployment status
 ```
 
-The output shows the deployment phase, each dependency, and any command logs.
+Run from the service directory, this reads the service name from `pond.yml` and lists the latest deployment in every environment of the project. Pass a name (`pond deployment status <service>`) to inspect a service from anywhere else. Narrow it to one environment to see the deployment phase, each dependency, and any command logs:
+
+```sh
+pond deployment status <service> --env prod
+```
+
+A single deployment can also be inspected directly by ID with `pond deployment status --deployment-id <id>`.
 
 ## What's next
 

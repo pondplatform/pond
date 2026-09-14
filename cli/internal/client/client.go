@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 
 	"github.com/google/uuid"
 	api "github.com/pondplatform/pond/shared/server/api"
@@ -18,6 +20,11 @@ type ServerClient interface {
 	GetDeployment(ctx context.Context, id uuid.UUID) (*api.Deployment, error)
 	GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]api.CommandLog, error)
 	ConfigureDeployment(ctx context.Context, id uuid.UUID, req api.ConfigureDeploymentRequest) error
+	ListServices(ctx context.Context, projectID uuid.UUID) ([]api.Service, error)
+	ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]api.Environment, error)
+	// ListDeployments returns deployments for a service, newest first. A nil
+	// environmentID lists deployments across all environments.
+	ListDeployments(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, limit int) ([]api.DeploymentListItem, error)
 }
 
 type httpClient struct {
@@ -83,23 +90,31 @@ func (c *httpClient) GetDeployment(ctx context.Context, id uuid.UUID) (*api.Depl
 }
 
 func (c *httpClient) GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]api.CommandLog, error) {
-	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/commands/%s/logs", commandID), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	return getList[api.CommandLog](ctx, c, fmt.Sprintf("/api/v1/commands/%s/logs", commandID))
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, readError(resp)
+func (c *httpClient) ListServices(ctx context.Context, projectID uuid.UUID) ([]api.Service, error) {
+	return getList[api.Service](ctx, c, fmt.Sprintf("/api/v1/projects/%s/services", projectID))
+}
+
+func (c *httpClient) ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]api.Environment, error) {
+	return getList[api.Environment](ctx, c, fmt.Sprintf("/api/v1/projects/%s/environments", projectID))
+}
+
+func (c *httpClient) ListDeployments(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, limit int) ([]api.DeploymentListItem, error) {
+	q := url.Values{}
+	if environmentID != nil {
+		q.Set("environment_id", environmentID.String())
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
 	}
 
-	var result struct {
-		Items []api.CommandLog `json:"items"`
+	path := fmt.Sprintf("/api/v1/services/%s/deployments", serviceID)
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	return result.Items, nil
+	return getList[api.DeploymentListItem](ctx, c, path)
 }
 
 func (c *httpClient) ConfigureDeployment(ctx context.Context, id uuid.UUID, req api.ConfigureDeploymentRequest) error {
@@ -137,6 +152,27 @@ func (c *httpClient) do(ctx context.Context, method, path string, body io.Reader
 		return nil, fmt.Errorf("request %s %s: %w", method, path, err)
 	}
 	return resp, nil
+}
+
+// getList performs a GET against a paginated list endpoint and returns its items.
+func getList[T any](ctx context.Context, c *httpClient, path string) ([]T, error) {
+	resp, err := c.do(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, readError(resp)
+	}
+
+	var result struct {
+		Items []T `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return result.Items, nil
 }
 
 func readError(resp *http.Response) error {

@@ -105,14 +105,35 @@ Parent command for inspecting and interacting with deployments.
 ### pond deployment status
 
 ```sh
-pond deployment status --deployment-id <id>
+pond deployment status [service] [flags]
 ```
 
-Fetches and prints the current state of a deployment: status, image tag, triggered-by, timestamps, dependency list, and command logs for any failed or queued commands.
+Shows the latest deployment of a service. The service is looked up by name inside the resolved project, so `--project` (or `POND_PROJECT`, or a context) is required.
+
+When the service argument is omitted, the name is read from the `name` field of `./pond.yml` (or of `--config`), so the command can be run without arguments from a service directory. A service argument always wins over `pond.yml`.
+
+With no environment set, the command prints one row per environment of the project — the latest deployment there, or `-` when the service has never been deployed to it:
+
+```sh
+$ pond deployment status api
+Service api
+
+ENVIRONMENT  STATUS     IMAGE   DEPLOYMENT                            CREATED
+dev          -          -       -                                     -
+prod         succeeded  v1.2.3  55555555-5555-5555-5555-555555555555  2026-09-12 10:30:00
+```
+
+When an environment is set — via `--env`, `POND_ENV` or the active context — the command narrows to that environment and prints the full state of its latest deployment: status, image tag, triggered-by, timestamps, dependency list, and command logs for any failed or queued commands.
+
+```sh
+pond deployment status api --env prod
+```
 
 | Flag | Required | Description |
 |---|---|---|
-| `--deployment-id` | yes | Deployment UUID |
+| `-e, --env` | no | Restrict to one environment and show its full deployment detail |
+| `-c, --config` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
+| `--deployment-id` | no | Show one deployment by UUID instead of a service; cannot be combined with a service name |
 
 ### pond deployment configure
 

@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,10 +63,10 @@ func NewDeployCmd() *cobra.Command {
 				return fmt.Errorf("submit deployment: %w", err)
 			}
 
-			fmt.Printf("Deployment submitted: %s (status: %s)\n", d.ID, d.Status)
+			fmt.Fprintf(cmd.OutOrStdout(), "Deployment submitted: %s (status: %s)\n", d.ID, d.Status)
 
 			if wait {
-				return waitForDeployment(cmd.Context(), sc, d.ID)
+				return waitForDeployment(cmd.Context(), cmd.OutOrStdout(), sc, d.ID)
 			}
 			return nil
 		},
@@ -79,7 +80,7 @@ func NewDeployCmd() *cobra.Command {
 	return cmd
 }
 
-func waitForDeployment(ctx context.Context, c client.ServerClient, id uuid.UUID) error {
+func waitForDeployment(ctx context.Context, out io.Writer, c client.ServerClient, id uuid.UUID) error {
 	for {
 		d, err := c.GetDeployment(ctx, id)
 		if err != nil {
@@ -88,17 +89,17 @@ func waitForDeployment(ctx context.Context, c client.ServerClient, id uuid.UUID)
 
 		switch d.Status {
 		case "succeeded":
-			fmt.Println("Deployment succeeded!")
+			fmt.Fprintln(out, "Deployment succeeded!")
 			return nil
 		case "failed":
-			printDeploymentStatus(ctx, c, d)
+			printDeploymentStatus(ctx, out, c, d)
 			return fmt.Errorf("deployment failed")
 		case "awaiting_input":
-			fmt.Printf("Deployment is awaiting user input. To provide it, run:\n")
-			fmt.Printf("  pond deployment configure --deployment-id %s --file <config.json>\n", id)
+			fmt.Fprintf(out, "Deployment is awaiting user input. To provide it, run:\n")
+			fmt.Fprintf(out, "  pond deployment configure --deployment-id %s --file <config.json>\n", id)
 			return nil
 		default:
-			fmt.Printf("Status: %s, waiting...\n", d.Status)
+			fmt.Fprintf(out, "Status: %s, waiting...\n", d.Status)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
