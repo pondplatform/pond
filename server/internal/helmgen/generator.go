@@ -27,8 +27,13 @@ func splitRepositoryTag(image string) (string, string) {
 	return split[0], tag
 }
 
-func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment) (*HelmValues, error) {
+func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment, imageTag string) (*HelmValues, error) {
 	repository, tag := splitRepositoryTag(cfg.Image)
+	// The tag the deployment was submitted with is the one the user asked to
+	// deploy, so it overrides a tag pinned in the image reference.
+	if imageTag != "" {
+		tag = imageTag
+	}
 
 	var replicaCount *int
 	if cfg.Deployment != nil && cfg.Deployment.Replicas != nil {
@@ -83,38 +88,21 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 		}
 	}
 
-	// Health probes
-	if cfg.Manage != nil && cfg.Manage.Health != nil && cfg.Manage.Health.Endpoint != "" {
-		port := 0
-		if servicePort != nil {
-			port = *servicePort
-		}
-		if cfg.Manage.Health.Port != nil {
-			port = *cfg.Manage.Health.Port
-		}
+	if mgmt := managementOf(cfg); mgmt != nil {
+		// Probes are opt-in: a nil probe stays nil here so omitempty keeps the
+		// key out of the values file and the chart configures no probe at all.
+		vals.LivenessProbe = probeValues(mgmt.LivenessProbe, servicePort)
+		vals.ReadinessProbe = probeValues(mgmt.ReadinessProbe, servicePort)
 
-		probe := &HelmProbe{
-			HTTPGet: HelmHTTPGet{
-				Path: cfg.Manage.Health.Endpoint,
-				Port: port,
-			},
+		if mgmt.Metrics != nil && mgmt.Metrics.Endpoint != "" {
+			if vals.PodAnnotations == nil {
+				vals.PodAnnotations = make(map[string]string)
+			}
+			metricsPort, _ := resolveProbePort(mgmt.Metrics.Port, servicePort)
+			vals.PodAnnotations["prometheus.io/scrape"] = "true"
+			vals.PodAnnotations["prometheus.io/port"] = fmt.Sprintf("%d", metricsPort)
+			vals.PodAnnotations["prometheus.io/path"] = mgmt.Metrics.Endpoint
 		}
-		vals.LivenessProbe = probe
-		vals.ReadinessProbe = probe
-	}
-
-	// Metrics annotations
-	if cfg.Manage != nil && cfg.Manage.Metrics != nil && cfg.Manage.Metrics.Endpoint != "" {
-		if vals.PodAnnotations == nil {
-			vals.PodAnnotations = make(map[string]string)
-		}
-		metricsPort := 0
-		if cfg.Manage.Metrics.Port != nil {
-			metricsPort = *cfg.Manage.Metrics.Port
-		}
-		vals.PodAnnotations["prometheus.io/scrape"] = "true"
-		vals.PodAnnotations["prometheus.io/port"] = fmt.Sprintf("%d", metricsPort)
-		vals.PodAnnotations["prometheus.io/path"] = cfg.Manage.Metrics.Endpoint
 	}
 
 	// Config files (values are already rendered by the deployment service)

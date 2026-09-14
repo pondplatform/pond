@@ -79,6 +79,12 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		return nil, fmt.Errorf("resolve config for environment %q: %w", env.Name, err)
 	}
 
+	// Reject a malformed probe here rather than letting it reach the cluster as
+	// a failed rollout the user has to read helm output to understand.
+	if err := helmgen.ValidateManagement(svcConfig); err != nil {
+		return nil, err
+	}
+
 	svc, err := s.services.GetByName(ctx, req.ProjectID, svcConfig.Name)
 	if err != nil {
 		if !errors.Is(err, api.ErrNotFound) || !req.CreateIfNotExists {
@@ -132,13 +138,21 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 }
 
 func (s *deploymentService) launchCommand(ctx context.Context, command *domain.Command, deploymentId uuid.UUID) error {
+	// Persist before publishing. CommandQueued only wakes the agent, which then
+	// asks for the next queued command by querying this table — and a wake that
+	// finds nothing is never retried, so publishing first can strand the command
+	// in 'queued' forever.
+	if err := s.deploymentInfo.CreateCommand(ctx, command); err != nil {
+		return err
+	}
+
 	s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(command.ClusterID), events.CommandQueued{
 		ClusterID:    command.ClusterID,
 		CommandID:    command.ID,
 		DeploymentID: deploymentId,
 	})
 
-	return s.deploymentInfo.CreateCommand(ctx, command)
+	return nil
 }
 
 func (s *deploymentService) ConfigureDeployment(ctx context.Context, deploymentID uuid.UUID, inputs map[string]api.DependencyInput) error {
@@ -230,6 +244,14 @@ func (s *deploymentService) Validate(ctx context.Context, req api.SubmitRequest)
 			Message:   fmt.Sprintf("resolve config: %s", err),
 		})
 		return result, nil
+	}
+
+	if err := helmgen.ValidateManagement(svcConfig); err != nil {
+		result.Valid = false
+		var ve *api.ValidationErrors
+		if errors.As(err, &ve) {
+			result.Errors = append(result.Errors, ve.Errors...)
+		}
 	}
 
 	_, err = s.services.GetByName(ctx, req.ProjectID, svcConfig.Name)

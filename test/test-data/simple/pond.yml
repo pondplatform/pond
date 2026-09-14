@@ -6,6 +6,18 @@ image: nginx:latest
 service:
   port: 80
 
+# nginx serves / on the service port, so both probes can point there. The
+# gateway fixture deliberately declares none, covering the opt-out path.
+deployment:
+  management:
+    livenessProbe:
+      httpGet:
+        path: /
+      periodSeconds: 15
+    readinessProbe:
+      httpGet:
+        path: /
+      initialDelaySeconds: 2
 
 env:
   ENVIRONMENT: "testing"

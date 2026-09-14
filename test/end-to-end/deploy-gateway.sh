@@ -145,11 +145,12 @@ else
   info "ok: catch-all rule injected no header"
 fi
 
-# /rewritten/echo hits the first rule: URLRewrite strips the prefix and
+# /rewritten/hello hits the first rule: URLRewrite strips the prefix and
 # RequestHeaderModifier adds a header, both observable in whoami's echo.
-expect_eq "GET /rewritten/echo status" "200" "$(gw_status "$HOST" /rewritten/echo)"
-if grep -q 'GET /echo ' "$BODY_FILE"; then
-  info "ok: URLRewrite rewrote /rewritten/echo to /echo"
+# Avoid /echo — that is whoami's WebSocket endpoint and 400s a plain GET.
+expect_eq "GET /rewritten/hello status" "200" "$(gw_status "$HOST" /rewritten/hello)"
+if grep -q 'GET /hello ' "$BODY_FILE"; then
+  info "ok: URLRewrite rewrote /rewritten/hello to /hello"
 else
   warn "MISMATCH: URLRewrite did not rewrite the path — backend saw:"
   grep -E '^(GET|POST) ' "$BODY_FILE" || true

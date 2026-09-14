@@ -131,6 +131,63 @@ func TestResolve_GatewayEnabledToggledOffPerEnvironment(t *testing.T) {
 	}
 }
 
+func TestResolve_ManagementProbeReplacedPerEnvironment(t *testing.T) {
+	base := &serviceconfig.OverridableConfig{
+		ServiceConfig: serviceconfig.ServiceConfig{
+			Name: "api",
+			Deployment: &serviceconfig.DeploymentSpec{
+				Replicas: serviceconfig.Ptr(int32(1)),
+				Management: &serviceconfig.ManagementConfig{
+					LivenessProbe: &serviceconfig.Probe{
+						HTTPGet:       &serviceconfig.HTTPGetAction{Path: "/health/live"},
+						PeriodSeconds: serviceconfig.Ptr(int32(30)),
+					},
+					ReadinessProbe: &serviceconfig.Probe{
+						HTTPGet: &serviceconfig.HTTPGetAction{Path: "/health/ready"},
+					},
+				},
+			},
+		},
+		Overrides: map[string]serviceconfig.Override{
+			"production": {
+				Deployment: &serviceconfig.DeploymentSpec{
+					Management: &serviceconfig.ManagementConfig{
+						LivenessProbe: &serviceconfig.Probe{
+							HTTPGet: &serviceconfig.HTTPGetAction{Path: "/health/live-slow"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg, err := config.NewResolver().Resolve(base, "production")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+
+	mgmt := cfg.Deployment.Management
+	if mgmt.LivenessProbe.HTTPGet.Path != "/health/live-slow" {
+		t.Errorf("unexpected liveness path: %q", mgmt.LivenessProbe.HTTPGet.Path)
+	}
+	// The probe is replaced wholesale, so base timings do not survive alongside
+	// the override's path.
+	if mgmt.LivenessProbe.PeriodSeconds != nil {
+		t.Errorf("base periodSeconds should not survive a replaced probe, got %d", *mgmt.LivenessProbe.PeriodSeconds)
+	}
+	// Sub-blocks absent from the override keep their base values.
+	if mgmt.ReadinessProbe == nil || mgmt.ReadinessProbe.HTTPGet.Path != "/health/ready" {
+		t.Errorf("readiness probe should be inherited, got %+v", mgmt.ReadinessProbe)
+	}
+	if *cfg.Deployment.Replicas != 1 {
+		t.Errorf("replicas should be untouched, got %d", *cfg.Deployment.Replicas)
+	}
+	// The base must not be mutated by resolution.
+	if base.Deployment.Management.LivenessProbe.HTTPGet.Path != "/health/live" {
+		t.Errorf("base liveness probe was mutated: %q", base.Deployment.Management.LivenessProbe.HTTPGet.Path)
+	}
+}
+
 func TestResolve_NoOverrideForEnvironmentLeavesBaseIntact(t *testing.T) {
 	base := &serviceconfig.OverridableConfig{
 		ServiceConfig: serviceconfig.ServiceConfig{

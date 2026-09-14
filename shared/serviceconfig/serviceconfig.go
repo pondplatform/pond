@@ -11,10 +11,9 @@ type ServiceConfig struct {
 	Image   string `json:"image,omitempty"   yaml:"image"`
 	Build   string `json:"build,omitempty"   yaml:"build"`
 
-	Deployment *DeploymentSpec   `json:"deployment,omitempty" yaml:"deployment"`
-	Service    *ServiceSpec      `json:"service,omitempty"    yaml:"service"`
-	Gateway    *GatewayConfig    `json:"gateway,omitempty"    yaml:"gateway"`
-	Manage     *ManagementConfig `json:"management,omitempty" yaml:"management"`
+	Deployment *DeploymentSpec `json:"deployment,omitempty" yaml:"deployment"`
+	Service    *ServiceSpec    `json:"service,omitempty"    yaml:"service"`
+	Gateway    *GatewayConfig  `json:"gateway,omitempty"    yaml:"gateway"`
 
 	Dependencies map[string]DependencyDeclaration `json:"dependencies,omitempty" yaml:"dependencies"`
 	Env          map[string]string                `json:"env,omitempty"          yaml:"env"`
@@ -22,7 +21,8 @@ type ServiceConfig struct {
 }
 
 type DeploymentSpec struct {
-	Replicas *int32 `json:"replicas,omitempty" yaml:"replicas,omitempty"`
+	Replicas   *int32            `json:"replicas,omitempty"   yaml:"replicas,omitempty"`
+	Management *ManagementConfig `json:"management,omitempty" yaml:"management,omitempty"`
 }
 
 type ServiceSpec struct {
@@ -122,18 +122,36 @@ type LocalObjectReference struct {
 }
 
 type ManagementConfig struct {
-	Metrics *MetricsConfig `json:"metrics,omitempty" yaml:"metrics"`
-	Health  *HealthConfig  `json:"health,omitempty"  yaml:"health"`
+	LivenessProbe  *Probe         `json:"livenessProbe,omitempty"  yaml:"livenessProbe,omitempty"`
+	ReadinessProbe *Probe         `json:"readinessProbe,omitempty" yaml:"readinessProbe,omitempty"`
+	Metrics        *MetricsConfig `json:"metrics,omitempty"        yaml:"metrics,omitempty"`
+}
+
+// Probe mirrors core/v1 Probe restricted to the httpGet handler: Pond only
+// supports HTTP checks, so exec, tcpSocket and grpc are deliberately absent.
+// An omitted probe means no probe is configured on the container at all.
+type Probe struct {
+	HTTPGet             *HTTPGetAction `json:"httpGet,omitempty"             yaml:"httpGet,omitempty"`
+	InitialDelaySeconds *int32         `json:"initialDelaySeconds,omitempty" yaml:"initialDelaySeconds,omitempty"`
+	PeriodSeconds       *int32         `json:"periodSeconds,omitempty"       yaml:"periodSeconds,omitempty"`
+	TimeoutSeconds      *int32         `json:"timeoutSeconds,omitempty"      yaml:"timeoutSeconds,omitempty"`
+	SuccessThreshold    *int32         `json:"successThreshold,omitempty"    yaml:"successThreshold,omitempty"`
+	FailureThreshold    *int32         `json:"failureThreshold,omitempty"    yaml:"failureThreshold,omitempty"`
+}
+
+type HTTPGetAction struct {
+	Path string `json:"path" yaml:"path"`
+	// Port defaults to service.port when unset.
+	Port *int32 `json:"port,omitempty" yaml:"port,omitempty"`
+	// Scheme is HTTP or HTTPS.
+	Scheme      *string      `json:"scheme,omitempty"      yaml:"scheme,omitempty"`
+	HTTPHeaders []HTTPHeader `json:"httpHeaders,omitempty" yaml:"httpHeaders,omitempty"`
 }
 
 type MetricsConfig struct {
-	Port     *int   `json:"port,omitempty"     yaml:"port"`
-	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint"`
-}
-
-type HealthConfig struct {
-	Port     *int   `json:"port,omitempty"     yaml:"port"`
-	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint"`
+	// Port defaults to service.port when unset.
+	Port     *int32 `json:"port,omitempty"     yaml:"port,omitempty"`
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 }
 
 type ConfigFileSpec struct {

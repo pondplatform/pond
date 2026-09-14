@@ -156,7 +156,7 @@ func (s *deploymentService) enqueueHelm(ctx context.Context, dep *domain.Deploym
 		renderedCfg.Configs = renderedConfigs
 	}
 
-	helmVals, err := s.helmGen.Generate(&renderedCfg, env)
+	helmVals, err := s.helmGen.Generate(&renderedCfg, env, dep.ImageTag)
 	if err != nil {
 		return fmt.Errorf("generate helm values: %w", err)
 	}

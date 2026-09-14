@@ -102,15 +102,14 @@ resources: {}
   #   cpu: 100m
   #   memory: 128Mi
 
-# This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
-livenessProbe:
-  httpGet:
-    path: /
-    port: http
-readinessProbe:
-  httpGet:
-    path: /
-    port: http
+# Liveness and readiness probes, in the upstream core/v1 Probe shape:
+# https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+# Empty by default, and deliberately so: a placeholder such as `path: /` would
+# be applied to every service that does not declare a probe, turning a 404 on /
+# into CrashLoopBackOff for a check the service never opted into. Pond supplies
+# these from deployment.management only when the user asks for them.
+livenessProbe: {}
+readinessProbe: {}
 
 # This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
 autoscaling:

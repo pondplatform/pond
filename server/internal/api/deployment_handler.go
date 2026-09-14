@@ -81,10 +81,7 @@ func defaultSubmitRequest() shared.SubmitRequest {
 		OverridableConfig: serviceconfig.OverridableConfig{
 			ServiceConfig: serviceconfig.ServiceConfig{
 				Deployment: &serviceconfig.DeploymentSpec{
-					Replicas: serviceconfig.Ptr(int32(2)),
-				},
-				Service: &serviceconfig.ServiceSpec{
-					Port: serviceconfig.Ptr(int32(8080)),
+					Replicas: serviceconfig.Ptr(int32(1)),
 				},
 			},
 		},

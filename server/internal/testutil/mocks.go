@@ -373,12 +373,12 @@ func (m *MockBus) Publish(ctx context.Context, topic string, v any) {
 // --- helmgen.HelmValuesGenerator ---
 
 type MockHelmValuesGenerator struct {
-	GenerateFn func(cfg *serviceconfig.ServiceConfig, env *domain.Environment) (*helmgen.HelmValues, error)
+	GenerateFn func(cfg *serviceconfig.ServiceConfig, env *domain.Environment, imageTag string) (*helmgen.HelmValues, error)
 }
 
-func (m *MockHelmValuesGenerator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment) (*helmgen.HelmValues, error) {
+func (m *MockHelmValuesGenerator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment, imageTag string) (*helmgen.HelmValues, error) {
 	if m.GenerateFn != nil {
-		return m.GenerateFn(cfg, env)
+		return m.GenerateFn(cfg, env, imageTag)
 	}
 	return &helmgen.HelmValues{}, nil
 }

@@ -22,6 +22,19 @@ image: ghcr.io/example/my-service
 
 deployment:
   replicas: 2
+  management:
+    livenessProbe:
+      httpGet:
+        path: /health/live
+      initialDelaySeconds: 5
+      periodSeconds: 15
+    readinessProbe:
+      httpGet:
+        path: /health/ready
+      periodSeconds: 10
+    metrics:
+      port: 9090
+      endpoint: /metrics
 
 service:
   port: 8080
@@ -41,14 +54,6 @@ gateway:
               path:
                 type: ReplacePrefixMatch
                 replacePrefixMatch: /
-
-management:
-  health:
-    port: 8080
-    endpoint: /healthz
-  metrics:
-    port: 9090
-    endpoint: /metrics
 
 env:
   LOG_LEVEL: info
@@ -89,10 +94,9 @@ overrides:
 | `name` | string | yes | Service name. Used as the Helm release name. |
 | `image` | string | yes* | Docker image reference (without tag). Required unless `build` is set. |
 | `build` | string | no | Path to a Dockerfile relative to `pond.yml`. Used to tell Pond which image to build; the built image is pushed and referenced automatically. |
-| `deployment` | object | no | Workload settings, such as the replica count. |
+| `deployment` | object | no | Workload settings: replica count, health probes and metrics. |
 | `service` | object | no | Service port settings. |
 | `gateway` | object | no | How the service is exposed to incoming HTTP traffic. |
-| `management` | object | no | Health check and metrics endpoints. |
 | `dependencies` | map | no | External services your app needs (databases, HTTP services). |
 | `env` | map | no | Environment variables injected into the container. |
 | `configs` | map | no | Config files rendered and mounted into the container. |
@@ -103,6 +107,53 @@ overrides:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `replicas` | integer | `2` | Number of pod replicas. |
+| `management` | object | none | Health probes and metrics endpoint. See below. |
+
+#### `deployment.management`
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `livenessProbe` | object | none | Restarts the container when the check fails. |
+| `readinessProbe` | object | none | Removes the pod from the Service until the check passes. |
+| `metrics.port` | integer | `service.port` | Port the metrics endpoint is served on. |
+| `metrics.endpoint` | string | none | Path of the metrics endpoint (e.g. `/metrics`). Setting it adds `prometheus.io/*` scrape annotations to the pod. |
+
+**Probes are opt-in.** A probe you do not declare is not configured at all — Pond
+never guesses an endpoint on your behalf, because a wrong guess turns a healthy
+container into a restart loop. Declare only the probes your app actually serves.
+
+Probe entries follow the upstream
+[`Probe`](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-v1/#Probe)
+shape, so examples from the Kubernetes docs can be pasted in directly.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `httpGet.path` | string | required | Path to request, must start with `/`. |
+| `httpGet.port` | integer | `service.port` | Port to request. |
+| `httpGet.scheme` | string | `HTTP` | `HTTP` or `HTTPS`. |
+| `httpGet.httpHeaders` | list | none | Extra request headers, each `{name, value}`. |
+| `initialDelaySeconds` | integer | `0` | Delay before the first check. |
+| `periodSeconds` | integer | `10` | How often to check. |
+| `timeoutSeconds` | integer | `1` | Per-check timeout. |
+| `successThreshold` | integer | `1` | Consecutive successes needed to pass. Must be `1` for `livenessProbe`. |
+| `failureThreshold` | integer | `3` | Consecutive failures before acting. |
+
+Only `httpGet` is supported: `exec`, `tcpSocket` and `grpc` checks are
+deliberately not settable, so a check is always a plain HTTP request Pond can
+reason about. `startupProbe` is not supported either — use
+`initialDelaySeconds` or a higher `failureThreshold` on the liveness probe for a
+slow-starting app.
+
+```yaml
+deployment:
+  management:
+    readinessProbe:
+      httpGet:
+        path: /health/ready
+        port: 8081
+      periodSeconds: 5
+      failureThreshold: 6
+```
 
 ### `service`
 
@@ -145,17 +196,6 @@ gateway:
                 - name: X-Forwarded-Prefix
                   value: /admin
 ```
-
-### `management`
-
-Describes your application's internal health and metrics endpoints. Pond uses these to configure Kubernetes liveness/readiness probes and Prometheus scraping.
-
-| Field | Type | Description |
-|---|---|---|
-| `health.port` | integer | Port the health endpoint is served on. |
-| `health.endpoint` | string | Path of the health endpoint (e.g. `/healthz`). |
-| `metrics.port` | integer | Port the metrics endpoint is served on. |
-| `metrics.endpoint` | string | Path of the metrics endpoint (e.g. `/metrics`). |
 
 ### `dependencies`
 

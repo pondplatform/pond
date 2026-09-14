@@ -54,11 +54,41 @@ When deploying to `staging`:
 
 | Key | Type |
 |---|---|
-| `deployment` | `DeploymentSpec` — `replicas` |
+| `deployment` | `DeploymentSpec` — `replicas`, `management` |
 | `service` | `ServiceSpec` — `port` |
 | `gateway` | `GatewayConfig` — `http.enabled`, `http.hostname`, `http.rules` |
 | `env` | map — merged key-by-key |
 | `dependencies` | map — merged key-by-key |
 | `configs` | map — merged key-by-key |
 
-The `name`, `image`, `build`, and `management` fields cannot be overridden per environment.
+The `name`, `image` and `build` fields cannot be overridden per environment.
+
+Within `deployment.management`, each of `livenessProbe`, `readinessProbe` and
+`metrics` is replaced as a whole when the override names it, rather than merged
+field by field — a probe assembled half from the base and half from the override
+is rarely what you want. Sub-blocks the override leaves out keep their base
+values:
+
+```yaml
+deployment:
+  management:
+    livenessProbe:
+      httpGet:
+        path: /health/live
+      periodSeconds: 15
+    readinessProbe:
+      httpGet:
+        path: /health/ready
+
+overrides:
+  production:
+    deployment:
+      management:
+        # Replaces the base liveness probe entirely, so periodSeconds falls back
+        # to the Kubernetes default of 10 rather than being inherited as 15.
+        livenessProbe:
+          httpGet:
+            path: /health/live
+          failureThreshold: 6
+        # readinessProbe is not named here, so it keeps /health/ready.
+```

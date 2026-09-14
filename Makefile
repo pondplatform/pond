@@ -3,6 +3,9 @@
         helm-lint \
         e2e-setup e2e-gateway-setup e2e-teardown e2e
 
+build:
+	go build ./shared/... ./cli/... ./agent/... ./server/...
+
 build-server-image:
 	docker build -f infra/docker/Dockerfile.server -t pond-server:latest .
 
@@ -50,10 +53,18 @@ helm-lint:
 	@# gateway-api rejects a rule carrying both a RequestRedirect filter and backendRefs.
 	! helm template ci infra/agent/helm-charts/base-service --set httpRoute.enabled=true \
 		--set 'httpRoute.rules[0].filters[0].type=RequestRedirect' | grep -q backendRefs
+	@# Probes are opt-in: a chart default would be applied to every service that
+	@# declares none, failing containers on a check they never asked for.
+	! helm template ci infra/agent/helm-charts/base-service | grep -qE 'livenessProbe|readinessProbe'
+	helm template ci infra/agent/helm-charts/base-service \
+		--set 'readinessProbe.httpGet.path=/health/ready' \
+		--set 'readinessProbe.httpGet.port=8080' >/dev/null
 
 # ---- E2E targets ----
 
-e2e-setup: build
+# build-cli, not build: the scenarios invoke ./build/pond, and a stale binary
+# silently ignores pond.yml keys it does not know yet.
+e2e-setup: build-cli
 	./test/end-to-end/local-setup.sh
 
 # Gateway API CRDs, a controller and the Gateway that HTTPRoutes attach to.

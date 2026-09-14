@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -237,6 +238,50 @@ func TestDeploymentService_Submit(t *testing.T) {
 		}
 		if createdCmdCount != 0 {
 			t.Errorf("expected no commands created, got %d", createdCmdCount)
+		}
+	})
+
+	t.Run("Submit rejects an invalid probe before writing anything", func(t *testing.T) {
+		var createCalled bool
+		infoStore.CreateFn = func(ctx context.Context, d *domain.Deployment) error {
+			createCalled = true
+			return nil
+		}
+
+		req := SubmitRequest{
+			ProjectID:       projectID,
+			EnvironmentName: "staging",
+			OverridableConfig: serviceconfig.OverridableConfig{
+				ServiceConfig: serviceconfig.ServiceConfig{
+					Name: "my-service",
+					Deployment: &serviceconfig.DeploymentSpec{
+						Management: &serviceconfig.ManagementConfig{
+							// No leading slash, and no service port to resolve against.
+							ReadinessProbe: &serviceconfig.Probe{
+								HTTPGet: &serviceconfig.HTTPGetAction{Path: "health"},
+							},
+						},
+					},
+				},
+			},
+			ImageTag:    "v1",
+			TriggeredBy: "user",
+		}
+
+		_, err := s.Submit(ctx, req)
+		if err == nil {
+			t.Fatal("expected a validation error")
+		}
+
+		var ve *api.ValidationErrors
+		if !errors.As(err, &ve) {
+			t.Fatalf("expected *api.ValidationErrors so the handler returns 422, got %T: %v", err, err)
+		}
+		if len(ve.Errors) != 2 {
+			t.Errorf("expected errors for both path and port, got %+v", ve.Errors)
+		}
+		if createCalled {
+			t.Error("no deployment should be created when validation fails")
 		}
 	})
 

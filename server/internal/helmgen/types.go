@@ -39,13 +39,23 @@ type HelmHTTPRoute struct {
 	Rules     []serviceconfig.HTTPRouteRule `yaml:"rules,omitempty"`
 }
 
+// HelmProbe is the httpGet-only projection of a core/v1 Probe. Port is a plain
+// int rather than a pointer because it is always resolved against service.port
+// before the values are built.
 type HelmProbe struct {
-	HTTPGet HelmHTTPGet `yaml:"httpGet"`
+	HTTPGet             HelmHTTPGet `yaml:"httpGet"`
+	InitialDelaySeconds *int32      `yaml:"initialDelaySeconds,omitempty"`
+	PeriodSeconds       *int32      `yaml:"periodSeconds,omitempty"`
+	TimeoutSeconds      *int32      `yaml:"timeoutSeconds,omitempty"`
+	SuccessThreshold    *int32      `yaml:"successThreshold,omitempty"`
+	FailureThreshold    *int32      `yaml:"failureThreshold,omitempty"`
 }
 
 type HelmHTTPGet struct {
-	Path string `yaml:"path"`
-	Port int    `yaml:"port"`
+	Path        string                     `yaml:"path"`
+	Port        int                        `yaml:"port"`
+	Scheme      *string                    `yaml:"scheme,omitempty"`
+	HTTPHeaders []serviceconfig.HTTPHeader `yaml:"httpHeaders,omitempty"`
 }
 
 type HelmConfig struct {

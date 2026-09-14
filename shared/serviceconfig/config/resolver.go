@@ -35,6 +35,9 @@ func (r *resolver) Resolve(base *serviceconfig.OverridableConfig, envName string
 		if override.Deployment.Replicas != nil {
 			deploymentCopy.Replicas = override.Deployment.Replicas
 		}
+		if override.Deployment.Management != nil {
+			deploymentCopy.Management = mergeManagement(deploymentCopy.Management, override.Deployment.Management)
+		}
 		cfg.Deployment = &deploymentCopy
 	}
 
@@ -82,4 +85,24 @@ func (r *resolver) Resolve(base *serviceconfig.OverridableConfig, envName string
 	}
 
 	return &cfg, nil
+}
+
+// mergeManagement replaces each present sub-block wholesale rather than merging
+// field by field: a probe assembled half from the base and half from the
+// override (override path, base timings) is rarely what anyone means.
+func mergeManagement(base, override *serviceconfig.ManagementConfig) *serviceconfig.ManagementConfig {
+	merged := serviceconfig.ManagementConfig{}
+	if base != nil {
+		merged = *base
+	}
+	if override.LivenessProbe != nil {
+		merged.LivenessProbe = override.LivenessProbe
+	}
+	if override.ReadinessProbe != nil {
+		merged.ReadinessProbe = override.ReadinessProbe
+	}
+	if override.Metrics != nil {
+		merged.Metrics = override.Metrics
+	}
+	return &merged
 }

@@ -32,7 +32,7 @@ func TestGenerator_Generate_ConfigFiles(t *testing.T) {
 		DefaultIngressBaseHost: "example.com",
 	}
 
-	vals, err := g.Generate(cfg, env)
+	vals, err := g.Generate(cfg, env, "")
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestGenerator_Generate_GatewayHTTPRouteDerivesHostname(t *testing.T) {
 		DefaultIngressBaseHost: "pond.local",
 	}
 
-	vals, err := g.Generate(cfg, env)
+	vals, err := g.Generate(cfg, env, "")
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestGenerator_Generate_GatewayHTTPRouteExplicitHostnameAndRules(t *testing.
 		DefaultIngressBaseHost: "pond.local",
 	}
 
-	vals, err := g.Generate(cfg, env)
+	vals, err := g.Generate(cfg, env, "")
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestGenerator_Generate_GatewayDisabledByDefault(t *testing.T) {
 
 	vals, err := g.Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{
 		DefaultIngressBaseHost: "pond.local",
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestGenerator_Generate_GatewayDisabledByDefault(t *testing.T) {
 func TestGenerator_Generate_OmitsUnsetReplicaCountAndPort(t *testing.T) {
 	g := NewGenerator()
 
-	vals, err := g.Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{})
+	vals, err := g.Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{}, "")
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -198,12 +198,50 @@ func TestGenerator_Generate_ReplicasFromDeployment(t *testing.T) {
 		},
 	}
 
-	vals, err := g.Generate(cfg, &domain.Environment{})
+	vals, err := g.Generate(cfg, &domain.Environment{}, "")
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
 	if vals.ReplicaCount == nil || *vals.ReplicaCount != 3 {
 		t.Errorf("Unexpected replicaCount: %v", vals.ReplicaCount)
+	}
+}
+
+func TestGenerator_Generate_ImageTag(t *testing.T) {
+	g := NewGenerator()
+
+	tests := []struct {
+		name     string
+		image    string
+		imageTag string
+		wantRepo string
+		wantTag  string
+	}{
+		// The submitted tag is what the user asked to deploy, so it wins even when
+		// pond.yml pins one — otherwise `--tag` would silently deploy something else.
+		{"submitted tag wins over a pinned one", "ghcr.io/acme/api:0.0.9", "0.0.1", "ghcr.io/acme/api", "0.0.1"},
+		{"submitted tag fills in an untagged image", "ghcr.io/acme/api", "0.0.1", "ghcr.io/acme/api", "0.0.1"},
+		{"pinned tag applies when none is submitted", "ghcr.io/acme/api:0.0.9", "", "ghcr.io/acme/api", "0.0.9"},
+		{"latest is the last resort", "ghcr.io/acme/api", "", "ghcr.io/acme/api", "latest"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vals, err := g.Generate(
+				&serviceconfig.ServiceConfig{Name: "api", Image: tt.image},
+				&domain.Environment{},
+				tt.imageTag,
+			)
+			if err != nil {
+				t.Fatalf("Generate failed: %v", err)
+			}
+			if vals.Image.Repository != tt.wantRepo {
+				t.Errorf("repository: want %q, got %q", tt.wantRepo, vals.Image.Repository)
+			}
+			if vals.Image.Tag != tt.wantTag {
+				t.Errorf("tag: want %q, got %q", tt.wantTag, vals.Image.Tag)
+			}
+		})
 	}
 }
