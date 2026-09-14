@@ -4,18 +4,27 @@
 # What it removes:
 #   - Helm releases: pond-server, pond-agent (namespace: pond)
 #   - Helm release:  cnpg (namespace: cnpg-system)
-#   - Kubernetes namespaces: pond, e2e-staging, cnpg-system
-#   - Port-forward processes for the server port
+#   - Helm release:  eg (namespace: envoy-gateway-system) and the GatewayClass
+#   - Kubernetes namespaces: pond, e2e-staging, cnpg-system, envoy-gateway-system
+#   - Port-forward processes for the server and gateway ports
 #   - Local env file: test/end-to-end/.e2e-env
+#
+# The Gateway API CRDs are left alone: they are cluster-scoped and k3s ships them
+# with traefik, so removing them would break unrelated things.
 #
 # Usage:
 #   ./test/end-to-end/teardown.sh
 #
-# Environment overrides (same defaults as local-setup.sh):
+# Environment overrides (same defaults as local-setup.sh / gateway-setup.sh):
 #   NAMESPACE        default: pond
 #   SERVER_RELEASE   default: pond-server
 #   AGENT_RELEASE    default: pond-agent
 #   SERVER_PORT      default: 8080
+#   GATEWAY_NS       default: e2e-staging
+#   GATEWAY_NAME     default: gateway
+#   GATEWAY_CLASS    default: eg
+#   EG_NS            default: envoy-gateway-system
+#   EG_RELEASE       default: eg
 
 set -euo pipefail
 
@@ -23,6 +32,12 @@ NAMESPACE="${NAMESPACE:-pond}"
 SERVER_RELEASE="${SERVER_RELEASE:-pond-server}"
 AGENT_RELEASE="${AGENT_RELEASE:-pond-agent}"
 SERVER_PORT="${SERVER_PORT:-8080}"
+GATEWAY_LOCAL_PORT="${GATEWAY_LOCAL_PORT:-18080}"
+GATEWAY_NS="${GATEWAY_NS:-e2e-staging}"
+GATEWAY_NAME="${GATEWAY_NAME:-gateway}"
+GATEWAY_CLASS="${GATEWAY_CLASS:-eg}"
+EG_NS="${EG_NS:-envoy-gateway-system}"
+EG_RELEASE="${EG_RELEASE:-eg}"
 CONTEXT="rancher-desktop"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,13 +58,15 @@ CURRENT_CTX=$(kubectl config current-context 2>/dev/null) \
 [[ "$CURRENT_CTX" == "$CONTEXT" ]] \
   || { echo "${bold}${red}✖ current kube context is '$CURRENT_CTX', expected '$CONTEXT'${reset}" >&2; exit 1; }
 
-# ── 1. Kill port-forward ──────────────────────────────────────────────────────
-step "Stopping port-forward on :$SERVER_PORT"
-if pkill -f "kubectl port-forward.*${SERVER_PORT}" 2>/dev/null; then
-  info "Port-forward stopped"
-else
-  info "No matching port-forward process found"
-fi
+# ── 1. Kill port-forwards ─────────────────────────────────────────────────────
+for port in "$SERVER_PORT" "$GATEWAY_LOCAL_PORT"; do
+  step "Stopping port-forward on :$port"
+  if pkill -f "kubectl port-forward.*${port}" 2>/dev/null; then
+    info "Port-forward stopped"
+  else
+    info "No matching port-forward process found"
+  fi
+done
 
 E2E_PIDS="${E2E_PIDS:-$SCRIPT_DIR/.e2e-pids}"
 if [[ -f "$E2E_PIDS" ]]; then
@@ -81,9 +98,35 @@ else
   warn "Release not found (skipping): cnpg"
 fi
 
-# ── 3. Delete namespaces ──────────────────────────────────────────────────────
+# ── 3. Remove the Gateway API stack ───────────────────────────────────────────
+# Ordered deliberately: the controller puts a finalizer on the GatewayClass while
+# a Gateway still references it, so the Gateway and the class have to go while the
+# controller is still running to reconcile the removal.
+step "Deleting Gateway '$GATEWAY_NAME' and GatewayClass '$GATEWAY_CLASS'"
+if kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NS" --context "$CONTEXT" &>/dev/null; then
+  kubectl delete gateway "$GATEWAY_NAME" -n "$GATEWAY_NS" --context "$CONTEXT"
+  info "Deleted Gateway: $GATEWAY_NS/$GATEWAY_NAME"
+else
+  warn "Gateway not found (skipping): $GATEWAY_NS/$GATEWAY_NAME"
+fi
+if kubectl get gatewayclass "$GATEWAY_CLASS" --context "$CONTEXT" &>/dev/null; then
+  kubectl delete gatewayclass "$GATEWAY_CLASS" --context "$CONTEXT"
+  info "Deleted GatewayClass: $GATEWAY_CLASS"
+else
+  warn "GatewayClass not found (skipping): $GATEWAY_CLASS"
+fi
+
+step "Uninstalling $EG_RELEASE from namespace '$EG_NS'"
+if helm status "$EG_RELEASE" --namespace "$EG_NS" --kube-context "$CONTEXT" &>/dev/null; then
+  helm uninstall "$EG_RELEASE" --namespace "$EG_NS" --kube-context "$CONTEXT"
+  info "Uninstalled: $EG_RELEASE"
+else
+  warn "Release not found (skipping): $EG_RELEASE"
+fi
+
+# ── 4. Delete namespaces ──────────────────────────────────────────────────────
 step "Deleting namespaces"
-for ns in "$NAMESPACE" "e2e-staging" "cnpg-system"; do
+for ns in "$NAMESPACE" "e2e-staging" "cnpg-system" "$EG_NS"; do
   if kubectl get namespace "$ns" --context "$CONTEXT" &>/dev/null; then
     kubectl delete namespace "$ns" --context "$CONTEXT"
     info "Deleted namespace: $ns"
@@ -92,7 +135,7 @@ for ns in "$NAMESPACE" "e2e-staging" "cnpg-system"; do
   fi
 done
 
-# ── 4. Remove env file ────────────────────────────────────────────────────────
+# ── 5. Remove env file ────────────────────────────────────────────────────────
 step "Removing env file"
 if [[ -f "$E2E_ENV" ]]; then
   rm -f "$E2E_ENV"

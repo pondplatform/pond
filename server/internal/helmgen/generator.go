@@ -30,13 +30,13 @@ func splitRepositoryTag(image string) (string, string) {
 func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment) (*HelmValues, error) {
 	repository, tag := splitRepositoryTag(cfg.Image)
 
-	var replicaCount int
-	if cfg.Service != nil && cfg.Service.Replicas != nil {
-		replicaCount = int(*cfg.Service.Replicas)
+	var replicaCount *int
+	if cfg.Deployment != nil && cfg.Deployment.Replicas != nil {
+		replicaCount = serviceconfig.Ptr(int(*cfg.Deployment.Replicas))
 	}
-	var servicePort int
+	var servicePort *int
 	if cfg.Service != nil && cfg.Service.Port != nil {
-		servicePort = int(*cfg.Service.Port)
+		servicePort = serviceconfig.Ptr(int(*cfg.Service.Port))
 	}
 
 	vals := &HelmValues{
@@ -55,38 +55,40 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 		Env: cfg.Env,
 	}
 
-	// Ingress
-	ingressEnabled := cfg.Ingress != nil && cfg.Ingress.Enabled != nil && *cfg.Ingress.Enabled
-	vals.Ingress = HelmIngress{
-		Enabled:   ingressEnabled,
-		ClassName: "nginx",
-	}
-	if ingressEnabled && env != nil {
-		vals.Ingress.Annotations = map[string]string{
-			"cert-manager.io/cluster-issuer":           "letsencrypt-prod",
-			"nginx.ingress.kubernetes.io/ssl-redirect": "true",
+	gatewayEnabled := cfg.Gateway != nil && cfg.Gateway.HTTP != nil &&
+		cfg.Gateway.HTTP.Enabled != nil && *cfg.Gateway.HTTP.Enabled
+
+	vals.HTTPRoute = HelmHTTPRoute{Enabled: gatewayEnabled}
+	if gatewayEnabled {
+		hostname := ""
+		if cfg.Gateway.HTTP.Hostname != nil {
+			hostname = *cfg.Gateway.HTTP.Hostname
+		} else if env != nil && env.DefaultIngressBaseHost != "" {
+			hostname = fmt.Sprintf("%s.%s", cfg.Name, env.DefaultIngressBaseHost)
+		}
+		if hostname != "" {
+			vals.HTTPRoute.Hostnames = []string{hostname}
 		}
 
-		host := fmt.Sprintf("%s.%s", cfg.Name, env.DefaultIngressBaseHost)
-		vals.Ingress.Hosts = []HelmIngressHost{
-			{
-				Host: host,
-				Paths: []HelmIngressPath{
-					{Path: "/", PathType: "Prefix"},
-				},
-			},
-		}
-		vals.Ingress.TLS = []HelmIngressTLS{
-			{
-				Hosts:      []string{host},
-				SecretName: fmt.Sprintf("%s-tls", cfg.Name),
-			},
+		vals.HTTPRoute.Rules = cfg.Gateway.HTTP.Rules
+		if len(vals.HTTPRoute.Rules) == 0 {
+			vals.HTTPRoute.Rules = []serviceconfig.HTTPRouteRule{{
+				Matches: []serviceconfig.HTTPRouteMatch{{
+					Path: &serviceconfig.HTTPPathMatch{
+						Type:  serviceconfig.Ptr("PathPrefix"),
+						Value: serviceconfig.Ptr("/"),
+					},
+				}},
+			}}
 		}
 	}
 
 	// Health probes
 	if cfg.Manage != nil && cfg.Manage.Health != nil && cfg.Manage.Health.Endpoint != "" {
-		port := servicePort
+		port := 0
+		if servicePort != nil {
+			port = *servicePort
+		}
 		if cfg.Manage.Health.Port != nil {
 			port = *cfg.Manage.Health.Port
 		}

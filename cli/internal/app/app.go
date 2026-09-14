@@ -65,7 +65,7 @@ func NewRootCmd() *cobra.Command {
 		}
 		if activeCtxName != "" {
 			if activeCtx, ok := cfg.Contexts[activeCtxName]; ok {
-				if err := maybeStartPortForward(activeCtx, resolved.Server); err != nil {
+				if err := maybeStartPortForward(activeCtx.PortForward); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", err)
 				}
 			}

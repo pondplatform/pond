@@ -1,7 +1,7 @@
 .PHONY: build build-images build-server-image build-agent-image build-cli \
         test test-integration vet verify \
         helm-lint \
-        e2e-setup e2e-teardown e2e
+        e2e-setup e2e-gateway-setup e2e-teardown e2e
 
 build-server-image:
 	docker build -f infra/docker/Dockerfile.server -t pond-server:latest .
@@ -39,14 +39,30 @@ helm-lint:
 	helm lint infra/deploy/helm/pond-agent
 	helm template ci infra/deploy/helm/pond-agent >/dev/null
 	helm package infra/deploy/helm/pond-agent --destination /tmp
+	helm lint infra/agent/helm-charts/base-service
+	helm template ci infra/agent/helm-charts/base-service >/dev/null
+	helm template ci infra/agent/helm-charts/base-service --set httpRoute.enabled=true >/dev/null
+	helm template ci infra/agent/helm-charts/base-service --set httpRoute.enabled=true \
+		--set 'httpRoute.rules[0].filters[0].type=RequestHeaderModifier' >/dev/null
+	helm template ci infra/agent/helm-charts/base-service --set httpRoute.enabled=true \
+		--set 'httpRoute.rules[0].matches[0].headers[0].name=x' \
+		--set 'httpRoute.rules[0].matches[0].headers[0].value=yes' >/dev/null
+	@# gateway-api rejects a rule carrying both a RequestRedirect filter and backendRefs.
+	! helm template ci infra/agent/helm-charts/base-service --set httpRoute.enabled=true \
+		--set 'httpRoute.rules[0].filters[0].type=RequestRedirect' | grep -q backendRefs
 
 # ---- E2E targets ----
 
 e2e-setup: build
 	./test/end-to-end/local-setup.sh
 
+# Gateway API CRDs, a controller and the Gateway that HTTPRoutes attach to.
+e2e-gateway-setup:
+	./test/end-to-end/gateway-setup.sh
+
 e2e-teardown:
 	./test/end-to-end/teardown.sh
 
-e2e: e2e-setup
+e2e: e2e-setup e2e-gateway-setup
 	./test/end-to-end/deploy-postgres.sh
+	./test/end-to-end/deploy-gateway.sh

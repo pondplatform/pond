@@ -20,12 +20,27 @@ version: 1
 name: my-service
 image: ghcr.io/example/my-service
 
-service:
-  port: 8080
+deployment:
   replicas: 2
 
-ingress:
-  enabled: true
+service:
+  port: 8080
+
+gateway:
+  http:
+    enabled: true
+    hostname: my-service.example.com
+    rules:
+      - matches:
+          - path:
+              type: PathPrefix
+              value: /api
+        filters:
+          - type: URLRewrite
+            urlRewrite:
+              path:
+                type: ReplacePrefixMatch
+                replacePrefixMatch: /
 
 management:
   health:
@@ -56,7 +71,7 @@ configs:
 
 overrides:
   production:
-    service:
+    deployment:
       replicas: 3
     env:
       LOG_LEVEL: warn
@@ -74,26 +89,62 @@ overrides:
 | `name` | string | yes | Service name. Used as the Helm release name. |
 | `image` | string | yes* | Docker image reference (without tag). Required unless `build` is set. |
 | `build` | string | no | Path to a Dockerfile relative to `pond.yml`. Used to tell Pond which image to build; the built image is pushed and referenced automatically. |
-| `ingress` | object | no | Ingress settings. |
-| `service` | object | no | Service port and replica settings. |
+| `deployment` | object | no | Workload settings, such as the replica count. |
+| `service` | object | no | Service port settings. |
+| `gateway` | object | no | How the service is exposed to incoming HTTP traffic. |
 | `management` | object | no | Health check and metrics endpoints. |
 | `dependencies` | map | no | External services your app needs (databases, HTTP services). |
 | `env` | map | no | Environment variables injected into the container. |
 | `configs` | map | no | Config files rendered and mounted into the container. |
 | `overrides` | map | no | Environment-specific overrides. Keys are environment names. |
 
-### `ingress`
+### `deployment`
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | boolean | `false` | Whether to create a Kubernetes Ingress for this service. |
+| `replicas` | integer | `2` | Number of pod replicas. |
 
 ### `service`
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `port` | integer | — | Container port the application listens on. |
-| `replicas` | integer | `1` | Number of pod replicas. |
+| `port` | integer | `8080` | Container port the application listens on. |
+
+### `gateway`
+
+Exposes the service to HTTP traffic by creating a [Gateway API](https://gateway-api.sigs.k8s.io/) `HTTPRoute`. Only HTTP is supported today, hence the `http` nesting.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `http.enabled` | boolean | `false` | Whether to create an `HTTPRoute` for this service. |
+| `http.hostname` | string | `<name>.<environment base host>` | Hostname the route matches. |
+| `http.rules` | list | a single catch-all `PathPrefix: /` rule | Routing rules. See below. |
+
+`http.rules` entries follow the upstream [`HTTPRouteRule`](https://gateway-api.sigs.k8s.io/reference/spec/#httprouterule) shape, so examples from the Gateway API docs can be pasted in directly. Both `matches` (on `path`, `headers`, `queryParams` and `method`) and `filters` (all six types, including `RequestHeaderModifier`, `URLRewrite` and `RequestRedirect`) are supported.
+
+`parentRefs` and `backendRefs` are deliberately not settable: Pond attaches the route to the environment's Gateway and points it at this service. TLS is terminated by the Gateway listener rather than per route.
+
+The one exception is a rule containing a `RequestRedirect` filter. Gateway API forbids combining a redirect with a backend, so Pond omits the backend for that rule — the redirect is answered by the Gateway and the request never reaches your service.
+
+```yaml
+gateway:
+  http:
+    enabled: true
+    rules:
+      - matches:
+          - path:
+              type: PathPrefix
+              value: /admin
+          - headers:
+              - name: X-Internal
+                value: "true"
+        filters:
+          - type: RequestHeaderModifier
+            requestHeaderModifier:
+              set:
+                - name: X-Forwarded-Prefix
+                  value: /admin
+```
 
 ### `management`
 

@@ -3,9 +3,6 @@ name: todo-app
 build: Dockerfile
 image: nginx:latest
 
-ingress:
-  enabled: false
-
 service:
   port: 80
 

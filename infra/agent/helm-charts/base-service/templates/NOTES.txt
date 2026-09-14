@@ -5,19 +5,22 @@
 {{- else }}
     export APP_HOSTNAME=$(kubectl get --namespace {{(first .Values.httpRoute.parentRefs).namespace | default .Release.Namespace }} gateway/{{ (first .Values.httpRoute.parentRefs).name }} -o jsonpath="{.spec.listeners[0].hostname}")
   {{- end }}
-{{- if and .Values.httpRoute.rules (first .Values.httpRoute.rules).matches (first (first .Values.httpRoute.rules).matches).path.value }}
-    echo "Visit http://$APP_HOSTNAME{{ (first (first .Values.httpRoute.rules).matches).path.value }} to use your application"
+{{/* A rule need not match on path at all (header, method and query matches are
+     equally valid), so every lookup below is guarded: an unguarded .path.value
+     fails the render, which fails the whole release. */}}
+{{- $path := "/" }}
+{{- with .Values.httpRoute.rules }}
+  {{- with (first .).matches }}
+    {{- with (first .).path }}
+      {{- $path = .value | default "/" }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+    echo "Visit http://$APP_HOSTNAME{{ $path }} to use your application"
 
     NOTE: Your HTTPRoute depends on the listener configuration of your gateway and your HTTPRoute rules.
     The rules can be set for path, method, header and query parameters.
     You can check the gateway configuration with 'kubectl get --namespace {{(first .Values.httpRoute.parentRefs).namespace | default .Release.Namespace }} gateway/{{ (first .Values.httpRoute.parentRefs).name }} -o yaml'
-{{- end }}
-{{- else if .Values.ingress.enabled }}
-{{- range $host := .Values.ingress.hosts }}
-  {{- range .paths }}
-  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
-  {{- end }}
-{{- end }}
 {{- else if contains "NodePort" .Values.service.type }}
   export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "base-service.fullname" . }})
   export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")

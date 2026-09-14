@@ -16,7 +16,8 @@ warn()  { echo "  ${yellow}⚠ $*${reset}"; }
 die()   { echo "${bold}${red}✖ ERROR: $*${reset}" >&2; exit 1; }
 
 # load_env — sources .e2e-env if POND_TOKEN is not already set, then validates
-# and exports SERVER_URL, POND_TOKEN, PROJECT_ID, IMAGE_TAG, and POND (CLI path).
+# and exports SERVER_URL, POND_TOKEN, PROJECT_ID, IMAGE_TAG, INGRESS_BASE_HOST
+# and POND (CLI path).
 load_env() {
   local env_file="$_E2E_DIR/.e2e-env"
   if [[ -f "$env_file" && -z "${POND_TOKEN:-}" ]]; then
@@ -27,6 +28,7 @@ load_env() {
   POND_TOKEN="${POND_TOKEN:?POND_TOKEN must be set — run local-setup.sh first}"
   PROJECT_ID="${POND_PROJECT_ID:?POND_PROJECT_ID must be set — run local-setup.sh first}"
   IMAGE_TAG="${POND_IMAGE_TAG:-latest}"
+  INGRESS_BASE_HOST="${POND_INGRESS_BASE_HOST:-e2e.local}"
   POND="$_E2E_DIR/../../build/pond"
   [[ -x "$POND" ]] || die "CLI binary not found at $POND — run: make build-cli"
 }

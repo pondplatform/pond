@@ -82,6 +82,7 @@ func newContextAddCmd(cfgPathFn func() (string, error)) *cobra.Command {
 		kubeContext   string
 		kubeNamespace string
 		kubeService   string
+		forwardPort   int
 	)
 
 	cmd := &cobra.Command{
@@ -89,6 +90,16 @@ func newContextAddCmd(cfgPathFn func() (string, error)) *cobra.Command {
 		Short: "Add or update a context",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			pf := pondconfig.PortForward{
+				KubeContext:   kubeContext,
+				KubeNamespace: kubeNamespace,
+				KubeService:   kubeService,
+				Port:          forwardPort,
+			}
+			if pf != (pondconfig.PortForward{}) && !pf.Configured() {
+				return fmt.Errorf("--kube-context, --kube-namespace and --kubectl-forward-port must be set together")
+			}
+
 			path, cfg, err := loadCfgWithPath(cfgPathFn)
 			if err != nil {
 				return err
@@ -96,13 +107,11 @@ func newContextAddCmd(cfgPathFn func() (string, error)) *cobra.Command {
 			name := args[0]
 			_, exists := cfg.Contexts[name]
 			cfg.Contexts[name] = pondconfig.Context{
-				Server:        server,
-				Token:         token,
-				Project:       project,
-				Env:           env,
-				KubeContext:   kubeContext,
-				KubeNamespace: kubeNamespace,
-				KubeService:   kubeService,
+				Server:      server,
+				Token:       token,
+				Project:     project,
+				Env:         env,
+				PortForward: pf,
 			}
 			if err := pondconfig.Save(path, cfg); err != nil {
 				return err
@@ -123,6 +132,7 @@ func newContextAddCmd(cfgPathFn func() (string, error)) *cobra.Command {
 	cmd.Flags().StringVar(&kubeContext, "kube-context", "", "kubectl context for port-forward")
 	cmd.Flags().StringVar(&kubeNamespace, "kube-namespace", "", "Kubernetes namespace for port-forward")
 	cmd.Flags().StringVar(&kubeService, "kube-service", "", "Kubernetes service for port-forward (default: pond-server)")
+	cmd.Flags().IntVar(&forwardPort, "kubectl-forward-port", 0, "Local port the kubectl port-forward binds")
 	cmd.MarkFlagRequired("server")
 
 	return cmd
@@ -184,9 +194,17 @@ func newContextShowCmd(cfgPathFn func() (string, error)) *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Token:          %s\n", token)
 			fmt.Fprintf(cmd.OutOrStdout(), "Project:        %s\n", ctx.Project)
 			fmt.Fprintf(cmd.OutOrStdout(), "Env:            %s\n", ctx.Env)
-			fmt.Fprintf(cmd.OutOrStdout(), "KubeContext:    %s\n", ctx.KubeContext)
-			fmt.Fprintf(cmd.OutOrStdout(), "KubeNamespace:  %s\n", ctx.KubeNamespace)
-			fmt.Fprintf(cmd.OutOrStdout(), "KubeService:    %s\n", ctx.KubeService)
+			if pf := ctx.PortForward; pf != (pondconfig.PortForward{}) {
+				service := pf.KubeService
+				if service == "" {
+					service = "pond-server"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Port-forward:\n")
+				fmt.Fprintf(cmd.OutOrStdout(), "  KubeContext:    %s\n", pf.KubeContext)
+				fmt.Fprintf(cmd.OutOrStdout(), "  KubeNamespace:  %s\n", pf.KubeNamespace)
+				fmt.Fprintf(cmd.OutOrStdout(), "  KubeService:    %s\n", service)
+				fmt.Fprintf(cmd.OutOrStdout(), "  LocalPort:      %d\n", pf.Port)
+			}
 			return nil
 		},
 	}

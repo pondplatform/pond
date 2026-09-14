@@ -11,5 +11,7 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	app.NewRootCmd().ExecuteContext(ctx)
+	if err := app.NewRootCmd().ExecuteContext(ctx); err != nil {
+		os.Exit(1)
+	}
 }

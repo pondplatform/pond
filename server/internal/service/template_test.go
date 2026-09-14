@@ -36,10 +36,13 @@ func TestRender_SingleDepVar_Resolved(t *testing.T) {
 	}
 }
 
-func TestRender_ServicePort_Resolved(t *testing.T) {
+func TestRender_ServicePortAndReplicas_Resolved(t *testing.T) {
 	r := service.NewTemplateRenderer()
-	svc := &serviceconfig.ServiceConfig{Service: &serviceconfig.ServiceSpec{Port: serviceconfig.Ptr(int32(8080)), Replicas: serviceconfig.Ptr(int32(2))}}
-	values := map[string]any{"port": "{{service.port}}", "replicas": "{{service.replicas}}"}
+	svc := &serviceconfig.ServiceConfig{
+		Deployment: &serviceconfig.DeploymentSpec{Replicas: serviceconfig.Ptr(int32(2))},
+		Service:    &serviceconfig.ServiceSpec{Port: serviceconfig.Ptr(int32(8080))},
+	}
+	values := map[string]any{"port": "{{service.port}}", "replicas": "{{deployment.replicas}}"}
 
 	got, err := r.Render(values, nil, svc)
 	if err != nil {

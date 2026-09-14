@@ -26,16 +26,16 @@ func (r *resolver) Resolve(base *serviceconfig.OverridableConfig, envName string
 		return &cfg, nil
 	}
 
-	// Apply ingress override: copy struct before mutating to avoid sharing with base.
-	if override.Ingress != nil {
-		ingressCopy := serviceconfig.IngressConfig{}
-		if cfg.Ingress != nil {
-			ingressCopy = *cfg.Ingress
+	// Apply deployment override: copy struct before mutating to avoid sharing with base.
+	if override.Deployment != nil {
+		deploymentCopy := serviceconfig.DeploymentSpec{}
+		if cfg.Deployment != nil {
+			deploymentCopy = *cfg.Deployment
 		}
-		if override.Ingress.Enabled != nil {
-			ingressCopy.Enabled = override.Ingress.Enabled
+		if override.Deployment.Replicas != nil {
+			deploymentCopy.Replicas = override.Deployment.Replicas
 		}
-		cfg.Ingress = &ingressCopy
+		cfg.Deployment = &deploymentCopy
 	}
 
 	// Apply service override: copy struct before mutating to avoid sharing with base.
@@ -47,10 +47,27 @@ func (r *resolver) Resolve(base *serviceconfig.OverridableConfig, envName string
 		if override.Service.Port != nil {
 			serviceCopy.Port = override.Service.Port
 		}
-		if override.Service.Replicas != nil {
-			serviceCopy.Replicas = override.Service.Replicas
-		}
 		cfg.Service = &serviceCopy
+	}
+
+	// Apply gateway override: copy struct before mutating to avoid sharing with base.
+	if override.Gateway != nil && override.Gateway.HTTP != nil {
+		httpCopy := serviceconfig.GatewayHTTPConfig{}
+		if cfg.Gateway != nil && cfg.Gateway.HTTP != nil {
+			httpCopy = *cfg.Gateway.HTTP
+		}
+		if override.Gateway.HTTP.Enabled != nil {
+			httpCopy.Enabled = override.Gateway.HTTP.Enabled
+		}
+		if override.Gateway.HTTP.Hostname != nil {
+			httpCopy.Hostname = override.Gateway.HTTP.Hostname
+		}
+		// Routing rules replace rather than append: they are order-sensitive, so
+		// keeping the base rules first would let them shadow the override.
+		if override.Gateway.HTTP.Rules != nil {
+			httpCopy.Rules = override.Gateway.HTTP.Rules
+		}
+		cfg.Gateway = &serviceconfig.GatewayConfig{HTTP: &httpCopy}
 	}
 
 	// Deep merge maps: override keys win.

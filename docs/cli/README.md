@@ -18,6 +18,24 @@ These flags apply to every command. They can also be set via environment variabl
 
 The CLI stores contexts in `~/.pond/config` (YAML). Use the `pond context` commands to manage it — do not edit the file manually.
 
+Server settings live at the top level of a context; port-forward settings are grouped
+under `port-forward`:
+
+```yaml
+current-context: prod
+contexts:
+  prod:
+    server: http://localhost:24680
+    token: ey...
+    project: 8f3c...
+    env: staging
+    port-forward:
+      kube-context: my-cluster
+      kube-namespace: pond
+      kube-service: pond-server
+      kubectl-forward-port: 24680
+```
+
 ---
 
 ## pond context
@@ -31,6 +49,24 @@ pond context add <name> --server <url> [--token <tok>] [--project <uuid>] [--env
 ```
 
 Creates or updates a context. `--server` is required.
+
+If the server is only reachable inside a Kubernetes cluster, add port-forward settings.
+The CLI then starts a background `kubectl port-forward` whenever the forward port is not
+already listening:
+
+```sh
+pond context add prod \
+  --server               http://localhost:24680 \
+  --kube-context         my-cluster \
+  --kube-namespace       pond \
+  --kube-service         pond-server \
+  --kubectl-forward-port 24680
+```
+
+`--kube-context`, `--kube-namespace` and `--kubectl-forward-port` must be set together;
+`--kube-service` defaults to `pond-server`. The forward binds `--kubectl-forward-port`
+locally and targets port `8080` on the service — point `--server` at that same local port.
+`scripts/setup.sh` picks a random free forward port for you.
 
 ### pond context use \<name\>
 

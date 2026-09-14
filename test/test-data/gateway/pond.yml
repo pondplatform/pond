@@ -1,0 +1,37 @@
+version: 1
+name: gateway-demo
+# whoami echoes the request line and headers it received, which is what makes the
+# effect of the route's filters observable from outside the cluster.
+image: traefik/whoami
+
+deployment:
+  replicas: 1
+
+service:
+  port: 80
+
+gateway:
+  http:
+    enabled: true
+    # hostname is deliberately omitted so the derived <name>.<env base host> path
+    # is what the test exercises.
+    rules:
+      - matches:
+          - path:
+              type: PathPrefix
+              value: /rewritten
+        filters:
+          - type: URLRewrite
+            urlRewrite:
+              path:
+                type: ReplacePrefixMatch
+                replacePrefixMatch: /
+          - type: RequestHeaderModifier
+            requestHeaderModifier:
+              set:
+                - name: X-Pond-Filter
+                  value: applied
+      - matches:
+          - path:
+              type: PathPrefix
+              value: /

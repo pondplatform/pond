@@ -9,13 +9,26 @@ import (
 )
 
 type Context struct {
-	Server        string `yaml:"server,omitempty"`
-	Token         string `yaml:"token,omitempty"`
-	Project       string `yaml:"project,omitempty"`
-	Env           string `yaml:"env,omitempty"`
+	Server      string      `yaml:"server,omitempty"`
+	Token       string      `yaml:"token,omitempty"`
+	Project     string      `yaml:"project,omitempty"`
+	Env         string      `yaml:"env,omitempty"`
+	PortForward PortForward `yaml:"port-forward,omitempty"`
+}
+
+// PortForward describes the kubectl port-forward the CLI starts on demand when the
+// server is only reachable from inside the cluster. Port is the local port kubectl
+// binds; it is independent of Server, which is what the CLI actually dials.
+type PortForward struct {
 	KubeContext   string `yaml:"kube-context,omitempty"`
 	KubeNamespace string `yaml:"kube-namespace,omitempty"`
 	KubeService   string `yaml:"kube-service,omitempty"`
+	Port          int    `yaml:"kubectl-forward-port,omitempty"`
+}
+
+// Configured reports whether the context has enough information to start a forward.
+func (p PortForward) Configured() bool {
+	return p.KubeContext != "" && p.KubeNamespace != "" && p.Port != 0
 }
 
 type Config struct {

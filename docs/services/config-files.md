@@ -79,7 +79,7 @@ Values support `{{variable}}` syntax. Variables are resolved at deploy time.
 | `{{<depName>.port}}` | Output field from a dependency named `<depName>` |
 | `{{<depName>.<field>}}` | Any output field of a declared dependency |
 | `{{service.port}}` | The `service.port` value from your `pond.yml` |
-| `{{service.replicas}}` | The `service.replicas` value from your `pond.yml` |
+| `{{deployment.replicas}}` | The `deployment.replicas` value from your `pond.yml` |
 | `{{env.<KEY>}}` | An environment variable declared in the `env` block |
 
 ---

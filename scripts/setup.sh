@@ -17,7 +17,7 @@ CONTEXT_NAME=""
 CLUSTER_NAME=""
 IMAGE_TAG="latest"
 CHART_VERSION=""        # empty = latest published chart
-SERVER_PORT="8080"
+FORWARD_PORT=""         # empty = pick a random free local port
 ENVIRONMENTS=""         # empty = prompt or default to "production"
 INSTALL_PROVIDERS=""    # empty = prompt; "true"/"false" if set via flag
 
@@ -45,7 +45,7 @@ Options:
   --cluster-name <name>      Pond cluster registration name    (default: <kube-context>)
   --image-tag <tag>          Docker image tag                  (default: latest)
   --chart-version <ver>      Helm chart version                (default: latest published)
-  --server-port <port>       Local port for port-forward       (default: 8080)
+  --kubectl-forward-port <p> Local port for the port-forward   (default: random free port)
   --environments <list>      Comma-separated environment names (prompted if omitted)
   --default-providers        Install CloudNativePG operator    (prompted if omitted)
   --help                     Show this help
@@ -61,7 +61,7 @@ while [[ $# -gt 0 ]]; do
     --cluster-name)      CLUSTER_NAME="$2";       shift 2 ;;
     --image-tag)         IMAGE_TAG="$2";           shift 2 ;;
     --chart-version)     CHART_VERSION="$2";       shift 2 ;;
-    --server-port)       SERVER_PORT="$2";         shift 2 ;;
+    --kubectl-forward-port) FORWARD_PORT="$2";     shift 2 ;;
     --environments)      ENVIRONMENTS="$2";        shift 2 ;;
     --default-providers) INSTALL_PROVIDERS="true"; shift ;;
     --help|-h)           usage; exit 0 ;;
@@ -165,10 +165,24 @@ if [[ -z "$INSTALL_PROVIDERS" ]]; then
   echo >&/dev/tty
 fi
 
+# random_free_port — prints a local port in 20000-29999 that nothing is listening on
+random_free_port() {
+  local port
+  for _ in $(seq 1 50); do
+    port=$(( ( RANDOM % 10000 ) + 20000 ))
+    if ! (exec 3<>"/dev/tcp/127.0.0.1/${port}") >/dev/null 2>&1; then
+      printf '%s' "$port"
+      return 0
+    fi
+  done
+  die "could not find a free local port for the port-forward"
+}
+
 # Derive remaining defaults
 CONTEXT_NAME="${CONTEXT_NAME:-$KUBE_CONTEXT}"
 CLUSTER_NAME="${CLUSTER_NAME:-$KUBE_CONTEXT}"
-SERVER_URL="http://localhost:${SERVER_PORT}"
+FORWARD_PORT="${FORWARD_PORT:-$(random_free_port)}"
+SERVER_URL="http://localhost:${FORWARD_PORT}"
 
 # ── Helm version flag (empty = latest) ───────────────────────────────────────
 HELM_VERSION_FLAG=()
@@ -273,15 +287,15 @@ if [[ "$INSTALL_PROVIDERS" == "true" ]]; then
 fi
 
 # ── 5. Port-forward + wait for health ─────────────────────────────────────────
-step "Port-forwarding pond-server to localhost:${SERVER_PORT}"
-pkill -f "kubectl port-forward.*${SERVER_PORT}" 2>/dev/null || true
+step "Port-forwarding pond-server to localhost:${FORWARD_PORT}"
+pkill -f "kubectl port-forward.*--namespace ${NAMESPACE} .*svc/${SERVER_RELEASE}" 2>/dev/null || true
 sleep 1
 
 kubectl port-forward \
   --namespace "$NAMESPACE" \
   --context "$KUBE_CONTEXT" \
   "svc/$SERVER_RELEASE" \
-  "${SERVER_PORT}:8080" &
+  "${FORWARD_PORT}:8080" &
 PF_PID=$!
 
 info "Waiting for server at $SERVER_URL ..."
@@ -427,7 +441,8 @@ step "Configuring pond CLI context '$CONTEXT_NAME'"
   --project "$PROJECT_ID" \
   --kube-context "$KUBE_CONTEXT" \
   --kube-namespace "$NAMESPACE" \
-  --kube-service "$SERVER_RELEASE"
+  --kube-service "$SERVER_RELEASE" \
+  --kubectl-forward-port "$FORWARD_PORT"
 
 "$POND_CLI" context use "$CONTEXT_NAME"
 info "Active context set to '$CONTEXT_NAME'"
@@ -443,6 +458,7 @@ printf '%s\n' \
   "POND_CLUSTER_ID=${CLUSTER_ID}" \
   "POND_PROJECT_ID=${PROJECT_ID}" \
   "POND_PF_PID=${PF_PID}" \
+  "POND_KUBECTL_FORWARD_PORT=${FORWARD_PORT}" \
   "POND_KUBE_CONTEXT=${KUBE_CONTEXT}" \
   "POND_NAMESPACE=${NAMESPACE}" \
   > "$STATE_FILE"
@@ -470,7 +486,7 @@ done
 echo "  Environments:        ${_ENV_LIST}"
 echo
 echo "  Server URL:          ${SERVER_URL}"
-echo "  Port-forward PID:    ${PF_PID}"
+echo "  Port-forward:        localhost:${FORWARD_PORT} -> svc/${SERVER_RELEASE}:8080 (PID ${PF_PID})"
 echo "  Pond CLI context:    ${CONTEXT_NAME}  ${bold}[active]${reset}"
 echo
 echo "  State file:          ${STATE_FILE}"
@@ -478,7 +494,7 @@ echo "  (contains ADMIN_KEY and JWT_SECRET — keep secure)"
 echo
 echo "${bold}To restart the port-forward after the session ends:${reset}"
 echo "  kubectl port-forward --namespace ${NAMESPACE} --context ${KUBE_CONTEXT} \\"
-echo "    svc/pond-server ${SERVER_PORT}:8080 &"
+echo "    svc/pond-server ${FORWARD_PORT}:8080 &"
 echo
 echo "${bold}To remove this installation:${reset}"
 echo "  helm uninstall ${SERVER_RELEASE} ${AGENT_RELEASE} -n ${NAMESPACE} --kube-context ${KUBE_CONTEXT}"

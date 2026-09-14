@@ -20,6 +20,7 @@ NAMESPACE="${NAMESPACE:-pond}"
 SERVER_RELEASE="${SERVER_RELEASE:-pond-server}"
 AGENT_RELEASE="${AGENT_RELEASE:-pond-agent}"
 SERVER_PORT="${SERVER_PORT:-8080}"
+INGRESS_BASE_HOST="${INGRESS_BASE_HOST:-e2e.local}"
 CONTEXT="rancher-desktop"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -213,7 +214,7 @@ ENV_HTTP=$(curl -s -o /tmp/pond_env_body -w "%{http_code}" \
   -X POST "$SERVER_URL/api/v1/projects/$PROJECT_ID/environments" \
   -H "Authorization: Bearer $POND_TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"staging\",\"namespace\":\"e2e-staging\",\"clusterId\":\"$CLUSTER_ID\"}")
+  -d "{\"name\":\"staging\",\"namespace\":\"e2e-staging\",\"clusterId\":\"$CLUSTER_ID\",\"defaultIngressBaseHost\":\"$INGRESS_BASE_HOST\"}")
 ENV_BODY=$(cat /tmp/pond_env_body)
 if [[ "$ENV_HTTP" == "201" ]]; then
   info "Environment created"
@@ -225,12 +226,26 @@ else
   exit 1
 fi
 
+# gateway.http.hostname derives from the base host, so patch it in — an
+# environment left over from an earlier run would not have it.
+ENV_LIST=$(curl_api "GET /projects/$PROJECT_ID/environments" \
+  "$SERVER_URL/api/v1/projects/$PROJECT_ID/environments" \
+  -H "Authorization: Bearer $POND_TOKEN")
+ENV_ID=$(echo "$ENV_LIST" | jq -r '.items[] | select(.name=="staging") | .id')
+[[ -n "$ENV_ID" && "$ENV_ID" != "null" ]] || die "could not determine environment ID"
+curl_api "PATCH /environments/$ENV_ID" \
+  -X PATCH "$SERVER_URL/api/v1/environments/$ENV_ID" \
+  -H "Authorization: Bearer $POND_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"defaultIngressBaseHost\":\"$INGRESS_BASE_HOST\"}" >/dev/null
+info "Ingress base host: $INGRESS_BASE_HOST"
+
 # ── 10. Write env file ────────────────────────────────────────────────────────
 E2E_ENV="${E2E_ENV:-$REPO_ROOT/test/end-to-end/.e2e-env}"
 step "Writing $E2E_ENV"
 mkdir -p "$(dirname "$E2E_ENV")"
-printf 'export POND_SERVER_URL=%s\nexport POND_TOKEN=%s\nexport POND_CLUSTER_ID=%s\nexport POND_PROJECT_ID=%s\n' \
-  "$SERVER_URL" "$POND_TOKEN" "$CLUSTER_ID" "$PROJECT_ID" > "$E2E_ENV"
+printf 'export POND_SERVER_URL=%s\nexport POND_TOKEN=%s\nexport POND_CLUSTER_ID=%s\nexport POND_PROJECT_ID=%s\nexport POND_INGRESS_BASE_HOST=%s\n' \
+  "$SERVER_URL" "$POND_TOKEN" "$CLUSTER_ID" "$PROJECT_ID" "$INGRESS_BASE_HOST" > "$E2E_ENV"
 info "Written: $E2E_ENV"
 
 E2E_PIDS="$SCRIPT_DIR/.e2e-pids"
@@ -254,6 +269,7 @@ echo "  pond deploy --project <id> --env <env> --tag <tag>"
 echo
 echo "${bold}To run end-to-end tests:${reset}"
 echo "  ./test/end-to-end/deploy-postgres.sh"
+echo "  ./test/end-to-end/gateway-setup.sh && ./test/end-to-end/deploy-gateway.sh"
 echo "  (env file is auto-sourced)"
 echo
 echo "${bold}Tear down:${reset}"

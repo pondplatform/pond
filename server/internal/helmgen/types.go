@@ -1,12 +1,16 @@
 package helmgen
 
+import "github.com/pondplatform/pond/shared/serviceconfig"
+
 type HelmValues struct {
-	ReplicaCount     int               `yaml:"replicaCount"`
+	// ReplicaCount is a pointer so an unset value is omitted and the chart
+	// default applies, rather than being pinned to zero replicas.
+	ReplicaCount     *int              `yaml:"replicaCount,omitempty"`
 	Image            Image             `yaml:"image"`
 	NameOverride     string            `yaml:"nameOverride"`
 	FullnameOverride string            `yaml:"fullnameOverride"`
 	Service          HelmService       `yaml:"service"`
-	Ingress          HelmIngress       `yaml:"ingress"`
+	HTTPRoute        HelmHTTPRoute     `yaml:"httpRoute"`
 	LivenessProbe    *HelmProbe        `yaml:"livenessProbe,omitempty"`
 	ReadinessProbe   *HelmProbe        `yaml:"readinessProbe,omitempty"`
 	Env              map[string]string `yaml:"env"`
@@ -23,30 +27,16 @@ type Image struct {
 
 type HelmService struct {
 	Type string `yaml:"type"`
-	Port int    `yaml:"port"`
+	Port *int   `yaml:"port,omitempty"`
 }
 
-type HelmIngress struct {
-	Enabled     bool              `yaml:"enabled"`
-	ClassName   string            `yaml:"className"`
-	Annotations map[string]string `yaml:"annotations,omitempty"`
-	Hosts       []HelmIngressHost `yaml:"hosts"`
-	TLS         []HelmIngressTLS  `yaml:"tls,omitempty"`
-}
-
-type HelmIngressHost struct {
-	Host  string            `yaml:"host"`
-	Paths []HelmIngressPath `yaml:"paths"`
-}
-
-type HelmIngressPath struct {
-	Path     string `yaml:"path"`
-	PathType string `yaml:"pathType"`
-}
-
-type HelmIngressTLS struct {
-	Hosts      []string `yaml:"hosts"`
-	SecretName string   `yaml:"secretName"`
+// HelmHTTPRoute reuses the serviceconfig rule types directly: the shapes are
+// identical and the chart renders them with toYaml, so a parallel tree would
+// only be a drift risk. parentRefs and backendRefs are supplied by the chart.
+type HelmHTTPRoute struct {
+	Enabled   bool                          `yaml:"enabled"`
+	Hostnames []string                      `yaml:"hostnames,omitempty"`
+	Rules     []serviceconfig.HTTPRouteRule `yaml:"rules,omitempty"`
 }
 
 type HelmProbe struct {

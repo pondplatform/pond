@@ -11,6 +11,15 @@ The agent connects to the server using an unencrypted `ws://` WebSocket — TLS 
 
 Until then, ensure agent-to-server traffic stays within a private network or is protected by a VPN.
 
+## Gateway for exposed services
+
+Services that set `gateway.http.enabled` are exposed with a Gateway API `HTTPRoute`, not an Ingress. Each attached cluster must therefore provide:
+
+- The [Gateway API CRDs](https://gateway-api.sigs.k8s.io/guides/) and a controller that implements them.
+- A `Gateway` named `gateway` with a listener named `http`, in the namespace the service is deployed into. This is what routes attach to by default.
+
+TLS is terminated by the Gateway listener rather than per service, so that listener needs a certificate covering the environment's ingress base host — typically a wildcard for `*.<base host>`, since Pond derives each service's hostname as `<name>.<base host>`. If you want HTTP traffic redirected to HTTPS, configure that on the Gateway; there is no per-route equivalent.
+
 ## External PostgreSQL and RabbitMQ
 
 The server Helm chart bundles single-replica PostgreSQL and RabbitMQ deployments **with no persistent volumes** — they are development-grade and will lose data on pod restart.

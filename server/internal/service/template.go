@@ -40,13 +40,11 @@ func buildLookupTable(contexts map[string]map[string]any, svcConfig *serviceconf
 		}
 	}
 
-	if svcConfig.Service != nil {
-		if svcConfig.Service.Port != nil {
-			table["service.port"] = fmt.Sprintf("%d", *svcConfig.Service.Port)
-		}
-		if svcConfig.Service.Replicas != nil {
-			table["service.replicas"] = fmt.Sprintf("%d", *svcConfig.Service.Replicas)
-		}
+	if svcConfig.Service != nil && svcConfig.Service.Port != nil {
+		table["service.port"] = fmt.Sprintf("%d", *svcConfig.Service.Port)
+	}
+	if svcConfig.Deployment != nil && svcConfig.Deployment.Replicas != nil {
+		table["deployment.replicas"] = fmt.Sprintf("%d", *svcConfig.Deployment.Replicas)
 	}
 
 	for k, v := range svcConfig.Env {
