@@ -11,6 +11,7 @@ func NewDeploymentCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(NewConfigureCmd())
+	cmd.AddCommand(NewDeploymentListCmd())
 	cmd.AddCommand(NewStatusCmd())
 
 	return cmd

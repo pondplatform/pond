@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -51,11 +52,19 @@ func (f *fakeClient) ListEnvironments(context.Context, uuid.UUID) ([]api.Environ
 	return f.envs, nil
 }
 
+// ListDeployments returns deployments newest first, across all environments
+// when envID is nil.
 func (f *fakeClient) ListDeployments(_ context.Context, _ uuid.UUID, envID *uuid.UUID, limit int) ([]api.DeploymentListItem, error) {
-	if envID == nil {
-		return nil, fmt.Errorf("expected an environment filter")
+	var items []api.DeploymentListItem
+	if envID != nil {
+		items = append(items, f.deployments[*envID]...)
+	} else {
+		for _, envItems := range f.deployments {
+			items = append(items, envItems...)
+		}
 	}
-	items := f.deployments[*envID]
+
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
 	if limit > 0 && len(items) > limit {
 		items = items[:limit]
 	}

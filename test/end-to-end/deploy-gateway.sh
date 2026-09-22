@@ -52,6 +52,13 @@ expect_eq() {
   fi
 }
 
+# route_condition <route_json> <type> — prints the condition status, or nothing
+# if the controller has not written status yet.
+route_condition() {
+  jq -r --arg t "$2" \
+    '[.status.parents[]?.conditions[]? | select(.type==$t) | .status] | first // ""' <<<"$1"
+}
+
 # gw_status <host> <path> — prints the HTTP status; the body lands in $BODY_FILE
 gw_status() {
   curl -s -o "$BODY_FILE" -w '%{http_code}' \
@@ -80,9 +87,22 @@ expect_eq "Deployment replicas" "1" \
   "$(kubectl get deployment "$SERVICE_NAME" -n "$GATEWAY_NS" -o jsonpath='{.spec.replicas}')"
 
 # ── HTTPRoute spec ────────────────────────────────────────────────────────────
+# Helm creates the route and the workload together, so the deployment can report
+# succeeded a beat before the controller has written status.parents. Re-read
+# until the conditions land rather than asserting against a status-less snapshot.
+step "Waiting for the controller to reconcile the HTTPRoute"
+ROUTE=""
+for i in $(seq 1 30); do
+  ROUTE=$(kubectl get httproute "$SERVICE_NAME" -n "$GATEWAY_NS" -o json 2>/dev/null) || ROUTE=""
+  if [[ -n "$ROUTE" && "$(route_condition "$ROUTE" Accepted)" == "True" ]]; then
+    break
+  fi
+  info "[$i/30] HTTPRoute not reconciled yet — retrying in 2s"
+  sleep 2
+done
+[[ -n "$ROUTE" ]] || die "HTTPRoute/$SERVICE_NAME was not created"
+
 step "Checking the HTTPRoute spec"
-ROUTE=$(kubectl get httproute "$SERVICE_NAME" -n "$GATEWAY_NS" -o json) \
-  || die "HTTPRoute/$SERVICE_NAME was not created"
 
 expect_eq "hostnames" "$HOST" \
   "$(jq -r '.spec.hostnames | join(",")' <<<"$ROUTE")"
@@ -104,10 +124,8 @@ expect_eq "backendRefs on every rule" "$SERVICE_NAME:80 $SERVICE_NAME:80" \
 
 # ── Controller acceptance ─────────────────────────────────────────────────────
 step "Checking the controller accepted the route"
-expect_eq "Accepted condition" "True" \
-  "$(jq -r '.status.parents[0].conditions[] | select(.type=="Accepted") | .status' <<<"$ROUTE")"
-expect_eq "ResolvedRefs condition" "True" \
-  "$(jq -r '.status.parents[0].conditions[] | select(.type=="ResolvedRefs") | .status' <<<"$ROUTE")"
+expect_eq "Accepted condition" "True" "$(route_condition "$ROUTE" Accepted)"
+expect_eq "ResolvedRefs condition" "True" "$(route_condition "$ROUTE" ResolvedRefs)"
 
 # ── Traffic ───────────────────────────────────────────────────────────────────
 step "Port-forwarding the gateway data plane to localhost:$LOCAL_PORT"

@@ -171,6 +171,50 @@ pond deployment status api --env prod
 | `-c, --config` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
 | `--deployment-id` | no | Show one deployment by UUID instead of a service; cannot be combined with a service name |
 
+### pond deployment list
+
+```sh
+pond deployment list [service] [flags]
+```
+
+Lists the deployment history of a service, newest first. The service is looked up by name inside the resolved project, and can be given either as the positional argument or with `--service` — passing both is an error. When neither is given, the name is read from the `name` field of `./pond.yml` (or of `--config`), so the command can be run without arguments from a service directory.
+
+```sh
+pond deployment list --service api
+```
+
+With no environment set, deployments from every environment are listed together, each row naming its environment:
+
+```sh
+$ pond deployment list api
+Service api
+
+DEPLOYMENT                            ENVIRONMENT  STATUS     IMAGE       TRIGGERED  CREATED              COMPLETED
+4eeb2f2b-9124-4cd7-978a-fb2cbbb02555  dev          running    v1.3.0-rc1  cli        2026-09-14 09:00:00  -
+55555555-5555-5555-5555-555555555555  prod         succeeded  v1.2.3      cli        2026-09-12 10:30:00  2026-09-12 10:31:12
+66666666-6666-6666-6666-666666666666  prod         failed     v1.0.0      ci         2026-09-10 08:00:00  2026-09-10 08:15:00
+```
+
+When an environment is set — via `--env`, `POND_ENV` or the active context — only that environment's deployments are listed, and the environment column is dropped in favour of the header:
+
+```sh
+$ pond deployment list api --env prod
+Service api (environment: prod)
+
+DEPLOYMENT                            STATUS     IMAGE   TRIGGERED  CREATED              COMPLETED
+55555555-5555-5555-5555-555555555555  succeeded  v1.2.3  cli        2026-09-12 10:30:00  2026-09-12 10:31:12
+66666666-6666-6666-6666-666666666666  failed     v1.0.0  ci         2026-09-10 08:00:00  2026-09-10 08:15:00
+```
+
+A `-` in the completed column means the deployment has not finished yet. Use `pond deployment status --deployment-id <id>` to inspect any row in full.
+
+| Flag | Required | Description |
+|---|---|---|
+| `--service` | no | Service name, as an alternative to the positional argument; cannot be combined with it |
+| `-e, --env` | no | Restrict the listing to one environment |
+| `-c, --config` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
+| `--limit` | no | Maximum number of deployments to list (default 20) |
+
 ### pond deployment configure
 
 ```sh

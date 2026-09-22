@@ -87,17 +87,27 @@ func resolveServiceName(args []string, configPath string) (string, error) {
 	return cfg.Name, nil
 }
 
-func runServiceStatus(ctx context.Context, out io.Writer, c client.ServerClient, serviceName string) error {
+// projectFromContext returns the resolved CLI config along with its parsed
+// project ID.
+func projectFromContext(ctx context.Context) (pondconfig.ResolvedConfig, uuid.UUID, error) {
 	resolved, ok := ctx.Value(pondconfig.ResolvedConfigKey{}).(pondconfig.ResolvedConfig)
 	if !ok {
-		return fmt.Errorf("internal error: resolved config not available")
+		return pondconfig.ResolvedConfig{}, uuid.Nil, fmt.Errorf("internal error: resolved config not available")
 	}
 	if resolved.Project == "" {
-		return fmt.Errorf("project is required: use --project, POND_PROJECT env var, or configure a context")
+		return pondconfig.ResolvedConfig{}, uuid.Nil, fmt.Errorf("project is required: use --project, POND_PROJECT env var, or configure a context")
 	}
 	projID, err := uuid.Parse(resolved.Project)
 	if err != nil {
-		return fmt.Errorf("invalid project id: %w", err)
+		return pondconfig.ResolvedConfig{}, uuid.Nil, fmt.Errorf("invalid project id: %w", err)
+	}
+	return resolved, projID, nil
+}
+
+func runServiceStatus(ctx context.Context, out io.Writer, c client.ServerClient, serviceName string) error {
+	resolved, projID, err := projectFromContext(ctx)
+	if err != nil {
+		return err
 	}
 
 	svc, err := findService(ctx, c, projID, serviceName)
