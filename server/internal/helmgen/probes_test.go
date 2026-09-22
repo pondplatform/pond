@@ -1,12 +1,10 @@
 package helmgen
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
 	domain "github.com/pondplatform/pond/server/internal/model/db"
-	"github.com/pondplatform/pond/shared/server/api"
 	"github.com/pondplatform/pond/shared/serviceconfig"
 	"gopkg.in/yaml.v3"
 )
@@ -173,145 +171,5 @@ func TestGenerator_Generate_MetricsAnnotationsUseServicePort(t *testing.T) {
 		if vals.PodAnnotations[k] != v {
 			t.Errorf("Annotation %s: expected %q, got %q", k, v, vals.PodAnnotations[k])
 		}
-	}
-}
-
-func TestValidateManagement_Valid(t *testing.T) {
-	cfg := managementConfig("web", &serviceconfig.ManagementConfig{
-		LivenessProbe: &serviceconfig.Probe{
-			HTTPGet:          &serviceconfig.HTTPGetAction{Path: "/health/live"},
-			SuccessThreshold: serviceconfig.Ptr(int32(1)),
-		},
-		ReadinessProbe: &serviceconfig.Probe{
-			HTTPGet:          &serviceconfig.HTTPGetAction{Path: "/health/ready", Scheme: serviceconfig.Ptr("HTTP")},
-			SuccessThreshold: serviceconfig.Ptr(int32(2)),
-		},
-		Metrics: &serviceconfig.MetricsConfig{Endpoint: "/metrics", Port: serviceconfig.Ptr(int32(9090))},
-	}, serviceconfig.Ptr(int32(8080)))
-
-	if err := ValidateManagement(cfg); err != nil {
-		t.Errorf("Expected valid config, got: %v", err)
-	}
-}
-
-func TestValidateManagement_NoManagementIsValid(t *testing.T) {
-	if err := ValidateManagement(&serviceconfig.ServiceConfig{Name: "web"}); err != nil {
-		t.Errorf("Expected a config without management to be valid, got: %v", err)
-	}
-}
-
-func TestValidateManagement_Errors(t *testing.T) {
-	tests := []struct {
-		name       string
-		mgmt       *serviceconfig.ManagementConfig
-		portOnSvc  *int32
-		wantFields []string
-	}{
-		{
-			name: "port unresolvable without service port",
-			mgmt: &serviceconfig.ManagementConfig{
-				ReadinessProbe: &serviceconfig.Probe{
-					HTTPGet: &serviceconfig.HTTPGetAction{Path: "/ready"},
-				},
-			},
-			wantFields: []string{"readinessProbe.httpGet.port"},
-		},
-		{
-			name: "path without leading slash",
-			mgmt: &serviceconfig.ManagementConfig{
-				LivenessProbe: &serviceconfig.Probe{
-					HTTPGet: &serviceconfig.HTTPGetAction{Path: "health"},
-				},
-			},
-			portOnSvc:  serviceconfig.Ptr(int32(8080)),
-			wantFields: []string{"livenessProbe.httpGet.path"},
-		},
-		{
-			name: "missing httpGet",
-			mgmt: &serviceconfig.ManagementConfig{
-				LivenessProbe: &serviceconfig.Probe{},
-			},
-			portOnSvc:  serviceconfig.Ptr(int32(8080)),
-			wantFields: []string{"livenessProbe.httpGet"},
-		},
-		{
-			name: "unsupported scheme",
-			mgmt: &serviceconfig.ManagementConfig{
-				ReadinessProbe: &serviceconfig.Probe{
-					HTTPGet: &serviceconfig.HTTPGetAction{Path: "/ready", Scheme: serviceconfig.Ptr("TCP")},
-				},
-			},
-			portOnSvc:  serviceconfig.Ptr(int32(8080)),
-			wantFields: []string{"readinessProbe.httpGet.scheme"},
-		},
-		{
-			name: "liveness successThreshold must be 1",
-			mgmt: &serviceconfig.ManagementConfig{
-				LivenessProbe: &serviceconfig.Probe{
-					HTTPGet:          &serviceconfig.HTTPGetAction{Path: "/live"},
-					SuccessThreshold: serviceconfig.Ptr(int32(2)),
-				},
-			},
-			portOnSvc:  serviceconfig.Ptr(int32(8080)),
-			wantFields: []string{"livenessProbe.successThreshold"},
-		},
-		{
-			name: "port out of range",
-			mgmt: &serviceconfig.ManagementConfig{
-				ReadinessProbe: &serviceconfig.Probe{
-					HTTPGet: &serviceconfig.HTTPGetAction{Path: "/ready", Port: serviceconfig.Ptr(int32(70000))},
-				},
-			},
-			wantFields: []string{"readinessProbe.httpGet.port"},
-		},
-		{
-			name: "non-positive timings",
-			mgmt: &serviceconfig.ManagementConfig{
-				ReadinessProbe: &serviceconfig.Probe{
-					HTTPGet:          &serviceconfig.HTTPGetAction{Path: "/ready"},
-					PeriodSeconds:    serviceconfig.Ptr(int32(0)),
-					FailureThreshold: serviceconfig.Ptr(int32(0)),
-				},
-			},
-			portOnSvc:  serviceconfig.Ptr(int32(8080)),
-			wantFields: []string{"readinessProbe.periodSeconds", "readinessProbe.failureThreshold"},
-		},
-		{
-			name: "metrics endpoint without resolvable port",
-			mgmt: &serviceconfig.ManagementConfig{
-				Metrics: &serviceconfig.MetricsConfig{Endpoint: "metrics"},
-			},
-			wantFields: []string{"metrics.endpoint", "metrics.port"},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateManagement(managementConfig("web", tc.mgmt, tc.portOnSvc))
-			if err == nil {
-				t.Fatal("Expected a validation error")
-			}
-
-			var ve *api.ValidationErrors
-			if !errors.As(err, &ve) {
-				t.Fatalf("Expected *api.ValidationErrors, got %T: %v", err, err)
-			}
-
-			got := make(map[string]bool, len(ve.Errors))
-			for _, e := range ve.Errors {
-				if e.Component != "deployment.management" {
-					t.Errorf("Unexpected component %q on %+v", e.Component, e)
-				}
-				got[e.Field] = true
-			}
-			for _, field := range tc.wantFields {
-				if !got[field] {
-					t.Errorf("Expected an error on %q, got %+v", field, ve.Errors)
-				}
-			}
-			if len(ve.Errors) != len(tc.wantFields) {
-				t.Errorf("Expected %d errors, got %+v", len(tc.wantFields), ve.Errors)
-			}
-		})
 	}
 }

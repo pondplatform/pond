@@ -91,7 +91,7 @@ overrides:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `version` | integer | yes | Schema version. Must be `1`. |
-| `name` | string | yes | Service name. Used as the Helm release name. |
+| `name` | string | yes | Service name. Used as the Helm release name, so it must be lowercase alphanumeric or `-`, start and end alphanumeric, and be at most 53 characters. |
 | `image` | string | yes* | Docker image reference (without tag). Required unless `build` is set. |
 | `build` | string | no | Path to a Dockerfile relative to `pond.yml`. Used to tell Pond which image to build; the built image is pushed and referenced automatically. |
 | `deployment` | object | no | Workload settings: replica count, health probes and metrics. |
@@ -200,6 +200,8 @@ gateway:
 ### `dependencies`
 
 A map of named dependencies. Each entry declares a dependency that must be provisioned before the service can start. See [Dependencies](dependencies.md) for all available types.
+
+Names may contain letters, digits and underscores, because config files reference them as `{{<name>.<field>}}`.
 
 ```yaml
 dependencies:

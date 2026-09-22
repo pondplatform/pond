@@ -162,7 +162,9 @@ func TestDeploymentService_Submit(t *testing.T) {
 			EnvironmentName: "staging",
 			OverridableConfig: serviceconfig.OverridableConfig{
 				ServiceConfig: serviceconfig.ServiceConfig{
-					Name: "my-service",
+					Version: 1,
+					Name:    "my-service",
+					Image:   "ghcr.io/example/my-service",
 				},
 			},
 			ImageTag:    "v1",
@@ -216,7 +218,9 @@ func TestDeploymentService_Submit(t *testing.T) {
 			EnvironmentName: "staging",
 			OverridableConfig: serviceconfig.OverridableConfig{
 				ServiceConfig: serviceconfig.ServiceConfig{
-					Name: "my-service",
+					Version: 1,
+					Name:    "my-service",
+					Image:   "ghcr.io/example/my-service",
 					Dependencies: map[string]serviceconfig.DependencyDeclaration{
 						"db": {Type: "postgres"},
 					},
@@ -253,7 +257,9 @@ func TestDeploymentService_Submit(t *testing.T) {
 			EnvironmentName: "staging",
 			OverridableConfig: serviceconfig.OverridableConfig{
 				ServiceConfig: serviceconfig.ServiceConfig{
-					Name: "my-service",
+					Version: 1,
+					Name:    "my-service",
+					Image:   "ghcr.io/example/my-service",
 					Deployment: &serviceconfig.DeploymentSpec{
 						Management: &serviceconfig.ManagementConfig{
 							// No leading slash, and no service port to resolve against.
@@ -302,7 +308,9 @@ func TestDeploymentService_Submit(t *testing.T) {
 			EnvironmentName: "staging",
 			OverridableConfig: serviceconfig.OverridableConfig{
 				ServiceConfig: serviceconfig.ServiceConfig{
-					Name: "my-service",
+					Version: 1,
+					Name:    "my-service",
+					Image:   "ghcr.io/example/my-service",
 					Dependencies: map[string]serviceconfig.DependencyDeclaration{
 						"db": {Type: "postgres"},
 					},

@@ -79,9 +79,9 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		return nil, fmt.Errorf("resolve config for environment %q: %w", env.Name, err)
 	}
 
-	// Reject a malformed probe here rather than letting it reach the cluster as
+	// Reject a malformed config here rather than letting it reach the cluster as
 	// a failed rollout the user has to read helm output to understand.
-	if err := helmgen.ValidateManagement(svcConfig); err != nil {
+	if err := config.Validate(svcConfig); err != nil {
 		return nil, err
 	}
 
@@ -246,7 +246,7 @@ func (s *deploymentService) Validate(ctx context.Context, req api.SubmitRequest)
 		return result, nil
 	}
 
-	if err := helmgen.ValidateManagement(svcConfig); err != nil {
+	if err := config.Validate(svcConfig); err != nil {
 		result.Valid = false
 		var ve *api.ValidationErrors
 		if errors.As(err, &ve) {
