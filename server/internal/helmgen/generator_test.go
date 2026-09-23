@@ -245,3 +245,18 @@ func TestGenerator_Generate_ImageTag(t *testing.T) {
 		})
 	}
 }
+
+func Test_Marshal_Dotenv(t *testing.T) {
+	values := map[string]any{
+		"ab": "fd$as\"",
+		"cd": 123,
+	}
+	marshaled, _ := marshalEnv(values)
+
+	expected := `ab="fd\$as\""
+cd="123"
+`
+	if string(marshaled) != expected {
+		t.Errorf("Expected %s but got %s", expected, &marshaled)
+	}
+}

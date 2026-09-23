@@ -146,7 +146,10 @@ func encodeConfigFile(format string, values map[string]any) (string, error) {
 func marshalEnv(values map[string]any) ([]byte, error) {
 	var result []byte
 	for k, v := range values {
-		line := fmt.Sprintf("%s=%v\n", k, v)
+	    escaped := strings.ReplaceAll(fmt.Sprintf("%v", v),"\\", "\\\\")
+		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+		escaped = strings.ReplaceAll(escaped, "$", "\\$")
+		line := fmt.Sprintf("%s=\"%s\"\n", k, escaped)
 		result = append(result, []byte(line)...)
 	}
 	return result, nil
