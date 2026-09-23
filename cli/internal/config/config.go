@@ -4,9 +4,28 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
+
+// Environment variables the CLI reads. Every field storable in a context has one,
+// named POND_ plus the screaming-snake form of its flag.
+const (
+	EnvServerURL     = "POND_SERVER_URL"
+	EnvToken         = "POND_TOKEN"
+	EnvProject       = "POND_PROJECT"
+	EnvProjectID     = "POND_PROJECT_ID"
+	EnvEnvironment   = "POND_ENV"
+	EnvContext       = "POND_CONTEXT"
+	EnvConfig        = "POND_CONFIG"
+	EnvKubeContext   = "POND_KUBE_CONTEXT"
+	EnvKubeNamespace = "POND_KUBE_NAMESPACE"
+	EnvKubeService   = "POND_KUBE_SERVICE"
+	EnvForwardPort   = "POND_KUBECTL_FORWARD_PORT"
+)
+
+const defaultServerURL = "http://localhost:8080"
 
 type Context struct {
 	Server      string      `yaml:"server,omitempty"`
@@ -37,19 +56,27 @@ type Config struct {
 }
 
 type Flags struct {
-	Server  string
-	Token   string
-	Project string
-	Env     string
-	Context string
+	Server      string
+	Token       string
+	Project     string
+	Env         string
+	Context     string
+	PortForward PortForward
 }
 
 type ResolvedConfig struct {
-	Server  string
-	Token   string
-	Project string
-	Env     string
+	Server      string
+	Token       string
+	Project     string
+	Env         string
+	PortForward PortForward
 }
+
+// ErrProjectRequired is shared by every command that needs a project, so the list of
+// ways to supply one is stated in exactly one place.
+var ErrProjectRequired = fmt.Errorf(
+	"project is required: use --project, %s or %s, or configure a context",
+	EnvProject, EnvProjectID)
 
 // ClientKey is used to store the server client in cobra's context.
 type ClientKey struct{}
@@ -57,12 +84,48 @@ type ClientKey struct{}
 // ResolvedConfigKey is used to store the resolved config in cobra's context.
 type ResolvedConfigKey struct{}
 
-func DefaultConfigPath() (string, error) {
+// ConfigPath returns POND_CONFIG when set, else ~/.pond/config. The value is a single
+// path: unlike KUBECONFIG there is no ':'-separated merge list and no tilde expansion,
+// and a relative path resolves against the current working directory.
+func ConfigPath() (string, error) {
+	if p := env(EnvConfig); p != "" {
+		return p, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("get home dir: %w", err)
 	}
 	return filepath.Join(home, ".pond", "config"), nil
+}
+
+// env returns the value of the first variable set to a non-empty value.
+func env(names ...string) string {
+	for _, n := range names {
+		if v := os.Getenv(n); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// itoa renders a port for the resolution chain, mapping the unset zero value to the
+// empty string so that "unset" stays distinguishable from an explicit 0.
+func itoa(port int) string {
+	if port == 0 {
+		return ""
+	}
+	return strconv.Itoa(port)
+}
+
+func parsePort(s string) (int, error) {
+	if s == "" {
+		return 0, nil
+	}
+	port, err := strconv.Atoi(s)
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("must be a port number between 1 and 65535")
+	}
+	return port, nil
 }
 
 // Load reads the config file at path. A missing file is not an error — an empty config is returned.
@@ -108,6 +171,9 @@ func Save(path string, cfg *Config) error {
 func Resolve(flags Flags, cfg *Config) (ResolvedConfig, error) {
 	contextName := flags.Context
 	if contextName == "" {
+		contextName = env(EnvContext)
+	}
+	if contextName == "" {
 		contextName = cfg.CurrentContext
 	}
 
@@ -120,12 +186,12 @@ func Resolve(flags Flags, cfg *Config) (ResolvedConfig, error) {
 		activeCtx = ctx
 	}
 
-	pick := func(flag, envVar, ctxVal, def string) string {
+	pick := func(flag, envVal, ctxVal, def string) string {
 		if flag != "" {
 			return flag
 		}
-		if v := os.Getenv(envVar); v != "" {
-			return v
+		if envVal != "" {
+			return envVal
 		}
 		if ctxVal != "" {
 			return ctxVal
@@ -133,10 +199,31 @@ func Resolve(flags Flags, cfg *Config) (ResolvedConfig, error) {
 		return def
 	}
 
+	pf := activeCtx.PortForward
+
+	// Only the env var can carry a non-numeric port: the flag is int-typed by cobra and
+	// the config file by yaml, so those fail before Resolve runs. Either can still be
+	// out of range, hence the second message.
+	portEnv := env(EnvForwardPort)
+	portStr := pick(itoa(flags.PortForward.Port), portEnv, itoa(pf.Port), "")
+	port, err := parsePort(portStr)
+	if err != nil {
+		if portStr == portEnv {
+			return ResolvedConfig{}, fmt.Errorf("%s=%q: %w", EnvForwardPort, portStr, err)
+		}
+		return ResolvedConfig{}, fmt.Errorf("port-forward port %q: %w", portStr, err)
+	}
+
 	return ResolvedConfig{
-		Server:  pick(flags.Server, "POND_SERVER_URL", activeCtx.Server, "http://localhost:8080"),
-		Token:   pick(flags.Token, "POND_TOKEN", activeCtx.Token, ""),
-		Project: pick(flags.Project, "POND_PROJECT", activeCtx.Project, ""),
-		Env:     pick(flags.Env, "POND_ENV", activeCtx.Env, ""),
+		Server:  pick(flags.Server, env(EnvServerURL), activeCtx.Server, defaultServerURL),
+		Token:   pick(flags.Token, env(EnvToken), activeCtx.Token, ""),
+		Project: pick(flags.Project, env(EnvProject, EnvProjectID), activeCtx.Project, ""),
+		Env:     pick(flags.Env, env(EnvEnvironment), activeCtx.Env, ""),
+		PortForward: PortForward{
+			KubeContext:   pick(flags.PortForward.KubeContext, env(EnvKubeContext), pf.KubeContext, ""),
+			KubeNamespace: pick(flags.PortForward.KubeNamespace, env(EnvKubeNamespace), pf.KubeNamespace, ""),
+			KubeService:   pick(flags.PortForward.KubeService, env(EnvKubeService), pf.KubeService, ""),
+			Port:          port,
+		},
 	}, nil
 }

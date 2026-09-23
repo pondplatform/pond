@@ -14,8 +14,12 @@ import (
 // maybeStartPortForward starts a background kubectl port-forward when the active
 // context configures one and its local port is not yet reachable.
 func maybeStartPortForward(pf pondconfig.PortForward) error {
-	if !pf.Configured() {
+	// Gate on the required fields only, so a stray kube-service alone stays silent.
+	if pf.KubeContext == "" && pf.KubeNamespace == "" && pf.Port == 0 {
 		return nil
+	}
+	if !pf.Configured() {
+		return fmt.Errorf("ignoring incomplete port-forward config: kube-context, kube-namespace and the forward port must all be set")
 	}
 
 	addr := net.JoinHostPort("localhost", strconv.Itoa(pf.Port))

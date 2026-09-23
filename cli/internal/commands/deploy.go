@@ -30,7 +30,7 @@ func NewDeployCmd() *cobra.Command {
 				return fmt.Errorf("internal error: resolved config not available")
 			}
 			if resolved.Project == "" {
-				return fmt.Errorf("project is required: use --project, POND_PROJECT env var, or configure a context")
+				return pondconfig.ErrProjectRequired
 			}
 			if resolved.Env == "" {
 				return fmt.Errorf("env is required: use --env, POND_ENV env var, or configure a context")

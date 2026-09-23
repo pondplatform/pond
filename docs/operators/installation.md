@@ -112,6 +112,37 @@ You are now ready to deploy services. See [Quick Start](../getting-started/quick
 
 ---
 
+## Gateway API for exposed services
+
+Services that set `gateway.http.enabled` are exposed with an `HTTPRoute`, so the cluster must already implement Gateway API and provide a `Gateway` named `gateway` with a listener named `http`. See [Production Considerations](production.md) for the production shape. Pond installs neither the CRDs nor a controller.
+
+### Rancher Desktop
+
+Rancher Desktop ships the Gateway API CRDs and traefik, which implements them — but traefik's Gateway provider is off by default. Enable it once per cluster:
+
+```sh
+kubectl apply -f - <<'EOF'
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    providers:
+      kubernetesGateway:
+        enabled: true
+    gateway:
+      enabled: false
+EOF
+
+kubectl get gatewayclass traefik
+```
+
+k3s's helm-controller redeploys traefik and adds a `traefik` GatewayClass. Setting `gateway.enabled: false` suppresses the chart's own default Gateway, since each Pond environment supplies its own.
+
+One constraint: traefik binds a Gateway listener to whichever entryPoint already serves that port, so listeners must use `8000` — traefik's `web` entryPoint — rather than `80`, or the listener is rejected with `PortUnavailable`. Traefik's Service still publishes `:80`, so exposed services remain reachable at `http://<hostname>/`.
+
 ## Automated local setup
 
 For local development with Rancher Desktop the repo includes a script that automates all of the above steps:

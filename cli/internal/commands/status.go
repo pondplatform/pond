@@ -95,7 +95,7 @@ func projectFromContext(ctx context.Context) (pondconfig.ResolvedConfig, uuid.UU
 		return pondconfig.ResolvedConfig{}, uuid.Nil, fmt.Errorf("internal error: resolved config not available")
 	}
 	if resolved.Project == "" {
-		return pondconfig.ResolvedConfig{}, uuid.Nil, fmt.Errorf("project is required: use --project, POND_PROJECT env var, or configure a context")
+		return pondconfig.ResolvedConfig{}, uuid.Nil, pondconfig.ErrProjectRequired
 	}
 	projID, err := uuid.Parse(resolved.Project)
 	if err != nil {

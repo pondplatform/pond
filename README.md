@@ -37,13 +37,17 @@ make helm-lint        # lint, render, and package both Helm charts
 All development is done against a local Kubernetes cluster (Rancher Desktop).
 
 ```sh
-make e2e-setup          # install server + agent via Helm, bootstrap org/cluster/tokens
-make e2e-gateway-setup  # install Gateway API CRDs, a controller and the Gateway
-make e2e                # run the smoke tests (managed postgres, gateway routing)
-make e2e-teardown       # clean up everything
+make e2e-setup    # install server + agent via Helm, bootstrap org/cluster/tokens
+make e2e          # run the smoke tests (managed postgres, gateway routing)
+make e2e-teardown # clean up everything
 ```
 
 Credentials written by `e2e-setup` land in `test/end-to-end/.e2e-env`.
+
+The gateway scenario needs the cluster to implement Gateway API. Setup installs no
+CRDs and no controller — it only creates the `Gateway`. Rancher Desktop's bundled
+traefik can serve it after a one-time change; see
+[docs/operators/installation.md](docs/operators/installation.md).
 
 ## Releasing
 

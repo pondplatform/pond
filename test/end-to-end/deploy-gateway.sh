@@ -13,8 +13,7 @@
 #      non-matching Host is not served
 #
 # Prerequisites:
-#   - local-setup.sh has been run (creates test/end-to-end/.e2e-env)
-#   - gateway-setup.sh has been run (Gateway API CRDs, controller, Gateway)
+#   - local-setup.sh has been run (creates test/end-to-end/.e2e-env and the Gateway)
 #   - pond CLI binary built: make build-cli
 #
 # Usage:
@@ -25,21 +24,28 @@ set -euo pipefail
 SERVICE_NAME="gateway-demo"
 GATEWAY_NS="${GATEWAY_NS:-e2e-staging}"
 GATEWAY_NAME="${GATEWAY_NAME:-gateway}"
-EG_NS="${EG_NS:-envoy-gateway-system}"
-LOCAL_PORT="${GATEWAY_LOCAL_PORT:-18080}"
+# The gateway data plane is reachable directly: on Rancher Desktop traefik owns the
+# cluster's :80, so no port-forward is needed to reach the listener.
+GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 load_env
 
 HOST="$SERVICE_NAME.$INGRESS_BASE_HOST"
+
+# A cluster may run more than one Gateway API controller, and every one of them
+# writes its own status.parents entry for the same parentRef. Resolve the one that
+# actually owns this Gateway so the route assertions below cannot pass or fail on
+# whichever entry happens to be listed first.
+GATEWAY_CLASS=$(kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NS" \
+  -o jsonpath='{.spec.gatewayClassName}') \
+  || die "Gateway $GATEWAY_NS/$GATEWAY_NAME not found — run local-setup.sh first"
+GATEWAY_CONTROLLER=$(kubectl get gatewayclass "$GATEWAY_CLASS" \
+  -o jsonpath='{.spec.controllerName}') \
+  || die "GatewayClass '$GATEWAY_CLASS' not found"
 BODY_FILE=$(mktemp /tmp/pond-gateway-body.XXXXXX)
-PF_PID=""
-cleanup() {
-  [[ -n "$PF_PID" ]] && kill "$PF_PID" 2>/dev/null || true
-  rm -f "$BODY_FILE"
-}
-trap cleanup EXIT
+trap 'rm -f "$BODY_FILE"' EXIT
 
 FAILED=0
 expect_eq() {
@@ -52,17 +58,18 @@ expect_eq() {
   fi
 }
 
-# route_condition <route_json> <type> — prints the condition status, or nothing
-# if the controller has not written status yet.
+# route_condition <route_json> <type> — prints the condition status as written by
+# $GATEWAY_CONTROLLER, or nothing if it has not written status yet.
 route_condition() {
-  jq -r --arg t "$2" \
-    '[.status.parents[]?.conditions[]? | select(.type==$t) | .status] | first // ""' <<<"$1"
+  jq -r --arg t "$2" --arg c "$GATEWAY_CONTROLLER" \
+    '[.status.parents[]? | select(.controllerName==$c) | .conditions[]?
+      | select(.type==$t) | .status] | first // ""' <<<"$1"
 }
 
 # gw_status <host> <path> — prints the HTTP status; the body lands in $BODY_FILE
 gw_status() {
   curl -s -o "$BODY_FILE" -w '%{http_code}' \
-    -H "Host: $1" "http://127.0.0.1:$LOCAL_PORT$2"
+    -H "Host: $1" "$GATEWAY_URL$2"
 }
 
 # ── Submit ────────────────────────────────────────────────────────────────────
@@ -128,19 +135,9 @@ expect_eq "Accepted condition" "True" "$(route_condition "$ROUTE" Accepted)"
 expect_eq "ResolvedRefs condition" "True" "$(route_condition "$ROUTE" ResolvedRefs)"
 
 # ── Traffic ───────────────────────────────────────────────────────────────────
-step "Port-forwarding the gateway data plane to localhost:$LOCAL_PORT"
-ENVOY_SVC=$(kubectl get svc -n "$EG_NS" \
-  -l "gateway.envoyproxy.io/owning-gateway-name=$GATEWAY_NAME,gateway.envoyproxy.io/owning-gateway-namespace=$GATEWAY_NS" \
-  -o jsonpath='{.items[0].metadata.name}')
-[[ -n "$ENVOY_SVC" ]] || die "no envoy service found for Gateway $GATEWAY_NS/$GATEWAY_NAME"
-info "Data plane service: $ENVOY_SVC"
-
-kubectl port-forward -n "$EG_NS" "svc/$ENVOY_SVC" "${LOCAL_PORT}:80" &
-PF_PID=$!
-
 # A route reports Accepted before its config has reached the data plane, so wait
 # for the proxy to actually answer rather than assuming it already does.
-step "Waiting for the gateway to route to $HOST"
+step "Waiting for the gateway at $GATEWAY_URL to route to $HOST"
 ROUTING=0
 for i in $(seq 1 30); do
   if [[ "$(gw_status "$HOST" /)" == "200" ]]; then
@@ -150,7 +147,7 @@ for i in $(seq 1 30); do
   info "[$i/30] not routing yet — retrying in 2s"
   sleep 2
 done
-[[ $ROUTING -eq 1 ]] || die "gateway never served $HOST on :$LOCAL_PORT"
+[[ $ROUTING -eq 1 ]] || die "gateway never served $HOST at $GATEWAY_URL"
 
 step "Checking requests through the gateway"
 

@@ -49,3 +49,4 @@ Thumbs.db
 *.key
 test/end-to-end/.e2e-env
 test/end-to-end/.e2e-pids
+test/end-to-end/.e2e-config

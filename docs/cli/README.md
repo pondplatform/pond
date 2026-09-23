@@ -4,22 +4,40 @@ The `pond` CLI is the developer-facing interface to the Pond platform.
 
 ## Global flags
 
-These flags apply to every command. They can also be set via environment variables or a named context.
+These flags apply to every command. Each value is resolved from the first source that
+supplies it, in this order:
+
+**flag → environment variable → active context → default**
 
 | Flag | Env var | Description |
 |---|---|---|
 | `-s, --server` | `POND_SERVER_URL` | Server base URL (default `http://localhost:8080`) |
 | `--token` | `POND_TOKEN` | Bearer token for authentication |
-| `--project` | `POND_PROJECT` | Project UUID |
+| `--project` | `POND_PROJECT`, then `POND_PROJECT_ID` | Project UUID |
 | `-e, --env` | `POND_ENV` | Target environment name |
-| `--context` | — | Named context to use instead of the active context |
+| `--context` | `POND_CONTEXT` | Named context to use instead of the active context |
+| `--kube-context` | `POND_KUBE_CONTEXT` | kubectl context for the port-forward |
+| `--kube-namespace` | `POND_KUBE_NAMESPACE` | Kubernetes namespace for the port-forward |
+| `--kube-service` | `POND_KUBE_SERVICE` | Kubernetes service for the port-forward (default `pond-server`) |
+| `--kubectl-forward-port` | `POND_KUBECTL_FORWARD_PORT` | Local port the port-forward binds |
+
+`POND_PROJECT` and `POND_PROJECT_ID` are interchangeable; `POND_PROJECT` wins when both
+are set. `POND_KUBE_CONTEXT` is a *kubectl* context and is unrelated to `--context` /
+`POND_CONTEXT`, which selects a named *pond* context.
 
 ## Configuration file
 
 The CLI stores contexts in `~/.pond/config` (YAML). Use the `pond context` commands to manage it — do not edit the file manually.
 
+`POND_CONFIG` overrides the path. It is a single path: unlike `KUBECONFIG` there is no
+`:`-separated merge list and no `~` expansion, and a relative path resolves against the
+current working directory. Pointing it at a path that does not exist gives an empty
+configuration with no contexts, which is a reliable way to keep a script or CI job from
+falling back to a developer's own context — the end-to-end suite does exactly that.
+
 Server settings live at the top level of a context; port-forward settings are grouped
-under `port-forward`:
+under `port-forward`. Every key has an environment variable equivalent, listed in the
+table above:
 
 ```yaml
 current-context: prod
@@ -48,7 +66,8 @@ Manage named contexts. A context bundles a server URL, token, project, and envir
 pond context add <name> --server <url> [--token <tok>] [--project <uuid>] [--env <env>]
 ```
 
-Creates or updates a context. `--server` is required.
+Creates or updates a context. `--server` is required. The context is written to
+`~/.pond/config`, or to `POND_CONFIG` when that is set.
 
 If the server is only reachable inside a Kubernetes cluster, add port-forward settings.
 The CLI then starts a background `kubectl port-forward` whenever the forward port is not
@@ -63,10 +82,16 @@ pond context add prod \
   --kubectl-forward-port 24680
 ```
 
-`--kube-context`, `--kube-namespace` and `--kubectl-forward-port` must be set together;
-`--kube-service` defaults to `pond-server`. The forward binds `--kubectl-forward-port`
-locally and targets port `8080` on the service — point `--server` at that same local port.
-`scripts/setup.sh` picks a random free forward port for you.
+`--kube-context`, `--kube-namespace` and `--kubectl-forward-port` must be set together —
+an incomplete combination is ignored with a warning. `--kube-service` defaults to
+`pond-server`. The forward binds `--kubectl-forward-port` locally and targets port `8080`
+on the service — point `--server` at that same local port. `scripts/setup.sh` picks a
+random free forward port for you.
+
+The same four settings can come from flags or environment variables instead of a context,
+so a port-forward can be configured with no config file at all. They are independent of
+`--server`, though: overriding the forward port alone binds a new local port while the
+server URL still points at the old one, so override `POND_SERVER_URL` alongside it.
 
 ### pond context use \<name\>
 
@@ -91,6 +116,9 @@ pond context show
 ```
 
 Prints the active context's details. The token is truncated.
+
+This prints what is *stored* in the config file, not the configuration a command will
+actually use: flags and environment variables override it, so the two can disagree.
 
 ### pond context current
 
@@ -144,7 +172,7 @@ Parent command for inspecting and interacting with deployments.
 pond deployment status [service] [flags]
 ```
 
-Shows the latest deployment of a service. The service is looked up by name inside the resolved project, so `--project` (or `POND_PROJECT`, or a context) is required.
+Shows the latest deployment of a service. The service is looked up by name inside the resolved project, so `--project` (or `POND_PROJECT` / `POND_PROJECT_ID`, or a context) is required.
 
 When the service argument is omitted, the name is read from the `name` field of `./pond.yml` (or of `--config`), so the command can be run without arguments from a service directory. A service argument always wins over `pond.yml`.
 

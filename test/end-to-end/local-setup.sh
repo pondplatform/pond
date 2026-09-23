@@ -8,11 +8,14 @@
 #   3. Waits for the server to be healthy, then port-forwards it
 #   4. Creates a cluster via the API using the admin key
 #   5. Installs the pond-agent Helm chart with the cluster's agent token
-#   6. Mints a CLI token and writes test/end-to-end/.e2e-env
+#   6. Creates the Gateway that exposed services' HTTPRoutes attach to
+#   7. Mints a CLI token and writes test/end-to-end/.e2e-env
 #
 # Prerequisites:
 #   - Rancher Desktop running with the "rancher-desktop" kube context active
 #   - kubectl, helm, curl, jq installed
+#   - The cluster implements Gateway API. Nothing here installs CRDs or a
+#     controller; see docs/operators/installation.md for the one-time setup.
 
 set -euo pipefail
 
@@ -21,6 +24,12 @@ SERVER_RELEASE="${SERVER_RELEASE:-pond-server}"
 AGENT_RELEASE="${AGENT_RELEASE:-pond-agent}"
 SERVER_PORT="${SERVER_PORT:-8080}"
 INGRESS_BASE_HOST="${INGRESS_BASE_HOST:-e2e.local}"
+GATEWAY_NAME="${GATEWAY_NAME:-gateway}"
+GATEWAY_CLASS="${GATEWAY_CLASS:-traefik}"
+# traefik binds each Gateway listener to the entryPoint already serving that port,
+# so this has to be a port traefik listens on (web = 8000), not 80 — otherwise the
+# listener is rejected with PortUnavailable. Its Service still publishes :80.
+GATEWAY_PORT="${GATEWAY_PORT:-8000}"
 CONTEXT="rancher-desktop"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -240,19 +249,57 @@ curl_api "PATCH /environments/$ENV_ID" \
   -d "{\"defaultIngressBaseHost\":\"$INGRESS_BASE_HOST\"}" >/dev/null
 info "Ingress base host: $INGRESS_BASE_HOST"
 
-# ── 10. Write env file ────────────────────────────────────────────────────────
+# ── 10. Gateway for exposed services ──────────────────────────────────────────
+# No CRDs and no controller are installed here — the cluster is expected to
+# already implement Gateway API. Only the Gateway is created, because that is
+# per-environment state and exactly what an operator would provide in production
+# (see docs/operators/production.md).
+step "Checking the cluster implements Gateway API"
+kubectl get crd httproutes.gateway.networking.k8s.io --context "$CONTEXT" &>/dev/null \
+  || die "Gateway API CRDs are missing — see docs/operators/installation.md"
+kubectl get gatewayclass "$GATEWAY_CLASS" --context "$CONTEXT" &>/dev/null \
+  || die "GatewayClass '$GATEWAY_CLASS' not found — see docs/operators/installation.md"
+info "GatewayClass: $GATEWAY_CLASS"
+
+step "Creating Gateway '$GATEWAY_NAME' in namespace 'e2e-staging'"
+kubectl apply --context "$CONTEXT" -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: $GATEWAY_NAME
+  namespace: e2e-staging
+spec:
+  gatewayClassName: $GATEWAY_CLASS
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: $GATEWAY_PORT
+      allowedRoutes:
+        namespaces:
+          from: Same
+EOF
+
+kubectl wait --for=condition=Programmed "gateway/$GATEWAY_NAME" \
+  --namespace e2e-staging --context "$CONTEXT" --timeout 2m \
+  || die "Gateway '$GATEWAY_NAME' was not programmed (check: kubectl describe gateway/$GATEWAY_NAME -n e2e-staging)"
+
+# ── 11. Write env file ────────────────────────────────────────────────────────
 E2E_ENV="${E2E_ENV:-$REPO_ROOT/test/end-to-end/.e2e-env}"
 step "Writing $E2E_ENV"
 mkdir -p "$(dirname "$E2E_ENV")"
-printf 'export POND_SERVER_URL=%s\nexport POND_TOKEN=%s\nexport POND_CLUSTER_ID=%s\nexport POND_PROJECT_ID=%s\nexport POND_INGRESS_BASE_HOST=%s\n' \
-  "$SERVER_URL" "$POND_TOKEN" "$CLUSTER_ID" "$PROJECT_ID" "$INGRESS_BASE_HOST" > "$E2E_ENV"
+# POND_CONFIG points at a path that is deliberately never created: the CLI then loads an
+# empty config, so there is no context to silently fall back to and no chance of starting
+# the developer's own port-forward. Must be absolute — the scripts run from varying cwds.
+E2E_CONFIG="${E2E_CONFIG:-$REPO_ROOT/test/end-to-end/.e2e-config}"
+printf 'export POND_SERVER_URL=%s\nexport POND_TOKEN=%s\nexport POND_CLUSTER_ID=%s\nexport POND_PROJECT_ID=%s\nexport POND_ENV=%s\nexport POND_CONFIG=%s\nexport POND_INGRESS_BASE_HOST=%s\n' \
+  "$SERVER_URL" "$POND_TOKEN" "$CLUSTER_ID" "$PROJECT_ID" "staging" "$E2E_CONFIG" "$INGRESS_BASE_HOST" > "$E2E_ENV"
 info "Written: $E2E_ENV"
 
 E2E_PIDS="$SCRIPT_DIR/.e2e-pids"
 echo "$PF_PID" > "$E2E_PIDS"
 info "Port-forward PID $PF_PID saved to $E2E_PIDS (teardown.sh will stop it)"
 
-# ── 11. Summary ───────────────────────────────────────────────────────────────
+# ── 12. Summary ───────────────────────────────────────────────────────────────
 step "Done"
 echo
 echo "${bold}Environment:${reset}"
@@ -265,11 +312,12 @@ echo "  Env file:    $E2E_ENV"
 echo
 echo "${bold}To use the CLI:${reset}"
 echo "  source $E2E_ENV"
-echo "  pond deploy --project <id> --env <env> --tag <tag>"
+echo "  pond deploy --tag <tag>          # project, env and server come from the env file"
+echo "  pond deployment list --service <name>"
 echo
 echo "${bold}To run end-to-end tests:${reset}"
 echo "  ./test/end-to-end/deploy-postgres.sh"
-echo "  ./test/end-to-end/gateway-setup.sh && ./test/end-to-end/deploy-gateway.sh"
+echo "  ./test/end-to-end/deploy-gateway.sh"
 echo "  (env file is auto-sourced)"
 echo
 echo "${bold}Tear down:${reset}"

@@ -224,3 +224,24 @@ func TestContextCurrentNoContext(t *testing.T) {
 		t.Error("expected error when no context set")
 	}
 }
+
+// The context subcommands skip the root PersistentPreRunE, so POND_CONFIG has to be
+// honoured inside pondconfig.ConfigPath to reach them. This deliberately bypasses
+// makeContextCmd, whose injected path function would mask the env var.
+func TestContextAddHonoursPondConfigEnv(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "e2e-config")
+	t.Setenv(pondconfig.EnvConfig, path)
+
+	cmd := commands.NewContextCmd(pondconfig.ConfigPath)
+	if _, err := runCmd(t, cmd, "add", "e2e", "--server", "http://e2e"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := pondconfig.Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := cfg.Contexts["e2e"].Server; got != "http://e2e" {
+		t.Errorf("server: got %q, want it written to the POND_CONFIG path", got)
+	}
+}

@@ -24,6 +24,13 @@ load_env() {
     source "$env_file"
   fi
 
+  # local-setup.sh puts both in .e2e-env; default them so a hand-set environment also
+  # gets an env to resolve and stays isolated from the developer's ~/.pond/config. The
+  # config path is deliberately never created — an empty config means no context to
+  # silently fall back to and no chance of starting a personal port-forward.
+  export POND_ENV="${POND_ENV:-staging}"
+  export POND_CONFIG="${POND_CONFIG:-$_E2E_DIR/.e2e-config}"
+
   SERVER_URL="${POND_SERVER_URL:-http://localhost:8080}"
   POND_TOKEN="${POND_TOKEN:?POND_TOKEN must be set — run local-setup.sh first}"
   PROJECT_ID="${POND_PROJECT_ID:?POND_PROJECT_ID must be set — run local-setup.sh first}"
