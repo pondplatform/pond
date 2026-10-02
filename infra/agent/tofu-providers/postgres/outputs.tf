@@ -1,5 +1,3 @@
-
-
 output "host" {
   description = "Service name for primary (read-write) connection"
   value       = "${local.cluster_name}-rw.${local.namespace}.svc.cluster.local"

@@ -18,4 +18,4 @@ configs:
       DB_PORT: "{{db.port}}"
       DB_USER: "{{db.username}}"
       DB_PASSWORD: "{{db.password}}"
-      DB_NAME: "{{db.database}}"
+      DB_DATABASE: "{{db.database}}"
