@@ -22,7 +22,7 @@ func makeAdvanceSvc(
 	envs *testutil.MockEnvironmentRepository,
 	depSvc DependencyService,
 	helmGen *testutil.MockHelmValuesGenerator,
-	bus *testutil.MockBus,
+	topics *testutil.MockTopics,
 ) *deploymentService {
 	if envs == nil {
 		envs = &testutil.MockEnvironmentRepository{}
@@ -33,8 +33,8 @@ func makeAdvanceSvc(
 	if helmGen == nil {
 		helmGen = &testutil.MockHelmValuesGenerator{}
 	}
-	if bus == nil {
-		bus = &testutil.MockBus{}
+	if topics == nil {
+		topics = &testutil.MockTopics{}
 	}
 	return &deploymentService{
 		deploymentInfo: store,
@@ -42,7 +42,7 @@ func makeAdvanceSvc(
 		depSvc:         depSvc,
 		helmGen:        helmGen,
 		tmplRenderer:   NewTemplateRenderer(),
-		bus:            bus,
+		topics:         topics,
 		log:            slog.Default(),
 	}
 }
@@ -312,16 +312,13 @@ func TestAdvanceOnDependencyStatus_PendingSchedulesCommands(t *testing.T) {
 		},
 	}
 
-	var publishedTopic string
-	bus := &testutil.MockBus{
-		PublishFn: func(_ context.Context, topic string, _ any) { publishedTopic = topic },
-	}
+	topics := &testutil.MockTopics{}
 
 	store := &testutil.MockDeploymentInfoStore{
 		UpdateStatusFn: func(_ context.Context, _ uuid.UUID, _ domain.DeploymentStatus, _ *time.Time) error { return nil },
 	}
 
-	svc := makeAdvanceSvc(store, nil, depSvc, nil, bus)
+	svc := makeAdvanceSvc(store, nil, depSvc, nil, topics)
 	env := &domain.Environment{ID: uuid.New(), ClusterID: clusterID}
 	err := svc.advanceOnDependencyStatus(ctx, &domain.Deployment{ID: uuid.New()}, env, domain.DependencyDeploymentStatusPending)
 	if err != nil {
@@ -330,8 +327,52 @@ func TestAdvanceOnDependencyStatus_PendingSchedulesCommands(t *testing.T) {
 	if !scheduleCalled {
 		t.Error("expected ScheduleCommands to be called")
 	}
-	if publishedTopic != events.ClusterCommandQueuedTopic(clusterID) {
-		t.Errorf("expected queued topic, got %s", publishedTopic)
+	if n := len(topics.CommandQueued.For(clusterID).Published()); n != 1 {
+		t.Errorf("expected 1 CommandQueued for cluster, got %d", n)
+	}
+}
+
+func TestAdvanceOnDependencyStatus_PendingPublishErrorPropagates(t *testing.T) {
+	ctx := context.Background()
+	clusterID := uuid.New()
+	publishErr := errors.New("broker down")
+
+	topics := &testutil.MockTopics{}
+	topics.CommandQueued.For(clusterID).PublishErr = publishErr
+
+	store := &testutil.MockDeploymentInfoStore{
+		UpdateStatusFn: func(_ context.Context, _ uuid.UUID, _ domain.DeploymentStatus, _ *time.Time) error { return nil },
+	}
+
+	svc := makeAdvanceSvc(store, nil, nil, nil, topics)
+	env := &domain.Environment{ID: uuid.New(), ClusterID: clusterID}
+	err := svc.advanceOnDependencyStatus(ctx, &domain.Deployment{ID: uuid.New()}, env, domain.DependencyDeploymentStatusPending)
+	if !errors.Is(err, publishErr) {
+		t.Fatalf("expected publish error, got %v", err)
+	}
+}
+
+func TestLaunchCommand_PublishErrorPropagates(t *testing.T) {
+	clusterID := uuid.New()
+	publishErr := errors.New("broker down")
+
+	var created bool
+	store := &testutil.MockDeploymentInfoStore{
+		CreateCommandFn: func(_ context.Context, _ *domain.Command) error {
+			created = true
+			return nil
+		},
+	}
+	topics := &testutil.MockTopics{}
+	topics.CommandQueued.For(clusterID).PublishErr = publishErr
+
+	svc := makeAdvanceSvc(store, nil, nil, nil, topics)
+	err := svc.launchCommand(context.Background(), &domain.Command{ID: uuid.New(), ClusterID: clusterID}, uuid.New())
+	if !errors.Is(err, publishErr) {
+		t.Fatalf("expected publish error, got %v", err)
+	}
+	if !created {
+		t.Error("expected command to be persisted before publishing")
 	}
 }
 
@@ -340,7 +381,6 @@ func TestAdvanceOnDependencyStatus_SucceededEnqueuesHelmCommand(t *testing.T) {
 	clusterID := uuid.New()
 
 	var helmCreated bool
-	var publishedTopic string
 
 	store := &testutil.MockDeploymentInfoStore{
 		UpdateStatusFn:              func(_ context.Context, _ uuid.UUID, _ domain.DeploymentStatus, _ *time.Time) error { return nil },
@@ -352,11 +392,9 @@ func TestAdvanceOnDependencyStatus_SucceededEnqueuesHelmCommand(t *testing.T) {
 		},
 	}
 
-	bus := &testutil.MockBus{
-		PublishFn: func(_ context.Context, topic string, _ any) { publishedTopic = topic },
-	}
+	topics := &testutil.MockTopics{}
 
-	svc := makeAdvanceSvc(store, nil, nil, nil, bus)
+	svc := makeAdvanceSvc(store, nil, nil, nil, topics)
 	dep := &domain.Deployment{
 		ID:                    uuid.New(),
 		ServiceConfigSnapshot: serviceconfig.ServiceConfig{Name: "my-svc"},
@@ -369,7 +407,7 @@ func TestAdvanceOnDependencyStatus_SucceededEnqueuesHelmCommand(t *testing.T) {
 	if !helmCreated {
 		t.Error("expected helm command to be created")
 	}
-	if publishedTopic != events.ClusterCommandQueuedTopic(clusterID) {
-		t.Errorf("expected queued topic, got %s", publishedTopic)
+	if n := len(topics.CommandQueued.For(clusterID).Published()); n != 1 {
+		t.Errorf("expected 1 CommandQueued for cluster, got %d", n)
 	}
 }

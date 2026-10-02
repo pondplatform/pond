@@ -71,13 +71,13 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 	specRegistry := dependency.NewSpecRegistry()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	bus, closeBus, err := events.NewRabbitMQBus(amqpURL, log.WithGroup("rabbitmq"))
+	topics, closeTopics, err := events.NewRabbitMQTopics(amqpURL, log.WithGroup("rabbitmq"))
 	if err != nil {
 		cancel()
 		db.Close()
-		t.Fatalf("new rabbitmq bus: %v", err)
+		t.Fatalf("new rabbitmq topics: %v", err)
 	}
-	t.Cleanup(closeBus)
+	t.Cleanup(closeTopics)
 
 	depSvc := service.NewDependencyService(specRegistry, envStore, deploymentInfoStore)
 	helmGenerator := helmgen.NewGenerator()
@@ -92,7 +92,7 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 		tmplRenderer,
 		resolver,
 		tx,
-		bus,
+		topics,
 		log.WithGroup("deployment"),
 	)
 
@@ -100,7 +100,7 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 	go deploySvc.Start(ctx)
 
 	// Create the agent handler and router
-	agentConnSvc := service.NewAgentConnectionService(bus)
+	agentConnSvc := service.NewAgentConnectionService(topics)
 	agentHandler := api.NewAgentHandler(clusterStore, agentConnSvc, log.WithGroup("agent_handler"))
 	router := api.NewRouter(api.RouterDeps{
 		DeploySvc:     deploySvc,

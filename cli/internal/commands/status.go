@@ -21,7 +21,7 @@ import (
 func NewStatusCmd() *cobra.Command {
 	var (
 		deploymentID string
-		configPath   string
+		filePath     string
 	)
 
 	cmd := &cobra.Command{
@@ -53,7 +53,7 @@ func NewStatusCmd() *cobra.Command {
 				return nil
 			}
 
-			serviceName, err := resolveServiceName(args, configPath)
+			serviceName, err := resolveServiceName(args, filePath)
 			if err != nil {
 				return err
 			}
@@ -62,27 +62,27 @@ func NewStatusCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&deploymentID, "deployment-id", "", "Show a single deployment by ID instead of a service")
-	cmd.Flags().StringVarP(&configPath, "config", "c", "./pond.yml", "Path to pond.yml, read for the service name when no service argument is given")
+	cmd.Flags().StringVarP(&filePath, "pond-file", "f", "./pond.yml", "Path to pond.yml, read for the service name when no service argument is given")
 
 	return cmd
 }
 
 // resolveServiceName takes the service name from the positional argument, and
-// otherwise from the name declared in the pond.yml at configPath.
-func resolveServiceName(args []string, configPath string) (string, error) {
+// otherwise from the name declared in the pond.yml at filePath.
+func resolveServiceName(args []string, filePath string) (string, error) {
 	if len(args) > 0 {
 		return args[0], nil
 	}
 
-	cfg, err := config.NewParser().ParseFile(configPath)
+	cfg, err := config.NewParser().ParseFile(filePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("service name is required: pass it as an argument, run from a directory containing %s, or use --deployment-id", configPath)
+			return "", fmt.Errorf("service name is required: pass it as an argument, run from a directory containing %s, or use --deployment-id", filePath)
 		}
 		return "", fmt.Errorf("parse config: %w", err)
 	}
 	if cfg.Name == "" {
-		return "", fmt.Errorf("%s does not set a service name: pass the service name as an argument", configPath)
+		return "", fmt.Errorf("%s does not set a service name: pass the service name as an argument", filePath)
 	}
 	return cfg.Name, nil
 }

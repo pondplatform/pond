@@ -15,7 +15,7 @@ import (
 func NewConfigureCmd() *cobra.Command {
 	var (
 		deploymentID string
-		filePath     string
+		inputPath    string
 	)
 
 	cmd := &cobra.Command{
@@ -29,14 +29,14 @@ func NewConfigureCmd() *cobra.Command {
 
 			sc := cmd.Context().Value(pondconfig.ClientKey{}).(client.ServerClient)
 
-			data, err := os.ReadFile(filePath)
+			data, err := os.ReadFile(inputPath)
 			if err != nil {
-				return fmt.Errorf("read file %q: %w", filePath, err)
+				return fmt.Errorf("read input %q: %w", inputPath, err)
 			}
 
 			var req api.ConfigureDeploymentRequest
 			if err := json.Unmarshal(data, &req); err != nil {
-				return fmt.Errorf("parse file %q: %w", filePath, err)
+				return fmt.Errorf("parse input %q: %w", inputPath, err)
 			}
 
 			if err := sc.ConfigureDeployment(cmd.Context(), id, req); err != nil {
@@ -49,9 +49,9 @@ func NewConfigureCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&deploymentID, "deployment-id", "", "Deployment ID to configure")
-	cmd.Flags().StringVarP(&filePath, "file", "f", "", "Path to JSON file with dependency configuration")
+	cmd.Flags().StringVarP(&inputPath, "input", "i", "", "Path to JSON file with dependency configuration")
 	cmd.MarkFlagRequired("deployment-id")
-	cmd.MarkFlagRequired("file")
+	cmd.MarkFlagRequired("input")
 
 	return cmd
 }

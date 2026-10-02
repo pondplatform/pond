@@ -38,7 +38,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&gf.token, "token", "", "Bearer token "+overrides(pondconfig.EnvToken))
 	root.PersistentFlags().StringVar(&gf.project, "project", "", "Project ID "+overrides(pondconfig.EnvProject, pondconfig.EnvProjectID))
 	root.PersistentFlags().StringVarP(&gf.env, "env", "e", "", "Target environment "+overrides(pondconfig.EnvEnvironment))
-	root.PersistentFlags().StringVar(&gf.context, "context", "", "Named pond context to use instead of the active one (overrides "+pondconfig.EnvContext+")")
+	root.PersistentFlags().StringVarP(&gf.context, "context", "c", "", "Named pond context to use instead of the active one (overrides "+pondconfig.EnvContext+")")
 	root.PersistentFlags().StringVar(&gf.kubeContext, "kube-context", "", "kubectl context for the port-forward — not the pond context "+overrides(pondconfig.EnvKubeContext))
 	root.PersistentFlags().StringVar(&gf.kubeNamespace, "kube-namespace", "", "Kubernetes namespace for the port-forward "+overrides(pondconfig.EnvKubeNamespace))
 	root.PersistentFlags().StringVar(&gf.kubeService, "kube-service", "", "Kubernetes service for the port-forward, default pond-server "+overrides(pondconfig.EnvKubeService))

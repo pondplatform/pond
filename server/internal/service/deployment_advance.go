@@ -102,10 +102,12 @@ func (s *deploymentService) advanceOnDependencyStatus(ctx context.Context, deplo
 		if err := s.depSvc.ScheduleCommands(ctx, deployment.ID); err != nil {
 			return err
 		}
-		s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(environment.ClusterID), events.CommandQueued{
+		if err := s.topics.CommandQueuedPublisher(environment.ClusterID).Publish(ctx, events.CommandQueued{
 			ClusterID:    environment.ClusterID,
 			DeploymentID: deployment.ID,
-		})
+		}); err != nil {
+			return fmt.Errorf("notify cluster %s of queued commands: %w", environment.ClusterID, err)
+		}
 	}
 
 	return nil

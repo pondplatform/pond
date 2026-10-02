@@ -26,7 +26,23 @@ func (s *deploymentService) handleAgentReady(ctx context.Context, e events.Agent
 		s.log.Error("update command to dispatched", "command_id", cmd.ID, "err", err)
 		return
 	}
-	s.bus.Publish(ctx, events.ClusterCommandDispatchTopic(e.ClusterID), events.CommandDispatch{Cmd: cmd})
+	if err := s.topics.CommandDispatchPublisher(e.ClusterID).Publish(ctx, events.CommandDispatch{Cmd: cmd}); err != nil {
+		s.log.Error("dispatch command", "command_id", cmd.ID, "err", err)
+		// Revert so the command is picked up on the agent's next ready signal
+		// instead of sitting in 'dispatched' until it disconnects.
+		cmd.Status = domain.CommandStatusQueued
+		cmd.UpdatedAt = time.Now()
+		if err := s.deploymentInfo.UpdateCommand(ctx, cmd); err != nil {
+			s.log.Error("revert command to queued", "command_id", cmd.ID, "err", err)
+		}
+	}
+}
+
+// handleCommandResult advances the state machine for a finished command.
+func (s *deploymentService) handleCommandResult(ctx context.Context, res events.CommandResult) {
+	if err := s.processResult(ctx, res); err != nil {
+		s.log.Error("processResult", "command_id", res.CommandID, "err", err)
+	}
 }
 
 // handleCommandStarted transitions a deployment from pending -> running when

@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,12 +14,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/pondplatform/pond/server/internal/auth"
 	"github.com/pondplatform/pond/server/internal/events"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
+	"github.com/pondplatform/pond/server/internal/service"
 	"github.com/pondplatform/pond/server/internal/testutil"
+	"github.com/pondplatform/pond/shared/agent/wire"
+	"github.com/pondplatform/pond/shared/server/api"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -51,7 +56,7 @@ func startRabbitMQ(t *testing.T) string {
 }
 
 // TestAgentHandler_EventFlow verifies the full event-driven cycle with a real
-// RabbitMQ bus:
+// RabbitMQ broker:
 //  1. Agent sends "ready" → handler publishes AgentReady → fake service
 //     subscriber publishes CommandDispatch → handler writes a "command" frame.
 //  2. Agent sends "ack" → handler publishes CommandStarted.
@@ -59,14 +64,15 @@ func startRabbitMQ(t *testing.T) string {
 //     the next command (none queued → "idle" frame).
 func TestAgentHandler_EventFlow(t *testing.T) {
 	amqpURL := startRabbitMQ(t)
-	bus, closeBus, err := events.NewRabbitMQBus(amqpURL, slog.Default())
+	topics, closeTopics, err := events.NewRabbitMQTopics(amqpURL, slog.Default())
 	if err != nil {
-		t.Fatalf("new rabbitmq bus: %v", err)
+		t.Fatalf("new rabbitmq topics: %v", err)
 	}
-	t.Cleanup(closeBus)
+	t.Cleanup(closeTopics)
+	ctx := context.Background()
 
 	clusterRepo := &testutil.MockClusterRepository{}
-	handler := NewAgentHandler(clusterRepo, bus, slog.Default())
+	handler := NewAgentHandler(clusterRepo, service.NewAgentConnectionService(topics), slog.Default())
 
 	token := "my-token"
 	hash := auth.SHA256Hex(token)
@@ -103,16 +109,14 @@ func TestAgentHandler_EventFlow(t *testing.T) {
 		return cmd
 	}
 
-	if _, err := bus.SubscribeWork(events.TopicAgentReady, func(v any) {
-		ready, ok := v.(events.AgentReady)
-		if !ok {
-			return
-		}
+	if _, err := topics.AgentReadySubscriber().Subscribe(ctx, func(ctx context.Context, ready events.AgentReady) {
 		cmd := dequeue()
 		if cmd == nil {
 			return
 		}
-		bus.Publish(context.Background(), events.ClusterCommandDispatchTopic(ready.ClusterID), events.CommandDispatch{Cmd: cmd})
+		if err := topics.CommandDispatchPublisher(ready.ClusterID).Publish(ctx, events.CommandDispatch{Cmd: cmd}); err != nil {
+			t.Errorf("publish dispatch: %v", err)
+		}
 	}); err != nil {
 		t.Fatalf("subscribe agent_ready: %v", err)
 	}
@@ -121,21 +125,17 @@ func TestAgentHandler_EventFlow(t *testing.T) {
 		startedMu    sync.Mutex
 		commandStart []events.CommandStarted
 	)
-	if _, err := bus.SubscribeWork(events.TopicCommandStarted, func(v any) {
-		if e, ok := v.(events.CommandStarted); ok {
-			startedMu.Lock()
-			commandStart = append(commandStart, e)
-			startedMu.Unlock()
-		}
+	if _, err := topics.CommandStartedSubscriber().Subscribe(ctx, func(_ context.Context, e events.CommandStarted) {
+		startedMu.Lock()
+		commandStart = append(commandStart, e)
+		startedMu.Unlock()
 	}); err != nil {
 		t.Fatalf("subscribe command_started: %v", err)
 	}
 
 	resultCh := make(chan events.CommandResult, 1)
-	if _, err := bus.SubscribeWork(events.TopicCommandResults, func(v any) {
-		if e, ok := v.(events.CommandResult); ok {
-			resultCh <- e
-		}
+	if _, err := topics.CommandResultsSubscriber().Subscribe(ctx, func(_ context.Context, e events.CommandResult) {
+		resultCh <- e
 	}); err != nil {
 		t.Fatalf("subscribe command_results: %v", err)
 	}
@@ -143,10 +143,12 @@ func TestAgentHandler_EventFlow(t *testing.T) {
 	cmdID := uuid.New()
 	enqueue(&domain.Command{ID: cmdID, Type: "test.cmd"})
 
-	ts := httptest.NewServer(http.HandlerFunc(handler.ServeWS))
+	router := gin.New()
+	router.GET("/ws", handler.ServeWS)
+	ts := httptest.NewServer(router)
 	defer ts.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+token)
 
@@ -157,13 +159,13 @@ func TestAgentHandler_EventFlow(t *testing.T) {
 	defer ws.Close()
 
 	// Agent → "ready"
-	if err := ws.WriteJSON(wsEnvelope{Type: "ready"}); err != nil {
+	if err := ws.WriteJSON(wire.Envelope{Type: "ready"}); err != nil {
 		t.Fatalf("write ready: %v", err)
 	}
 
 	// Server → "command" (allow extra time for async dispatch)
 	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
-	var cmdEnv wsEnvelope
+	var cmdEnv wire.Envelope
 	if err := ws.ReadJSON(&cmdEnv); err != nil {
 		t.Fatalf("read command: %v", err)
 	}
@@ -172,20 +174,20 @@ func TestAgentHandler_EventFlow(t *testing.T) {
 	}
 
 	// Agent → "ack"
-	ackPayload := []byte(`{"command_id":"` + cmdID.String() + `"}`)
-	if err := ws.WriteJSON(wsEnvelope{Type: "ack", Data: ackPayload}); err != nil {
+	ackPayload, _ := json.Marshal(wire.AckPayload{CommandID: cmdID})
+	if err := ws.WriteJSON(wire.Envelope{Type: "ack", Data: ackPayload}); err != nil {
 		t.Fatalf("write ack: %v", err)
 	}
 
 	// Agent → "result"
-	resultPayload := []byte(`{"success":true}`)
-	if err := ws.WriteJSON(wsEnvelope{Type: "result", Data: resultPayload}); err != nil {
+	resultPayload, _ := json.Marshal(wire.ResultPayload{CommandID: cmdID, Success: true})
+	if err := ws.WriteJSON(wire.Envelope{Type: "result", Data: resultPayload}); err != nil {
 		t.Fatalf("write result: %v", err)
 	}
 
 	// Server → "idle" (queue is empty after the result)
 	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
-	var idleEnv wsEnvelope
+	var idleEnv wire.Envelope
 	if err := ws.ReadJSON(&idleEnv); err != nil {
 		t.Fatalf("read idle: %v", err)
 	}

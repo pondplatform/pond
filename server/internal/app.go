@@ -69,11 +69,11 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	specRegistry := dependency.NewSpecRegistry()
 
 	log.Info("connecting to rabbitmq", "url", cfg.RabbitMQURL)
-	bus, closeBus, err := events.NewRabbitMQBus(cfg.RabbitMQURL, log.WithGroup("rabbitmq"))
+	topics, closeTopics, err := events.NewRabbitMQTopics(cfg.RabbitMQURL, log.WithGroup("rabbitmq"))
 	if err != nil {
 		return fmt.Errorf("rabbitmq: %w", err)
 	}
-	defer closeBus()
+	defer closeTopics()
 	log.Info("rabbitmq connected")
 
 	// Services
@@ -84,7 +84,7 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	deploySvc := service.NewDeploymentService(
 		deploymentInfoStore, serviceStore, envStore,
 		depSvc, helmGenerator, tmplRenderer, resolver,
-		tx, bus, log.WithGroup("deployment"),
+		tx, topics, log.WithGroup("deployment"),
 	)
 
 	// Start the deployment service event loop (subscribes to all state-machine topics).
@@ -93,7 +93,7 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	go func() { svcErr <- deploySvc.Start(ctx) }()
 
 	// Agent handler
-	agentConnSvc := service.NewAgentConnectionService(bus)
+	agentConnSvc := service.NewAgentConnectionService(topics)
 	agentHandler := api.NewAgentHandler(clusterStore, agentConnSvc, log.WithGroup("agent_handler"))
 
 	// Auth components

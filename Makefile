@@ -20,6 +20,12 @@ build-cli:
 docs:
 	mdbook build
 
+
+# ---- Install Local ---
+
+install-cli: build-cli
+	cp ./build/pond ~/.local/bin/pond
+
 # ---- Test targets ----
 
 test:

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/server/internal/events"
 	"github.com/pondplatform/pond/server/internal/helmgen"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
@@ -344,32 +343,6 @@ func (m *MockClusterRepository) UpdateTokenHash(ctx context.Context, id uuid.UUI
 	return nil
 }
 
-// --- events.Bus ---
-
-type MockBus struct {
-	SubscribeWorkFn   func(topic string, handler events.Handler) (func(), error)
-	SubscribeFanoutFn func(topic string, handler events.Handler) (func(), error)
-	PublishFn         func(ctx context.Context, topic string, v any)
-}
-
-func (m *MockBus) SubscribeWork(topic string, handler events.Handler) (func(), error) {
-	if m.SubscribeWorkFn != nil {
-		return m.SubscribeWorkFn(topic, handler)
-	}
-	return func() {}, nil
-}
-func (m *MockBus) SubscribeFanout(topic string, handler events.Handler) (func(), error) {
-	if m.SubscribeFanoutFn != nil {
-		return m.SubscribeFanoutFn(topic, handler)
-	}
-	return func() {}, nil
-}
-func (m *MockBus) Publish(ctx context.Context, topic string, v any) {
-	if m.PublishFn != nil {
-		m.PublishFn(ctx, topic, v)
-	}
-}
-
 // --- helmgen.HelmValuesGenerator ---
 
 type MockHelmValuesGenerator struct {
@@ -398,8 +371,7 @@ func (m *MockTemplateRenderer) Render(values map[string]any, contexts map[string
 
 // Compile-time interface checks.
 var (
-	_ store.DeploymentInfoStore = (*MockDeploymentInfoStore)(nil)
-	_ store.ClusterRepository   = (*MockClusterRepository)(nil)
-	_ events.Bus                = (*MockBus)(nil)
+	_ store.DeploymentInfoStore   = (*MockDeploymentInfoStore)(nil)
+	_ store.ClusterRepository     = (*MockClusterRepository)(nil)
 	_ helmgen.HelmValuesGenerator = (*MockHelmValuesGenerator)(nil)
 )

@@ -114,7 +114,7 @@ func TestDeploymentService_Submit(t *testing.T) {
 	infoStore := &testutil.MockDeploymentInfoStore{}
 	depSvc := &mockDependencyService{}
 	helmGen := &testutil.MockHelmValuesGenerator{}
-	bus := &testutil.MockBus{}
+	topics := &testutil.MockTopics{}
 	tx := &MockTransactor{
 		RunInTxFn: func(ctx context.Context, fn func(ctx context.Context, tx TxRepos) error) error {
 			return fn(ctx, TxRepos{DeploymentInfo: infoStore})
@@ -123,7 +123,7 @@ func TestDeploymentService_Submit(t *testing.T) {
 
 	tmplRenderer := NewTemplateRenderer()
 	resolver := &mockConfigResolver{}
-	s := NewDeploymentService(infoStore, svcRepo, envRepo, depSvc, helmGen, tmplRenderer, resolver, tx, bus, slog.Default())
+	s := NewDeploymentService(infoStore, svcRepo, envRepo, depSvc, helmGen, tmplRenderer, resolver, tx, topics, slog.Default())
 
 	t.Run("Submit without dependencies", func(t *testing.T) {
 		// No deps → CreateDependencyDeployments returns Succeeded → helm enqueued immediately.
@@ -329,6 +329,39 @@ func TestDeploymentService_Submit(t *testing.T) {
 		}
 		if !scheduleCommandsCalled {
 			t.Error("expected ScheduleCommands to be called")
+		}
+	})
+}
+
+func TestConfigureDeployment(t *testing.T) {
+	deploymentID := uuid.New()
+	store := &testutil.MockDeploymentInfoStore{
+		GetDepConfigFn: func(_ context.Context, _ uuid.UUID, name string) (*domain.DependencyDeployment, error) {
+			return &domain.DependencyDeployment{}, nil
+		},
+		UpdateDepConfigFn: func(_ context.Context, _ *domain.DependencyDeployment) error { return nil },
+	}
+	inputs := map[string]api.DependencyInput{"db": {Managed: true}}
+
+	t.Run("publishes UserInputProvided", func(t *testing.T) {
+		topics := &testutil.MockTopics{}
+		svc := makeAdvanceSvc(store, nil, nil, nil, topics)
+		if err := svc.ConfigureDeployment(context.Background(), deploymentID, inputs); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		published := topics.UserInputProvided.Published()
+		if len(published) != 1 || published[0].DeploymentID != deploymentID {
+			t.Errorf("expected one UserInputProvided for %v, got %+v", deploymentID, published)
+		}
+	})
+
+	t.Run("propagates publish error", func(t *testing.T) {
+		publishErr := errors.New("broker down")
+		topics := &testutil.MockTopics{}
+		topics.UserInputProvided.PublishErr = publishErr
+		svc := makeAdvanceSvc(store, nil, nil, nil, topics)
+		if err := svc.ConfigureDeployment(context.Background(), deploymentID, inputs); !errors.Is(err, publishErr) {
+			t.Fatalf("expected publish error, got %v", err)
 		}
 	})
 }

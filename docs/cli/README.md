@@ -15,7 +15,7 @@ supplies it, in this order:
 | `--token` | `POND_TOKEN` | Bearer token for authentication |
 | `--project` | `POND_PROJECT`, then `POND_PROJECT_ID` | Project UUID |
 | `-e, --env` | `POND_ENV` | Target environment name |
-| `--context` | `POND_CONTEXT` | Named context to use instead of the active context |
+| `-c, --context` | `POND_CONTEXT` | Named context to use instead of the active context |
 | `--kube-context` | `POND_KUBE_CONTEXT` | kubectl context for the port-forward |
 | `--kube-namespace` | `POND_KUBE_NAMESPACE` | Kubernetes namespace for the port-forward |
 | `--kube-service` | `POND_KUBE_SERVICE` | Kubernetes service for the port-forward (default `pond-server`) |
@@ -148,7 +148,7 @@ pond deploy [flags]
 
 | Flag | Default | Description |
 |---|---|---|
-| `-c, --config` | `./pond.yml` | Path to the service definition file |
+| `-f, --pond-file` | `./pond.yml` | Path to the service definition file |
 | `-t, --tag` | _(required)_ | Image tag to deploy |
 | `--wait` | `false` | Block until the deployment reaches a terminal state |
 
@@ -174,7 +174,7 @@ pond deployment status [service] [flags]
 
 Shows the latest deployment of a service. The service is looked up by name inside the resolved project, so `--project` (or `POND_PROJECT` / `POND_PROJECT_ID`, or a context) is required.
 
-When the service argument is omitted, the name is read from the `name` field of `./pond.yml` (or of `--config`), so the command can be run without arguments from a service directory. A service argument always wins over `pond.yml`.
+When the service argument is omitted, the name is read from the `name` field of `./pond.yml` (or of `--pond-file`), so the command can be run without arguments from a service directory. A service argument always wins over `pond.yml`.
 
 With no environment set, the command prints one row per environment of the project — the latest deployment there, or `-` when the service has never been deployed to it:
 
@@ -196,7 +196,7 @@ pond deployment status api --env prod
 | Flag | Required | Description |
 |---|---|---|
 | `-e, --env` | no | Restrict to one environment and show its full deployment detail |
-| `-c, --config` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
+| `-f, --pond-file` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
 | `--deployment-id` | no | Show one deployment by UUID instead of a service; cannot be combined with a service name |
 
 ### pond deployment list
@@ -205,7 +205,7 @@ pond deployment status api --env prod
 pond deployment list [service] [flags]
 ```
 
-Lists the deployment history of a service, newest first. The service is looked up by name inside the resolved project, and can be given either as the positional argument or with `--service` — passing both is an error. When neither is given, the name is read from the `name` field of `./pond.yml` (or of `--config`), so the command can be run without arguments from a service directory.
+Lists the deployment history of a service, newest first. The service is looked up by name inside the resolved project, and can be given either as the positional argument or with `--service` — passing both is an error. When neither is given, the name is read from the `name` field of `./pond.yml` (or of `--pond-file`), so the command can be run without arguments from a service directory.
 
 ```sh
 pond deployment list --service api
@@ -240,21 +240,21 @@ A `-` in the completed column means the deployment has not finished yet. Use `po
 |---|---|---|
 | `--service` | no | Service name, as an alternative to the positional argument; cannot be combined with it |
 | `-e, --env` | no | Restrict the listing to one environment |
-| `-c, --config` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
+| `-f, --pond-file` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
 | `--limit` | no | Maximum number of deployments to list (default 20) |
 
 ### pond deployment configure
 
 ```sh
-pond deployment configure --deployment-id <id> --file <path>
+pond deployment configure --deployment-id <id> --input <path>
 ```
 
-Provides dependency input for a deployment that is in the `awaiting_input` state. The `--file` argument points to a JSON file that specifies how each dependency should be resolved.
+Provides dependency input for a deployment that is in the `awaiting_input` state. The `--input` argument points to a JSON file that specifies how each dependency should be resolved.
 
 | Flag | Required | Description |
 |---|---|---|
 | `--deployment-id` | yes | Deployment UUID |
-| `-f, --file` | yes | Path to a JSON file with dependency configuration |
+| `-i, --input` | yes | Path to a JSON file with dependency configuration |
 
 **Example input file:**
 

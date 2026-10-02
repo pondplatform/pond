@@ -25,7 +25,7 @@ type deploymentService struct {
 	tmplRenderer   TemplateRenderer
 	resolver       config.ConfigResolver
 	tx             Transactor
-	bus            events.Bus
+	topics         events.Topics
 	log            *slog.Logger
 }
 
@@ -38,7 +38,7 @@ func NewDeploymentService(
 	tmplRenderer TemplateRenderer,
 	resolver config.ConfigResolver,
 	tx Transactor,
-	bus events.Bus,
+	topics events.Topics,
 	log *slog.Logger,
 ) DeploymentService {
 	return &deploymentService{
@@ -50,7 +50,7 @@ func NewDeploymentService(
 		tmplRenderer:   tmplRenderer,
 		resolver:       resolver,
 		tx:             tx,
-		bus:            bus,
+		topics:         topics,
 		log:            log,
 	}
 }
@@ -146,11 +146,13 @@ func (s *deploymentService) launchCommand(ctx context.Context, command *domain.C
 		return err
 	}
 
-	s.bus.Publish(ctx, events.ClusterCommandQueuedTopic(command.ClusterID), events.CommandQueued{
+	if err := s.topics.CommandQueuedPublisher(command.ClusterID).Publish(ctx, events.CommandQueued{
 		ClusterID:    command.ClusterID,
 		CommandID:    command.ID,
 		DeploymentID: deploymentId,
-	})
+	}); err != nil {
+		return fmt.Errorf("notify cluster %s of queued command: %w", command.ClusterID, err)
+	}
 
 	return nil
 }
@@ -176,9 +178,11 @@ func (s *deploymentService) ConfigureDeployment(ctx context.Context, deploymentI
 		}
 	}
 
-	s.bus.Publish(ctx, events.TopicUserInputProvided, events.UserInputProvided{
+	if err := s.topics.UserInputProvidedPublisher().Publish(ctx, events.UserInputProvided{
 		DeploymentID: deploymentID,
-	})
+	}); err != nil {
+		return fmt.Errorf("notify user input provided: %w", err)
+	}
 
 	return nil
 }
@@ -314,91 +318,41 @@ func (s *deploymentService) Cancel(ctx context.Context, deploymentID uuid.UUID) 
 // state machine in response. Returns an error if any subscription fails.
 // Blocks until ctx is cancelled.
 func (s *deploymentService) Start(ctx context.Context) error {
-	type sub struct {
-		topic string
-		fn    func() (func(), error)
-	}
-	subs := []sub{
-		{events.TopicCommandResults, func() (func(), error) {
-			return s.bus.SubscribeWork(events.TopicCommandResults, func(v any) {
-				res, ok := v.(events.CommandResult)
-				if !ok {
-					s.log.Error("unexpected event type", "topic", events.TopicCommandResults, "type", fmt.Sprintf("%T", v))
-					return
-				}
-				if err := s.processResult(ctx, res); err != nil {
-					s.log.Error("processResult", "command_id", res.CommandID, "err", err)
-				}
-			})
-		}},
-		{events.TopicAgentReady, func() (func(), error) {
-			return s.bus.SubscribeWork(events.TopicAgentReady, func(v any) {
-				e, ok := v.(events.AgentReady)
-				if !ok {
-					s.log.Error("unexpected event type", "topic", events.TopicAgentReady, "type", fmt.Sprintf("%T", v))
-					return
-				}
-				s.handleAgentReady(ctx, e)
-			})
-		}},
-		{events.TopicCommandStarted, func() (func(), error) {
-			return s.bus.SubscribeWork(events.TopicCommandStarted, func(v any) {
-				e, ok := v.(events.CommandStarted)
-				if !ok {
-					s.log.Error("unexpected event type", "topic", events.TopicCommandStarted, "type", fmt.Sprintf("%T", v))
-					return
-				}
-				s.handleCommandStarted(ctx, e)
-			})
-		}},
-		{events.TopicCommandLogs, func() (func(), error) {
-			return s.bus.SubscribeFanout(events.TopicCommandLogs, func(v any) {
-				e, ok := v.(events.CommandLog)
-				if !ok {
-					s.log.Error("unexpected event type", "topic", events.TopicCommandLogs, "type", fmt.Sprintf("%T", v))
-					return
-				}
-				s.handleCommandLog(ctx, e)
-			})
-		}},
-		{events.TopicAgentDisconnected, func() (func(), error) {
-			return s.bus.SubscribeWork(events.TopicAgentDisconnected, func(v any) {
-				e, ok := v.(events.AgentDisconnected)
-				if !ok {
-					s.log.Error("unexpected event type", "topic", events.TopicAgentDisconnected, "type", fmt.Sprintf("%T", v))
-					return
-				}
-				s.handleAgentDisconnected(ctx, e)
-			})
-		}},
-		{events.TopicUserInputProvided, func() (func(), error) {
-			return s.bus.SubscribeWork(events.TopicUserInputProvided, func(v any) {
-				e, ok := v.(events.UserInputProvided)
-				if !ok {
-					s.log.Error("unexpected event type", "topic", events.TopicUserInputProvided, "type", fmt.Sprintf("%T", v))
-					return
-				}
-				s.handleUserInputProvided(ctx, e)
-			})
-		}},
-	}
-
 	var unsubs []func()
-	for _, s := range subs {
-		unsub, err := s.fn()
+	defer func() {
+		for _, u := range unsubs {
+			u()
+		}
+	}()
+
+	for _, subscribe := range []func() (func(), error){
+		func() (func(), error) {
+			return s.topics.CommandResultsSubscriber().Subscribe(ctx, s.handleCommandResult)
+		},
+		func() (func(), error) {
+			return s.topics.AgentReadySubscriber().Subscribe(ctx, s.handleAgentReady)
+		},
+		func() (func(), error) {
+			return s.topics.CommandStartedSubscriber().Subscribe(ctx, s.handleCommandStarted)
+		},
+		func() (func(), error) {
+			return s.topics.CommandLogsSubscriber().Subscribe(ctx, s.handleCommandLog)
+		},
+		func() (func(), error) {
+			return s.topics.AgentDisconnectedSubscriber().Subscribe(ctx, s.handleAgentDisconnected)
+		},
+		func() (func(), error) {
+			return s.topics.UserInputProvidedSubscriber().Subscribe(ctx, s.handleUserInputProvided)
+		},
+	} {
+		unsub, err := subscribe()
 		if err != nil {
-			for _, u := range unsubs {
-				u()
-			}
-			return fmt.Errorf("subscribe %s: %w", s.topic, err)
+			return err
 		}
 		unsubs = append(unsubs, unsub)
 	}
 
 	<-ctx.Done()
-	for _, u := range unsubs {
-		u()
-	}
 	return nil
 }
 

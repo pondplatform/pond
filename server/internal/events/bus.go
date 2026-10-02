@@ -1,26 +1,52 @@
 package events
 
-import "context"
+import (
+	"context"
 
-// Handler is a callback invoked when an event is published to a subscribed
-// topic. It must not block; use a channel or goroutine for slow work.
-type Handler func(v any)
+	"github.com/google/uuid"
+)
 
-// Bus is a generic publish/subscribe interface. Topics are arbitrary strings.
-// Implementations must be safe for concurrent use.
-type Bus interface {
-	// SubscribeWork registers a single-consumer durable handler for topic.
-	// Each published message is delivered to exactly one subscriber (round-robin
-	// when multiple handlers are registered). Use for state-machine events that
-	// must not be dropped or duplicated.
-	SubscribeWork(topic string, h Handler) (func(), error)
+// Handler is invoked for every event delivered to a subscription. Handlers run
+// synchronously on the subscription's delivery goroutine.
+type Handler[T any] func(ctx context.Context, event T)
 
-	// SubscribeFanout registers an ephemeral broadcast handler for topic.
-	// Every current subscriber receives each message; no durability guarantee.
-	// Use for log streaming and other fire-and-forget fan-out events.
-	SubscribeFanout(topic string, h Handler) (func(), error)
+// Publisher publishes events of type T to a single topic.
+type Publisher[T any] interface {
+	Publish(ctx context.Context, event T) error
+}
 
-	// Publish delivers v to subscribers of topic according to their subscription
-	// type: all fanout subscribers receive it, exactly one work subscriber receives it.
-	Publish(ctx context.Context, topic string, v any)
+// Subscriber subscribes to events of type T on a single topic.
+type Subscriber[T any] interface {
+	// Subscribe registers h for the topic. ctx is passed to every handler
+	// invocation; it does not bound the subscription's lifetime — call the
+	// returned unsubscribe func for that.
+	Subscribe(ctx context.Context, h Handler[T]) (unsubscribe func(), err error)
+}
+
+// Topics is the catalogue of pond's domain topics. Each topic has a fixed
+// payload type and delivery mode; see topics for the definitions.
+type Topics interface {
+	CommandResultsPublisher() Publisher[CommandResult]
+	CommandResultsSubscriber() Subscriber[CommandResult]
+
+	CommandLogsPublisher() Publisher[CommandLog]
+	CommandLogsSubscriber() Subscriber[CommandLog]
+
+	AgentReadyPublisher() Publisher[AgentReady]
+	AgentReadySubscriber() Subscriber[AgentReady]
+
+	CommandStartedPublisher() Publisher[CommandStarted]
+	CommandStartedSubscriber() Subscriber[CommandStarted]
+
+	AgentDisconnectedPublisher() Publisher[AgentDisconnected]
+	AgentDisconnectedSubscriber() Subscriber[AgentDisconnected]
+
+	UserInputProvidedPublisher() Publisher[UserInputProvided]
+	UserInputProvidedSubscriber() Subscriber[UserInputProvided]
+
+	CommandQueuedPublisher(clusterID uuid.UUID) Publisher[CommandQueued]
+	CommandQueuedSubscriber(clusterID uuid.UUID) Subscriber[CommandQueued]
+
+	CommandDispatchPublisher(clusterID uuid.UUID) Publisher[CommandDispatch]
+	CommandDispatchSubscriber(clusterID uuid.UUID) Subscriber[CommandDispatch]
 }

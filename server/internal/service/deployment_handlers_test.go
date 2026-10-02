@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -19,12 +21,11 @@ func TestHandleAgentReady_NoCommandsDoesNotPublish(t *testing.T) {
 			return nil, nil
 		},
 	}
-	var published bool
-	bus := &testutil.MockBus{PublishFn: func(_ context.Context, _ string, _ any) { published = true }}
-	svc := makeAdvanceSvc(store, nil, nil, nil, bus)
+	topics := &testutil.MockTopics{}
+	svc := makeAdvanceSvc(store, nil, nil, nil, topics)
 	svc.handleAgentReady(context.Background(), events.AgentReady{ClusterID: uuid.New()})
-	if published {
-		t.Error("expected no publish when there are no queued commands")
+	if n := topics.CommandDispatch.PublishedCount(); n != 0 {
+		t.Errorf("expected no publish when there are no queued commands, got %d", n)
 	}
 }
 
@@ -44,31 +45,45 @@ func TestHandleAgentReady_DispatchesFirstQueuedCommand(t *testing.T) {
 		},
 	}
 
-	var publishedTopic string
-	var publishedEvent any
-	bus := &testutil.MockBus{
-		PublishFn: func(_ context.Context, topic string, v any) {
-			publishedTopic = topic
-			publishedEvent = v
-		},
-	}
-
-	svc := makeAdvanceSvc(store, nil, nil, nil, bus)
+	topics := &testutil.MockTopics{}
+	svc := makeAdvanceSvc(store, nil, nil, nil, topics)
 	svc.handleAgentReady(context.Background(), events.AgentReady{ClusterID: clusterID})
 
 	if updatedStatus != domain.CommandStatusDispatched {
 		t.Errorf("expected command transitioned to dispatched, got %s", updatedStatus)
 	}
-	expectedTopic := events.ClusterCommandDispatchTopic(clusterID)
-	if publishedTopic != expectedTopic {
-		t.Errorf("expected topic %s, got %s", expectedTopic, publishedTopic)
+	published := topics.CommandDispatch.For(clusterID).Published()
+	if len(published) != 1 {
+		t.Fatalf("expected 1 CommandDispatch for cluster, got %d", len(published))
 	}
-	dispatch, ok := publishedEvent.(events.CommandDispatch)
-	if !ok {
-		t.Fatalf("expected CommandDispatch event, got %T", publishedEvent)
+	if published[0].Cmd.ID != cmdID {
+		t.Errorf("expected cmdID %v in dispatch, got %v", cmdID, published[0].Cmd.ID)
 	}
-	if dispatch.Cmd.ID != cmdID {
-		t.Errorf("expected cmdID %v in dispatch, got %v", cmdID, dispatch.Cmd.ID)
+}
+
+func TestHandleAgentReady_PublishErrorRevertsToQueued(t *testing.T) {
+	clusterID := uuid.New()
+	cmd := &domain.Command{ID: uuid.New(), ClusterID: clusterID, Status: domain.CommandStatusQueued}
+
+	var statuses []domain.CommandStatus
+	store := &testutil.MockDeploymentInfoStore{
+		ListQueuedCommandsByClusterFn: func(_ context.Context, _ uuid.UUID) ([]*domain.Command, error) {
+			return []*domain.Command{cmd}, nil
+		},
+		UpdateCommandFn: func(_ context.Context, c *domain.Command) error {
+			statuses = append(statuses, c.Status)
+			return nil
+		},
+	}
+	topics := &testutil.MockTopics{}
+	topics.CommandDispatch.For(clusterID).PublishErr = errors.New("broker down")
+
+	svc := makeAdvanceSvc(store, nil, nil, nil, topics)
+	svc.handleAgentReady(context.Background(), events.AgentReady{ClusterID: clusterID})
+
+	want := []domain.CommandStatus{domain.CommandStatusDispatched, domain.CommandStatusQueued}
+	if !slices.Equal(statuses, want) {
+		t.Errorf("expected status updates %v, got %v", want, statuses)
 	}
 }
 

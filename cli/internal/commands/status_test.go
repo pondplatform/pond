@@ -216,7 +216,7 @@ func TestStatusServiceNameFromExplicitConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "custom.yml")
 	writeFile(t, path, "version: 1\nname: api\n")
 
-	out, err := runStatusCmd(t, newFakeClient(), "", "--config", path)
+	out, err := runStatusCmd(t, newFakeClient(), "", "--pond-file", path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

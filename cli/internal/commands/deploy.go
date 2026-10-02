@@ -16,9 +16,9 @@ import (
 
 func NewDeployCmd() *cobra.Command {
 	var (
-		configPath string
-		tag        string
-		wait       bool
+		filePath string
+		tag      string
+		wait     bool
 	)
 
 	cmd := &cobra.Command{
@@ -39,7 +39,7 @@ func NewDeployCmd() *cobra.Command {
 			sc := cmd.Context().Value(pondconfig.ClientKey{}).(client.ServerClient)
 
 			parser := config.NewParser()
-			overridable, err := parser.ParseFile(configPath)
+			overridable, err := parser.ParseFile(filePath)
 			if err != nil {
 				return fmt.Errorf("parse config: %w", err)
 			}
@@ -72,7 +72,7 @@ func NewDeployCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&configPath, "config", "c", "./pond.yml", "Path to pond.yml")
+	cmd.Flags().StringVarP(&filePath, "pond-file", "f", "./pond.yml", "Path to pond.yml")
 	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Image tag to deploy")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for completion")
 	cmd.MarkFlagRequired("tag")
@@ -96,7 +96,7 @@ func waitForDeployment(ctx context.Context, out io.Writer, c client.ServerClient
 			return fmt.Errorf("deployment failed")
 		case "awaiting_input":
 			fmt.Fprintf(out, "Deployment is awaiting user input. To provide it, run:\n")
-			fmt.Fprintf(out, "  pond deployment configure --deployment-id %s --file <config.json>\n", id)
+			fmt.Fprintf(out, "  pond deployment configure --deployment-id %s --input <config.json>\n", id)
 			return nil
 		default:
 			fmt.Fprintf(out, "Status: %s, waiting...\n", d.Status)

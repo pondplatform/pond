@@ -82,7 +82,7 @@ When you deploy a service with a `postgres` dependency, Pond checks whether it n
 
 ```
 Deployment is awaiting input. Run:
-  pond deployment configure --deployment-id <id> --file <path>
+  pond deployment configure --deployment-id <id> --input <path>
 ```
 
 Create an input file that tells Pond whether to manage the database for you, or connect to an existing one:
@@ -126,7 +126,7 @@ Then submit the input:
 ```sh
 pond deployment configure \
   --deployment-id <id> \
-  --file ./deploy-input.json
+  --input ./deploy-input.json
 ```
 
 The deployment resumes automatically after receiving the input.

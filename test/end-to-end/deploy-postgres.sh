@@ -25,7 +25,7 @@ load_env
 step "Submitting postgres-demo deployment (tag: $IMAGE_TAG)"
 DEPLOY_OUTPUT=$(POND_SERVER_URL="$SERVER_URL" POND_TOKEN="$POND_TOKEN" \
   "$POND" deploy \
-    --config "$SCRIPT_DIR/../test-data/postgres/pond.yml" \
+    --pond-file "$SCRIPT_DIR/../test-data/postgres/pond.yml" \
     --project "$PROJECT_ID" \
     --env staging \
     --tag "$IMAGE_TAG" 2>&1)
@@ -58,7 +58,7 @@ EOF
 POND_SERVER_URL="$SERVER_URL" POND_TOKEN="$POND_TOKEN" \
   "$POND" deployment configure \
     --deployment-id "$DEPLOYMENT_ID" \
-    --file "$INPUT_FILE"
+    --input "$INPUT_FILE"
 
 # ── Wait for succeeded ────────────────────────────────────────────────────────
 step "Waiting for deployment to complete"

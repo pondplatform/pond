@@ -18,9 +18,9 @@ const defaultDeploymentListLimit = 20
 
 func NewDeploymentListCmd() *cobra.Command {
 	var (
-		service    string
-		configPath string
-		limit      int
+		service  string
+		filePath string
+		limit    int
 	)
 
 	cmd := &cobra.Command{
@@ -45,7 +45,7 @@ func NewDeploymentListCmd() *cobra.Command {
 			serviceName := service
 			if serviceName == "" {
 				var err error
-				if serviceName, err = resolveServiceName(args, configPath); err != nil {
+				if serviceName, err = resolveServiceName(args, filePath); err != nil {
 					return err
 				}
 			}
@@ -54,7 +54,7 @@ func NewDeploymentListCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&service, "service", "", "Service name (alternative to passing it as an argument)")
-	cmd.Flags().StringVarP(&configPath, "config", "c", "./pond.yml", "Path to pond.yml, read for the service name when no service is given")
+	cmd.Flags().StringVarP(&filePath, "pond-file", "f", "./pond.yml", "Path to pond.yml, read for the service name when no service is given")
 	cmd.Flags().IntVar(&limit, "limit", defaultDeploymentListLimit, "Maximum number of deployments to list")
 
 	return cmd
