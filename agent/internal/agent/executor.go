@@ -41,7 +41,7 @@ func (e *executor) Execute(ctx context.Context, cmd *wire.CommandPayload, logSin
 		return &wire.ResultPayload{
 			CommandID: cmd.ID,
 			Success:   false,
-			Error:     fmt.Sprintf("unknown command type: %s", cmd.Type),
+			Error:     fmt.Sprintf("this agent does not support command type %q; the agent may be older than the server", cmd.Type),
 		}, nil
 	}
 
@@ -59,14 +59,14 @@ func (e *executor) Execute(ctx context.Context, cmd *wire.CommandPayload, logSin
 func (e *executor) executeHelmUpgrade(ctx context.Context, cmd *wire.CommandPayload, logSink func(wire.LogPayload)) (*wire.ResultPayload, error) {
 	var req wire.HelmUpgradePayload
 	if err := json.Unmarshal(cmd.Payload, &req); err != nil {
-		return nil, fmt.Errorf("unmarshal helm upgrade request: %w", err)
+		return nil, payloadError(cmd.Type, err)
 	}
 
 	lw := newLogWriter(cmd.ID, logSink)
 	defer lw.Close()
 
 	if err := e.helmRunner.Upgrade(ctx, req, lw); err != nil {
-		return nil, fmt.Errorf("helm upgrade: %w", err)
+		return nil, err
 	}
 
 	return &wire.ResultPayload{
@@ -78,23 +78,23 @@ func (e *executor) executeHelmUpgrade(ctx context.Context, cmd *wire.CommandPayl
 func (e *executor) executeTofuApply(ctx context.Context, cmd *wire.CommandPayload, logSink func(wire.LogPayload)) (*wire.ResultPayload, error) {
 	var payload wire.TofuApplyPayload
 	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
-		return nil, fmt.Errorf("unmarshal tofu apply request: %w", err)
+		return nil, payloadError(cmd.Type, err)
 	}
 
 	lw := newLogWriter(cmd.ID, logSink)
 	defer lw.Close()
 
 	if err := e.tofuRunner.Init(ctx, payload.WorkDir, lw); err != nil {
-		return nil, fmt.Errorf("tofu init: %w", err)
+		return nil, err
 	}
 
 	if err := e.tofuRunner.Apply(ctx, payload.WorkDir, payload.StatePath, payload.Vars, lw); err != nil {
-		return nil, fmt.Errorf("tofu apply: %w", err)
+		return nil, err
 	}
 
 	outputs, err := e.tofuRunner.Output(ctx, payload.WorkDir, payload.StatePath)
 	if err != nil {
-		return nil, fmt.Errorf("tofu output: %w", err)
+		return nil, err
 	}
 
 	outputJSON, err := json.Marshal(outputs)
@@ -112,12 +112,12 @@ func (e *executor) executeTofuApply(ctx context.Context, cmd *wire.CommandPayloa
 func (e *executor) executeTofuOutput(ctx context.Context, cmd *wire.CommandPayload) (*wire.ResultPayload, error) {
 	var payload wire.TofuOutputPayload
 	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
-		return nil, fmt.Errorf("unmarshal tofu output request: %w", err)
+		return nil, payloadError(cmd.Type, err)
 	}
 
 	outputs, err := e.tofuRunner.Output(ctx, payload.WorkDir, payload.StatePath)
 	if err != nil {
-		return nil, fmt.Errorf("tofu output: %w", err)
+		return nil, err
 	}
 
 	outputJSON, err := json.Marshal(outputs)
@@ -130,6 +130,10 @@ func (e *executor) executeTofuOutput(ctx context.Context, cmd *wire.CommandPaylo
 		Success:   true,
 		Output:    outputJSON,
 	}, nil
+}
+
+func payloadError(cmdType wire.CommandType, err error) error {
+	return fmt.Errorf("agent could not decode the %s payload (%w); the agent and server versions may differ", cmdType, err)
 }
 
 // logWriter is a line-buffered writer that sends each line to logSink.

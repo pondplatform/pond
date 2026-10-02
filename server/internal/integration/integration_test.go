@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -239,6 +240,83 @@ func TestDeployment_WithTofuDep(t *testing.T) {
 		if commands[len(commands)-1].Type != wire.CommandHelmUpgrade {
 			t.Errorf("expected last command %q, got %q", wire.CommandHelmUpgrade, commands[len(commands)-1].Type)
 		}
+	}
+}
+
+// TestDeployment_WithTofuDep_InputOnSubmit tests that input sent with the submit
+// request configures the dependency up front, with no separate configure call.
+func TestDeployment_WithTofuDep_InputOnSubmit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	h := NewTestHarness(t, testConnStr, testAMQPURL)
+	scenario := BuildScenario(ctx, t, h)
+
+	behavior := TofuOutputBehavior(map[string]any{
+		"host":     "db.test.local",
+		"port":     5432,
+		"database": "testdb",
+	})
+
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, behavior)
+
+	c := h.Client()
+	req := SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.0")
+	req.Dependencies = map[string]shared.DependencyInput{
+		"postgres": {Managed: true, Values: map[string]any{"instances": 1}},
+	}
+
+	deployment, err := c.SubmitDeployment(ctx, req)
+	if err != nil {
+		t.Fatalf("submit deployment: %v", err)
+	}
+	if deployment.Status == shared.DeploymentStatusAwaitingInput {
+		t.Fatalf("deployment with input on submit must not await input")
+	}
+
+	finalStatus := pollDeploymentStatus(ctx, t, c, deployment.ID, 15*time.Second)
+	if finalStatus != "succeeded" {
+		t.Errorf("expected final status 'succeeded', got %q", finalStatus)
+	}
+
+	commands := fa.ReceivedCommands()
+	if len(commands) < 2 {
+		t.Fatalf("expected at least 2 commands, got %d", len(commands))
+	}
+	if commands[0].Type != wire.CommandTofuApply {
+		t.Errorf("expected first command %q, got %q", wire.CommandTofuApply, commands[0].Type)
+	}
+	if commands[len(commands)-1].Type != wire.CommandHelmUpgrade {
+		t.Errorf("expected last command %q, got %q", wire.CommandHelmUpgrade, commands[len(commands)-1].Type)
+	}
+}
+
+// TestDeployment_IncompleteInputOnSubmitRejected tests that input which does not
+// cover every dependency is rejected without creating the service or deployment.
+func TestDeployment_IncompleteInputOnSubmitRejected(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	h := NewTestHarness(t, testConnStr, testAMQPURL)
+	scenario := BuildScenario(ctx, t, h)
+
+	req := SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.0")
+	req.Dependencies = map[string]shared.DependencyInput{}
+
+	_, err := h.Client().SubmitDeployment(ctx, req)
+	if err == nil {
+		t.Fatal("expected submit with incomplete input to fail")
+	}
+	if !strings.Contains(err.Error(), "status 422") || !strings.Contains(err.Error(), "postgres") {
+		t.Errorf("expected a 422 naming the missing dependency, got: %v", err)
+	}
+
+	var services int
+	if err := h.DB.QueryRowContext(ctx, `SELECT count(*) FROM services WHERE project_id = $1`, scenario.ProjectID).Scan(&services); err != nil {
+		t.Fatalf("count services: %v", err)
+	}
+	if services != 0 {
+		t.Errorf("expected no service to be created, got %d", services)
 	}
 }
 

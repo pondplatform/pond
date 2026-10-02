@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/pondplatform/pond/server/internal/service"
 	"github.com/pondplatform/pond/server/internal/store"
 	"github.com/pondplatform/pond/shared/agent/wire"
+	"github.com/pondplatform/pond/shared/server/api"
 )
 
 var upgrader = websocket.Upgrader{
@@ -45,14 +48,18 @@ func (h *AgentHandler) ServeWS(c *gin.Context) {
 
 	token := auth.BearerToken(r)
 	if token == "" {
-		writeError(c, http.StatusUnauthorized, "missing authorization")
+		writeError(c, http.StatusUnauthorized, `missing agent token: send an "Authorization: Bearer <cluster agent token>" header`)
 		return
 	}
 
 	hash := auth.SHA256Hex(token)
 	cluster, err := h.clusters.GetByTokenHash(r.Context(), hash)
+	if errors.Is(err, api.ErrNotFound) {
+		writeError(c, http.StatusUnauthorized, "unknown agent token: no cluster uses it. It may have been rotated; update the agent with the cluster's current token")
+		return
+	}
 	if err != nil {
-		writeError(c, http.StatusUnauthorized, "unauthorized")
+		writeInternalError(c, fmt.Errorf("look up cluster by agent token: %w", err), h.log)
 		return
 	}
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -24,8 +25,7 @@ func NewTokenHandler(jwtSecret []byte, log *slog.Logger) *TokenHandler {
 
 func (h *TokenHandler) Create(c *gin.Context) {
 	var req api.CreateTokenRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &req) {
 		return
 	}
 	resp, err := h.create(c.Request.Context(), req)
@@ -39,7 +39,9 @@ func (h *TokenHandler) Create(c *gin.Context) {
 func (h *TokenHandler) create(_ context.Context, req api.CreateTokenRequest) (api.CreateTokenResponse, error) {
 	role := domain.OrgRole(strings.ToLower(strings.TrimSpace(req.Role)))
 	if role != domain.RoleAdmin && role != domain.RoleMember && role != domain.RoleViewer {
-		return api.CreateTokenResponse{}, api.ErrInvalidInput
+		var errs api.ValidationErrors
+		errs.Add("Token", "role", fmt.Sprintf("must be one of admin, member or viewer, got %q", req.Role))
+		return api.CreateTokenResponse{}, &errs
 	}
 
 	description := strings.TrimSpace(req.Description)

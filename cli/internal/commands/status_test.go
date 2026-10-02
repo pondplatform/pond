@@ -23,10 +23,12 @@ type fakeClient struct {
 	envs        []api.Environment
 	deployments map[uuid.UUID][]api.DeploymentListItem // keyed by environment ID
 	detail      *api.Deployment
+	submitted   []api.SubmitRequest
 }
 
-func (f *fakeClient) SubmitDeployment(context.Context, api.SubmitRequest) (*api.Deployment, error) {
-	return nil, fmt.Errorf("not implemented")
+func (f *fakeClient) SubmitDeployment(_ context.Context, req api.SubmitRequest) (*api.Deployment, error) {
+	f.submitted = append(f.submitted, req)
+	return &api.Deployment{ID: uuid.MustParse(testDeployID), Status: api.DeploymentStatusPending}, nil
 }
 
 func (f *fakeClient) GetDeployment(_ context.Context, id uuid.UUID) (*api.Deployment, error) {

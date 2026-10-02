@@ -25,7 +25,7 @@ func (s *ProjectStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Proje
 		"SELECT id, name, root_environment_id, created_at FROM projects WHERE id = $1", id,
 	).Scan(&p.ID, &p.Name, &rootEnvID, &p.CreatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("project %s: %w", id, api.ErrNotFound)
+		return nil, api.NotFound("project %s not found", id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get project: %w", err)
@@ -45,7 +45,7 @@ func (s *ProjectStore) GetByName(ctx context.Context, name string) (*domain.Proj
 		name,
 	).Scan(&p.ID, &p.Name, &rootEnvID, &p.CreatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("project %q: %w", name, api.ErrNotFound)
+		return nil, api.NotFound("project %q not found", name)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get project: %w", err)
@@ -87,6 +87,9 @@ func (s *ProjectStore) Create(ctx context.Context, project *domain.Project) erro
 		"INSERT INTO projects (id, name, root_environment_id, created_at) VALUES ($1, $2, $3, $4)",
 		project.ID, project.Name, project.RootEnvironmentID, project.CreatedAt,
 	)
+	if pgCode(err) == pgUniqueViolation {
+		return api.AlreadyExists("project %q already exists", project.Name)
+	}
 	if err != nil {
 		return fmt.Errorf("create project: %w", err)
 	}

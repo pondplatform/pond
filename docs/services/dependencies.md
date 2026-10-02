@@ -130,3 +130,11 @@ pond deployment configure \
 ```
 
 The deployment resumes automatically after receiving the input.
+
+To skip the `awaiting_input` step, pass the same file to `pond deploy`:
+
+```sh
+pond deploy --tag v1.2.3 --input ./deploy-input.json
+```
+
+The input is then sent with the deployment request and saved atomically with the deployment. The file must contain an entry for every dependency in `pond.yml`; otherwise the request is rejected and nothing is created.

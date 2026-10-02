@@ -15,7 +15,7 @@ KUBE_CONTEXT=""
 NAMESPACE="pond"
 CONTEXT_NAME=""
 CLUSTER_NAME=""
-IMAGE_TAG="latest"
+IMAGE_TAG="v0.2.1"
 CHART_VERSION=""        # empty = latest published chart
 FORWARD_PORT=""         # empty = pick a random free local port
 ENVIRONMENTS=""         # empty = prompt or default to "production"

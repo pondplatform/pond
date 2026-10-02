@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/google/uuid"
 	"github.com/pondplatform/pond/shared/agent/wire"
 )
 
@@ -39,6 +40,9 @@ func Run(ctx context.Context, cfg Config, exec CommandExecutor, log *slog.Logger
 			var cmd wire.CommandPayload
 			if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 				log.Error("decode command", "err", err)
+				if err := reportUndecodableCommand(ctx, conn, msg.Data, err); err != nil {
+					return err
+				}
 				continue
 			}
 			log.Info("received command", "type", cmd.Type, "command_id", cmd.ID)
@@ -78,4 +82,26 @@ func Run(ctx context.Context, cfg Config, exec CommandExecutor, log *slog.Logger
 			log.Warn("unexpected message type", "type", msg.Type)
 		}
 	}
+}
+
+// reportUndecodableCommand fails the command on the server so the deployment
+// records why, instead of the server waiting for a result that never comes.
+// Without a readable ID there is nothing to report against.
+func reportUndecodableCommand(ctx context.Context, conn AgentConnection, data json.RawMessage, decodeErr error) error {
+	var ref struct {
+		ID           uuid.UUID `json:"id"`
+		DeploymentID uuid.UUID `json:"deployment_id"`
+	}
+	if err := json.Unmarshal(data, &ref); err != nil || ref.ID == uuid.Nil {
+		return nil
+	}
+	if err := conn.SendResult(ctx, &wire.ResultPayload{
+		CommandID:    ref.ID,
+		DeploymentID: ref.DeploymentID,
+		Success:      false,
+		Error:        fmt.Sprintf("agent could not decode the command (%v); the agent and server versions may differ", decodeErr),
+	}); err != nil {
+		return fmt.Errorf("send result: %w", err)
+	}
+	return nil
 }

@@ -24,7 +24,7 @@ func (s *ServiceStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Servi
 		"SELECT id, project_id, name, created_at FROM services WHERE id = $1", id,
 	).Scan(&svc.ID, &svc.ProjectID, &svc.Name, &svc.CreatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("service %s: %w", id, api.ErrNotFound)
+		return nil, api.NotFound("service %s not found", id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get service: %w", err)
@@ -39,7 +39,7 @@ func (s *ServiceStore) GetByName(ctx context.Context, projectID uuid.UUID, name 
 		projectID, name,
 	).Scan(&svc.ID, &svc.ProjectID, &svc.Name, &svc.CreatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("service %q: %w", name, api.ErrNotFound)
+		return nil, api.NotFound("service %q not found in project %s", name, projectID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get service: %w", err)
@@ -72,6 +72,9 @@ func (s *ServiceStore) Create(ctx context.Context, svc *domain.Service) error {
 		"INSERT INTO services (id, project_id, name, created_at) VALUES ($1, $2, $3, $4)",
 		svc.ID, svc.ProjectID, svc.Name, svc.CreatedAt,
 	)
+	if pgCode(err) == pgUniqueViolation {
+		return api.AlreadyExists("service %q already exists in project %s", svc.Name, svc.ProjectID)
+	}
 	if err != nil {
 		return fmt.Errorf("create service: %w", err)
 	}

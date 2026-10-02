@@ -25,7 +25,7 @@ func (s *EnvironmentStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.E
 		"SELECT id, project_id, parent_environment_id, name, namespace, default_ingress_base_host, cluster_id, created_at FROM environments WHERE id = $1", id,
 	).Scan(&env.ID, &env.ProjectID, &parentID, &env.Name, &env.Namespace, &env.DefaultIngressBaseHost, &env.ClusterID, &env.CreatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("environment %s: %w", id, api.ErrNotFound)
+		return nil, api.NotFound("environment %s not found", id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get environment: %w", err)
@@ -45,7 +45,7 @@ func (s *EnvironmentStore) GetByName(ctx context.Context, projectID uuid.UUID, n
 		projectID, name,
 	).Scan(&env.ID, &env.ProjectID, &parentID, &env.Name, &env.Namespace, &env.DefaultIngressBaseHost, &env.ClusterID, &env.CreatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("environment %q: %w", name, api.ErrNotFound)
+		return nil, api.NotFound("environment %q not found in project %s", name, projectID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get environment: %w", err)
@@ -87,6 +87,9 @@ func (s *EnvironmentStore) Create(ctx context.Context, env *domain.Environment) 
 		"INSERT INTO environments (id, project_id, parent_environment_id, name, namespace, default_ingress_base_host, cluster_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
 		env.ID, env.ProjectID, env.ParentEnvironmentID, env.Name, env.Namespace, env.DefaultIngressBaseHost, env.ClusterID, env.CreatedAt,
 	)
+	if pgCode(err) == pgUniqueViolation {
+		return api.AlreadyExists("environment %q already exists in project %s", env.Name, env.ProjectID)
+	}
 	if err != nil {
 		return fmt.Errorf("create environment: %w", err)
 	}
@@ -98,6 +101,9 @@ func (s *EnvironmentStore) Update(ctx context.Context, env *domain.Environment) 
 		"UPDATE environments SET parent_environment_id = $1, namespace = $2, default_ingress_base_host = $3, cluster_id = $4 WHERE id = $5",
 		env.ParentEnvironmentID, env.Namespace, env.DefaultIngressBaseHost, env.ClusterID, env.ID,
 	)
+	if pgCode(err) == pgForeignKeyViolation {
+		return api.InvalidInput("environment %s references a parent environment or cluster that does not exist", env.ID)
+	}
 	if err != nil {
 		return fmt.Errorf("update environment: %w", err)
 	}

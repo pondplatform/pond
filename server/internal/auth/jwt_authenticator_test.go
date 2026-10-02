@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,8 +35,21 @@ func TestJWTAuthenticator_NoToken(t *testing.T) {
 	a := NewJWTAuthenticator([]byte(testSecret))
 	r, _ := http.NewRequest("GET", "/", nil)
 	_, err := a.Authenticate(context.Background(), r)
-	if err != api.ErrUnauthorized {
+	if !errors.Is(err, api.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized, got %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "missing API token") {
+		t.Errorf("expected the error to say the token is missing, got %v", err)
+	}
+}
+
+func TestJWTAuthenticator_MalformedHeader(t *testing.T) {
+	a := NewJWTAuthenticator([]byte(testSecret))
+	r, _ := http.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Token abc")
+	_, err := a.Authenticate(context.Background(), r)
+	if !errors.Is(err, api.ErrUnauthorized) || !strings.Contains(err.Error(), `expected "Bearer <token>"`) {
+		t.Errorf("expected a malformed-header error, got %v", err)
 	}
 }
 
@@ -42,7 +57,7 @@ func TestJWTAuthenticator_InvalidToken(t *testing.T) {
 	a := NewJWTAuthenticator([]byte(testSecret))
 	r := requestWithBearer("not.a.jwt")
 	_, err := a.Authenticate(context.Background(), r)
-	if err != api.ErrUnauthorized {
+	if !errors.Is(err, api.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized for malformed JWT, got %v", err)
 	}
 }
@@ -51,7 +66,7 @@ func TestJWTAuthenticator_WrongSecret(t *testing.T) {
 	raw := makeJWT(t, "other-secret", jwt.MapClaims{"role": "member"})
 	a := NewJWTAuthenticator([]byte(testSecret))
 	_, err := a.Authenticate(context.Background(), requestWithBearer(raw))
-	if err != api.ErrUnauthorized {
+	if !errors.Is(err, api.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized for wrong secret, got %v", err)
 	}
 }
@@ -120,8 +135,11 @@ func TestJWTAuthenticator_UnknownRoleRejected(t *testing.T) {
 	raw := makeJWT(t, testSecret, jwt.MapClaims{"role": "superuser"})
 	a := NewJWTAuthenticator([]byte(testSecret))
 	_, err := a.Authenticate(context.Background(), requestWithBearer(raw))
-	if err != api.ErrUnauthorized {
+	if !errors.Is(err, api.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized for unknown role, got %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), `got "superuser"`) {
+		t.Errorf("expected the error to name the bad role, got %v", err)
 	}
 }
 
@@ -129,7 +147,7 @@ func TestJWTAuthenticator_MissingRoleClaimRejected(t *testing.T) {
 	raw := makeJWT(t, testSecret, jwt.MapClaims{"description": "no role"})
 	a := NewJWTAuthenticator([]byte(testSecret))
 	_, err := a.Authenticate(context.Background(), requestWithBearer(raw))
-	if err != api.ErrUnauthorized {
+	if !errors.Is(err, api.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized when role claim absent, got %v", err)
 	}
 }

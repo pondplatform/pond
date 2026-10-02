@@ -87,6 +87,8 @@ type SubmitRequest struct {
 	ImageTag          string                          `json:"imageTag"`
 	TriggeredBy       string                          `json:"triggeredBy"`
 	CreateIfNotExists bool                            `json:"createIfNotExists"`
+	// Nil means no input was supplied; non-nil must cover every declared dependency.
+	Dependencies map[string]DependencyInput `json:"dependencies"`
 }
 
 type DependencyInput struct {

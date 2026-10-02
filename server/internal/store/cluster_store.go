@@ -26,7 +26,7 @@ func (s *ClusterStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Clust
 		"SELECT id, name, agent_token_hash, last_seen_at, created_at FROM clusters WHERE id = $1", id,
 	).Scan(&c.ID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("cluster %s: %w", id, api.ErrNotFound)
+		return nil, api.NotFound("cluster %s not found", id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get cluster: %w", err)
@@ -45,7 +45,7 @@ func (s *ClusterStore) GetByName(ctx context.Context, name string) (*domain.Clus
 		name,
 	).Scan(&c.ID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("cluster %q: %w", name, api.ErrNotFound)
+		return nil, api.NotFound("cluster %q not found", name)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get cluster: %w", err)
@@ -85,6 +85,9 @@ func (s *ClusterStore) Create(ctx context.Context, cluster *domain.Cluster) erro
 		"INSERT INTO clusters (id, name, agent_token_hash, last_seen_at, created_at) VALUES ($1, $2, $3, $4, $5)",
 		cluster.ID, cluster.Name, cluster.AgentTokenHash, cluster.LastSeenAt, cluster.CreatedAt,
 	)
+	if pgCode(err) == pgUniqueViolation {
+		return api.AlreadyExists("cluster %q already exists", cluster.Name)
+	}
 	if err != nil {
 		return fmt.Errorf("create cluster: %w", err)
 	}
@@ -118,7 +121,7 @@ func (s *ClusterStore) GetByTokenHash(ctx context.Context, tokenHash string) (*d
 		"SELECT id, name, agent_token_hash, last_seen_at, created_at FROM clusters WHERE agent_token_hash = $1", tokenHash,
 	).Scan(&c.ID, &c.Name, &c.AgentTokenHash, &lastSeen, &c.CreatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("cluster with token: %w", api.ErrNotFound)
+		return nil, api.NotFound("no cluster uses this agent token")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get cluster by token: %w", err)

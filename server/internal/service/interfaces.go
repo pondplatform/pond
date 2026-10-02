@@ -62,8 +62,9 @@ type Transactor interface {
 
 // DependencyService handles dependency command scheduling and context resolution.
 type DependencyService interface {
-	// CreateDependencyDeployments Creates the dependency deployments
-	CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment) (domain.DependencyDeploymentStatus, error)
+	// CreateDependencyDeployments Creates the dependency deployments. A dependency
+	// with an entry in inputs is created already configured (pending).
+	CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment, inputs map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error)
 
 	// DependencyDeploymentStatus Get overall status of dependencies
 	DependencyDeploymentStatus(ctx context.Context, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error)

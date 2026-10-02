@@ -16,9 +16,10 @@ import (
 
 func NewDeployCmd() *cobra.Command {
 	var (
-		filePath string
-		tag      string
-		wait     bool
+		filePath  string
+		tag       string
+		inputPath string
+		wait      bool
 	)
 
 	cmd := &cobra.Command{
@@ -58,6 +59,14 @@ func NewDeployCmd() *cobra.Command {
 				CreateIfNotExists: true,
 			}
 
+			if inputPath != "" {
+				deps, err := readDependencyInput(inputPath)
+				if err != nil {
+					return err
+				}
+				req.Dependencies = deps
+			}
+
 			d, err := sc.SubmitDeployment(cmd.Context(), req)
 			if err != nil {
 				return fmt.Errorf("submit deployment: %w", err)
@@ -74,6 +83,7 @@ func NewDeployCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&filePath, "pond-file", "f", "./pond.yml", "Path to pond.yml")
 	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Image tag to deploy")
+	cmd.Flags().StringVarP(&inputPath, "input", "i", "", "Path to JSON file with input for every dependency (same format as 'deployment configure')")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for completion")
 	cmd.MarkFlagRequired("tag")
 

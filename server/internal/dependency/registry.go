@@ -1,7 +1,9 @@
 package dependency
 
 import (
-	"fmt"
+	"maps"
+	"slices"
+	"strings"
 
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/shared/server/api"
@@ -21,7 +23,7 @@ func NewSpecRegistry() SpecRegistry {
 func (r *specRegistry) Get(depType string) (domain.DependencySpec, error) {
 	spec, ok := r.specs[depType]
 	if !ok {
-		return domain.DependencySpec{}, fmt.Errorf("dependency type %q: %w", depType, api.ErrNotFound)
+		return domain.DependencySpec{}, api.NotFound("unknown dependency type %q (supported: %s)", depType, strings.Join(slices.Sorted(maps.Keys(r.specs)), ", "))
 	}
 	return spec, nil
 }

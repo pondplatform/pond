@@ -40,8 +40,7 @@ func clusterToResponse(c *domain.Cluster, token string) api.Cluster {
 
 func (h *ClusterHandler) Create(c *gin.Context) {
 	var req api.CreateClusterRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &req) {
 		return
 	}
 	cluster, token, err := h.create(c.Request.Context(), req)
@@ -72,7 +71,7 @@ func (h *ClusterHandler) create(ctx context.Context, req api.CreateClusterReques
 
 	existing, err := h.clusters.GetByName(ctx, req.Name)
 	if err == nil && existing != nil {
-		return nil, "", api.ErrAlreadyExists
+		return nil, "", api.AlreadyExists("cluster %q already exists", req.Name)
 	}
 	if err != nil && !errors.Is(err, api.ErrNotFound) {
 		return nil, "", err
@@ -85,9 +84,8 @@ func (h *ClusterHandler) create(ctx context.Context, req api.CreateClusterReques
 }
 
 func (h *ClusterHandler) Get(c *gin.Context) {
-	clusterID, err := uuid.Parse(c.Param("clusterId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid cluster id")
+	clusterID, ok := parseUUIDParam(c, "clusterId", "cluster id")
+	if !ok {
 		return
 	}
 	cluster, err := h.clusters.GetByID(c.Request.Context(), clusterID)
@@ -112,9 +110,8 @@ func (h *ClusterHandler) List(c *gin.Context) {
 }
 
 func (h *ClusterHandler) RotateToken(c *gin.Context) {
-	clusterID, err := uuid.Parse(c.Param("clusterId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid cluster id")
+	clusterID, ok := parseUUIDParam(c, "clusterId", "cluster id")
+	if !ok {
 		return
 	}
 	token, err := h.rotateToken(c.Request.Context(), clusterID)

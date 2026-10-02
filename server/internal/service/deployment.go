@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +16,7 @@ import (
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
 	"github.com/pondplatform/pond/shared/server/api"
+	"github.com/pondplatform/pond/shared/serviceconfig"
 	"github.com/pondplatform/pond/shared/serviceconfig/config"
 )
 
@@ -69,6 +73,9 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 	// data may have changed between the two calls.
 
 	env, err := s.envs.GetByName(ctx, req.ProjectID, req.EnvironmentName)
+	if errors.Is(err, api.ErrNotFound) {
+		return nil, s.environmentNotFound(ctx, req.ProjectID, req.EnvironmentName)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("lookup environment %q: %w", req.EnvironmentName, err)
 	}
@@ -83,6 +90,12 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 	// a failed rollout the user has to read helm output to understand.
 	if err := config.Validate(svcConfig); err != nil {
 		return nil, err
+	}
+
+	if req.Dependencies != nil {
+		if err := validateDependencyInputs(svcConfig.Dependencies, req.Dependencies); err != nil {
+			return nil, err
+		}
 	}
 
 	svc, err := s.services.GetByName(ctx, req.ProjectID, svcConfig.Name)
@@ -123,7 +136,7 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		}
 
 		var err error
-		status, err = s.depSvc.CreateDependencyDeployments(ctx, tx, svc, d)
+		status, err = s.depSvc.CreateDependencyDeployments(ctx, tx, svc, d, req.Dependencies)
 		return err
 	})
 	if err != nil {
@@ -135,6 +148,26 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 	}
 
 	return d, nil
+}
+
+// validateDependencyInputs requires inputs to cover exactly the declared
+// dependencies, so a submit with inputs never lands in awaiting_input.
+func validateDependencyInputs(declared map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) error {
+	var errs api.ValidationErrors
+	for _, name := range slices.Sorted(maps.Keys(declared)) {
+		if _, ok := inputs[name]; !ok {
+			errs.Add("dependency", name, "missing input")
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(inputs)) {
+		if _, ok := declared[name]; !ok {
+			errs.Add("dependency", name, "not declared in service config")
+		}
+	}
+	if errs.HasErrors() {
+		return &errs
+	}
+	return nil
 }
 
 func (s *deploymentService) launchCommand(ctx context.Context, command *domain.Command, deploymentId uuid.UUID) error {
@@ -297,7 +330,7 @@ func (s *deploymentService) Cancel(ctx context.Context, deploymentID uuid.UUID) 
 
 	// Check if deployment is already in a terminal state
 	if d.Status == api.DeploymentStatusSucceeded || d.Status == api.DeploymentStatusFailed {
-		return fmt.Errorf("deployment is already in terminal state: %s: %w", d.Status, api.ErrInvalidInput)
+		return api.Conflict("deployment %s has already %s and can no longer be cancelled", deploymentID, d.Status)
 	}
 
 	// Update status to failed
@@ -359,4 +392,20 @@ func (s *deploymentService) Start(ctx context.Context) error {
 func (s *deploymentService) storeDeploymentError(ctx context.Context, deploymentId uuid.UUID, err error) error {
 	now := time.Now()
 	return s.deploymentInfo.SetFailed(ctx, deploymentId, err.Error(), &now)
+}
+
+// environmentNotFound lists the project's environments, since a typo in the
+// environment name is the usual cause. Listing is best effort: the not-found
+// error stands on its own.
+func (s *deploymentService) environmentNotFound(ctx context.Context, projectID uuid.UUID, name string) error {
+	envs, err := s.envs.ListByProject(ctx, projectID)
+	if err != nil || len(envs) == 0 {
+		return api.NotFound("environment %q not found in project %s", name, projectID)
+	}
+	names := make([]string, len(envs))
+	for i, e := range envs {
+		names[i] = e.Name
+	}
+	slices.Sort(names)
+	return api.NotFound("environment %q not found in project %s (available: %s)", name, projectID, strings.Join(names, ", "))
 }

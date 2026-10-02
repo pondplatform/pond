@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -40,14 +41,12 @@ func toEnvironmentResponse(e *domain.Environment) api.Environment {
 }
 
 func (h *EnvironmentHandler) Create(c *gin.Context) {
-	projectID, err := uuid.Parse(c.Param("projectId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid project id")
+	projectID, ok := parseUUIDParam(c, "projectId", "project id")
+	if !ok {
 		return
 	}
 	var req api.CreateEnvironmentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &req) {
 		return
 	}
 	env, err := h.create(c.Request.Context(), projectID, req)
@@ -86,7 +85,7 @@ func (h *EnvironmentHandler) create(ctx context.Context, projectID uuid.UUID, re
 
 	existing, err := h.envs.GetByName(ctx, projectID, req.Name)
 	if err == nil && existing != nil {
-		return nil, api.ErrAlreadyExists
+		return nil, api.AlreadyExists("environment %q already exists in project %s", req.Name, projectID)
 	}
 	if err != nil && !errors.Is(err, api.ErrNotFound) {
 		return nil, err
@@ -98,7 +97,7 @@ func (h *EnvironmentHandler) create(ctx context.Context, projectID uuid.UUID, re
 			return nil, err
 		}
 		if parent.ProjectID != projectID {
-			return nil, api.ErrInvalidInput
+			return nil, api.InvalidInput("parent environment %s belongs to a different project", parent.ID)
 		}
 	}
 
@@ -109,9 +108,8 @@ func (h *EnvironmentHandler) create(ctx context.Context, projectID uuid.UUID, re
 }
 
 func (h *EnvironmentHandler) Get(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("envId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid environment id")
+	id, ok := parseUUIDParam(c, "envId", "environment id")
+	if !ok {
 		return
 	}
 	env, err := h.get(c.Request.Context(), id)
@@ -127,9 +125,8 @@ func (h *EnvironmentHandler) get(ctx context.Context, id uuid.UUID) (*domain.Env
 }
 
 func (h *EnvironmentHandler) List(c *gin.Context) {
-	projectID, err := uuid.Parse(c.Param("projectId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid project id")
+	projectID, ok := parseUUIDParam(c, "projectId", "project id")
+	if !ok {
 		return
 	}
 	items, err := h.list(c.Request.Context(), projectID)
@@ -158,14 +155,12 @@ func (h *EnvironmentHandler) list(ctx context.Context, projectID uuid.UUID) ([]a
 }
 
 func (h *EnvironmentHandler) Update(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("envId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid environment id")
+	id, ok := parseUUIDParam(c, "envId", "environment id")
+	if !ok {
 		return
 	}
 	var req api.UpdateEnvironmentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &req) {
 		return
 	}
 	env, err := h.update(c.Request.Context(), id, req)
@@ -208,10 +203,14 @@ func (h *EnvironmentHandler) update(ctx context.Context, id uuid.UUID, req api.U
 				return nil, err
 			}
 			if parent.ProjectID != env.ProjectID {
-				return nil, api.ErrInvalidInput
+				return nil, api.InvalidInput("parent environment %s belongs to a different project", parent.ID)
 			}
-			if wouldCreateCycle(ctx, h.envs, env.ID, *req.ParentEnvironmentID) {
-				return nil, api.ErrConflict
+			cycle, err := wouldCreateCycle(ctx, h.envs, env.ID, *req.ParentEnvironmentID)
+			if err != nil {
+				return nil, err
+			}
+			if cycle {
+				return nil, api.Conflict("making %q (%s) the parent of %q would create a cycle of parent environments", parent.Name, parent.ID, env.Name)
 			}
 		}
 		env.ParentEnvironmentID = req.ParentEnvironmentID
@@ -224,20 +223,26 @@ func (h *EnvironmentHandler) update(ctx context.Context, id uuid.UUID, req api.U
 }
 
 // wouldCreateCycle checks if setting parentID as the parent of envID would create a cycle.
-func wouldCreateCycle(ctx context.Context, envs store.EnvironmentRepository, envID, parentID uuid.UUID) bool {
+func wouldCreateCycle(ctx context.Context, envs store.EnvironmentRepository, envID, parentID uuid.UUID) (bool, error) {
 	visited := make(map[uuid.UUID]bool)
 	visited[envID] = true
 
 	current := parentID
 	for {
 		if visited[current] {
-			return true
+			return true, nil
 		}
 		visited[current] = true
 
 		env, err := envs.GetByID(ctx, current)
-		if err != nil || env.ParentEnvironmentID == nil {
-			return false
+		if errors.Is(err, api.ErrNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("check parent environment cycle: %w", err)
+		}
+		if env.ParentEnvironmentID == nil {
+			return false, nil
 		}
 		current = *env.ParentEnvironmentID
 	}

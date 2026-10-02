@@ -29,11 +29,11 @@ func (a *RoleAuthorizer) Authorize(_ context.Context, identity *domain.Identity,
 	}
 
 	if action.Resource == ResourceToken {
-		return api.ErrForbidden
+		return api.Forbidden("role %q cannot manage API tokens; only admins can", identity.Role)
 	}
 
 	if action.Verb == VerbManage {
-		return api.ErrForbidden
+		return api.Forbidden("role %q cannot manage %s resources; only admins can", identity.Role, action.Resource)
 	}
 
 	if identity.Role == domain.RoleMember {
@@ -44,8 +44,8 @@ func (a *RoleAuthorizer) Authorize(_ context.Context, identity *domain.Identity,
 		if action.Verb == VerbRead {
 			return nil
 		}
-		return api.ErrForbidden
+		return api.Forbidden("role %q is read-only and cannot %s %s resources", identity.Role, action.Verb, action.Resource)
 	}
 
-	return api.ErrForbidden
+	return api.Forbidden("unknown role %q", identity.Role)
 }

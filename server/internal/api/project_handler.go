@@ -36,8 +36,7 @@ func toProjectResponse(p *domain.Project) api.Project {
 
 func (h *ProjectHandler) Create(c *gin.Context) {
 	var req api.CreateProjectRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &req) {
 		return
 	}
 	project, err := h.create(c.Request.Context(), req)
@@ -62,7 +61,7 @@ func (h *ProjectHandler) create(ctx context.Context, req api.CreateProjectReques
 
 	existing, err := h.projects.GetByName(ctx, req.Name)
 	if err == nil && existing != nil {
-		return nil, api.ErrAlreadyExists
+		return nil, api.AlreadyExists("project %q already exists", req.Name)
 	}
 	if err != nil && !errors.Is(err, api.ErrNotFound) {
 		return nil, err
@@ -75,9 +74,8 @@ func (h *ProjectHandler) create(ctx context.Context, req api.CreateProjectReques
 }
 
 func (h *ProjectHandler) Get(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("projectId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid project id")
+	id, ok := parseUUIDParam(c, "projectId", "project id")
+	if !ok {
 		return
 	}
 	project, err := h.projects.GetByID(c.Request.Context(), id)
@@ -102,14 +100,12 @@ func (h *ProjectHandler) List(c *gin.Context) {
 }
 
 func (h *ProjectHandler) Update(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("projectId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid project id")
+	id, ok := parseUUIDParam(c, "projectId", "project id")
+	if !ok {
 		return
 	}
 	var req api.UpdateProjectRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &req) {
 		return
 	}
 	project, err := h.update(c.Request.Context(), id, req)
@@ -132,7 +128,7 @@ func (h *ProjectHandler) update(ctx context.Context, id uuid.UUID, req api.Updat
 			return nil, err
 		}
 		if env.ProjectID != id {
-			return nil, api.ErrInvalidInput
+			return nil, api.InvalidInput("environment %s belongs to a different project and cannot be the root environment of project %s", env.ID, id)
 		}
 
 		if err := h.projects.SetRootEnvironment(ctx, id, *req.RootEnvironmentID); err != nil {

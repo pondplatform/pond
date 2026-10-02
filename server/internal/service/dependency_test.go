@@ -9,6 +9,7 @@ import (
 	"github.com/pondplatform/pond/server/internal/dependency"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/testutil"
+	"github.com/pondplatform/pond/shared/server/api"
 	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
@@ -113,7 +114,7 @@ func TestCreateDependencyDeployments_FirstTimeReturnsAwaitingInput(t *testing.T)
 	}
 
 	svc := makeDependencyService(nil, nil, nil)
-	status, err := svc.CreateDependencyDeployments(ctx, TxRepos{DeploymentInfo: txStore}, service, deployment)
+	status, err := svc.CreateDependencyDeployments(ctx, TxRepos{DeploymentInfo: txStore}, service, deployment, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -172,7 +173,7 @@ func TestCreateDependencyDeployments_RedeployCarriesOverPriorConfig(t *testing.T
 	}
 
 	svc := makeDependencyService(nil, nil, nil)
-	status, err := svc.CreateDependencyDeployments(ctx, TxRepos{DeploymentInfo: txStore}, service, deployment)
+	status, err := svc.CreateDependencyDeployments(ctx, TxRepos{DeploymentInfo: txStore}, service, deployment, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -202,12 +203,103 @@ func TestCreateDependencyDeployments_NoDepsReturnsSucceeded(t *testing.T) {
 	}
 
 	svc := makeDependencyService(nil, nil, nil)
-	status, err := svc.CreateDependencyDeployments(ctx, TxRepos{DeploymentInfo: &testutil.MockDeploymentInfoStore{}}, service, deployment)
+	status, err := svc.CreateDependencyDeployments(ctx, TxRepos{DeploymentInfo: &testutil.MockDeploymentInfoStore{}}, service, deployment, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if status != domain.DependencyDeploymentStatusSucceeded {
 		t.Errorf("expected succeeded for no-deps service, got %s", status)
+	}
+}
+
+func TestCreateDependencyDeployments_WithInputReturnsPending(t *testing.T) {
+	ctx := context.Background()
+	service := &domain.Service{ID: uuid.New()}
+	deployment := &domain.Deployment{
+		ID: uuid.New(),
+		ServiceConfigSnapshot: serviceconfig.ServiceConfig{
+			Name: "my-svc",
+			Dependencies: map[string]serviceconfig.DependencyDeclaration{
+				"db":  {Type: "postgres"},
+				"api": {Type: "http-service"},
+			},
+		},
+	}
+	inputs := map[string]api.DependencyInput{
+		"db":  {Managed: true, Values: map[string]any{"instances": 1}},
+		"api": {Managed: false, Values: map[string]any{"url": "https://api.example.com"}},
+	}
+
+	created := map[string]*domain.DependencyDeployment{}
+	txStore := &testutil.MockDeploymentInfoStore{
+		CreateDepConfigFn: func(_ context.Context, cfg *domain.DependencyDeployment) error {
+			created[cfg.DependencyName] = cfg
+			return nil
+		},
+	}
+
+	svc := makeDependencyService(nil, nil, nil)
+	status, err := svc.CreateDependencyDeployments(ctx, TxRepos{DeploymentInfo: txStore}, service, deployment, inputs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != domain.DependencyDeploymentStatusPending {
+		t.Errorf("expected pending when every dep has input, got %s", status)
+	}
+
+	db := created["db"]
+	if db == nil || db.Managed == nil || !*db.Managed || db.Status != domain.DependencyDeploymentStatusPending {
+		t.Fatalf("expected managed pending db config, got %+v", db)
+	}
+	if db.ProviderInputs["instances"] != 1 || len(db.UserConfig) != 0 {
+		t.Errorf("expected managed values in ProviderInputs only, got provider=%v user=%v", db.ProviderInputs, db.UserConfig)
+	}
+
+	apiDep := created["api"]
+	if apiDep == nil || apiDep.Managed == nil || *apiDep.Managed || apiDep.Status != domain.DependencyDeploymentStatusPending {
+		t.Fatalf("expected unmanaged pending api config, got %+v", apiDep)
+	}
+	if apiDep.UserConfig["url"] != "https://api.example.com" || len(apiDep.ProviderInputs) != 0 {
+		t.Errorf("expected unmanaged values in UserConfig only, got provider=%v user=%v", apiDep.ProviderInputs, apiDep.UserConfig)
+	}
+}
+
+func TestCreateDependencyDeployments_InputOverridesPriorConfig(t *testing.T) {
+	ctx := context.Background()
+	prevDepID := uuid.New()
+	service := &domain.Service{ID: uuid.New(), CurrentDeploymentID: &prevDepID}
+	deployment := &domain.Deployment{
+		ID: uuid.New(),
+		ServiceConfigSnapshot: serviceconfig.ServiceConfig{
+			Name: "my-svc",
+			Dependencies: map[string]serviceconfig.DependencyDeclaration{
+				"db": {Type: "postgres"},
+			},
+		},
+	}
+
+	var createdCfg *domain.DependencyDeployment
+	txStore := &testutil.MockDeploymentInfoStore{
+		GetDepConfigFn: func(_ context.Context, _ uuid.UUID, _ string) (*domain.DependencyDeployment, error) {
+			t.Error("prior config must not be looked up when input is supplied")
+			return nil, api.ErrNotFound
+		},
+		CreateDepConfigFn: func(_ context.Context, cfg *domain.DependencyDeployment) error {
+			createdCfg = cfg
+			return nil
+		},
+	}
+
+	svc := makeDependencyService(nil, nil, nil)
+	inputs := map[string]api.DependencyInput{"db": {Managed: false, Values: map[string]any{"host": "db.internal"}}}
+	if _, err := svc.CreateDependencyDeployments(ctx, TxRepos{DeploymentInfo: txStore}, service, deployment, inputs); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if createdCfg == nil || createdCfg.Managed == nil || *createdCfg.Managed {
+		t.Fatalf("expected unmanaged config from input, got %+v", createdCfg)
+	}
+	if createdCfg.UserConfig["host"] != "db.internal" || createdCfg.Output != nil {
+		t.Errorf("expected input values and no carried-over output, got user=%v output=%s", createdCfg.UserConfig, createdCfg.Output)
 	}
 }
 

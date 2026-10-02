@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -35,8 +36,34 @@ func TestExecute_HelmUpgrade_RunnerErrorReturnsFailure(t *testing.T) {
 	if result.Success {
 		t.Fatal("expected failure when helm runner errors")
 	}
-	if result.Error == "" {
-		t.Error("expected non-empty error message in result")
+	if result.Error != "tiller unavailable" {
+		t.Errorf("expected runner error passed through unprefixed, got %q", result.Error)
+	}
+}
+
+func TestExecute_UnknownCommandTypeExplainsVersionSkew(t *testing.T) {
+	exec := agent.NewExecutor(&mockHelmRunner{}, &mockTofuRunner{})
+	cmd := &wire.CommandPayload{ID: uuid.New(), Type: "kustomize.apply"}
+
+	result, err := exec.Execute(context.Background(), cmd, func(wire.LogPayload) {})
+	if err != nil {
+		t.Fatalf("unexpected hard error: %v", err)
+	}
+	if result.Success || result.Error != `this agent does not support command type "kustomize.apply"; the agent may be older than the server` {
+		t.Errorf("unexpected result: %+v", result)
+	}
+}
+
+func TestExecute_BadPayloadNamesCommandType(t *testing.T) {
+	exec := agent.NewExecutor(&mockHelmRunner{}, &mockTofuRunner{})
+	cmd := &wire.CommandPayload{ID: uuid.New(), Type: wire.CommandTofuApply, Payload: json.RawMessage(`"oops"`)}
+
+	result, err := exec.Execute(context.Background(), cmd, func(wire.LogPayload) {})
+	if err != nil {
+		t.Fatalf("unexpected hard error: %v", err)
+	}
+	if result.Success || !strings.HasPrefix(result.Error, "agent could not decode the tofu.apply payload (") {
+		t.Errorf("unexpected result: %+v", result)
 	}
 }
 

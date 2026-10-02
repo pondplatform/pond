@@ -34,9 +34,8 @@ func toServiceResponse(s *domain.Service) api.Service {
 }
 
 func (h *ServiceHandler) Get(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("serviceId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid service id")
+	id, ok := parseUUIDParam(c, "serviceId", "service id")
+	if !ok {
 		return
 	}
 	svc, err := h.get(c.Request.Context(), id)
@@ -52,9 +51,8 @@ func (h *ServiceHandler) get(ctx context.Context, id uuid.UUID) (*domain.Service
 }
 
 func (h *ServiceHandler) List(c *gin.Context) {
-	projectID, err := uuid.Parse(c.Param("projectId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid project id")
+	projectID, ok := parseUUIDParam(c, "projectId", "project id")
+	if !ok {
 		return
 	}
 	items, err := h.list(c.Request.Context(), projectID)

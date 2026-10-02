@@ -27,7 +27,7 @@ func (s *deploymentInfoStore) GetByID(ctx context.Context, id uuid.UUID) (*domai
 		`SELECT id, service_id, environment_id, image_tag, service_config_snapshot,
 		        status, triggered_by, helm_command_id, created_at, completed_at, error
 		   FROM deployments WHERE id = $1`,
-		id,
+		id, fmt.Sprintf("deployment %s", id),
 	)
 }
 
@@ -36,11 +36,11 @@ func (s *deploymentInfoStore) GetByHelmCommandID(ctx context.Context, cmdID uuid
 		`SELECT id, service_id, environment_id, image_tag, service_config_snapshot,
 		        status, triggered_by, helm_command_id, created_at, completed_at, error
 		   FROM deployments WHERE helm_command_id = $1`,
-		cmdID,
+		cmdID, fmt.Sprintf("deployment for helm command %s", cmdID),
 	)
 }
 
-func (s *deploymentInfoStore) scanOneDeployment(ctx context.Context, query string, arg uuid.UUID) (*domain.Deployment, error) {
+func (s *deploymentInfoStore) scanOneDeployment(ctx context.Context, query string, arg uuid.UUID, what string) (*domain.Deployment, error) {
 	var d domain.Deployment
 	var configJSON []byte
 	var helmCmdID sql.NullString
@@ -52,7 +52,7 @@ func (s *deploymentInfoStore) scanOneDeployment(ctx context.Context, query strin
 		&d.Status, &triggeredBy, &helmCmdID, &d.CreatedAt, &completedAt, &errStr,
 	)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("deployment: %w", api.ErrNotFound)
+		return nil, api.NotFound("%s not found", what)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get deployment: %w", err)
@@ -229,7 +229,7 @@ func (s *deploymentInfoStore) GetCommand(ctx context.Context, id uuid.UUID) (*do
 	).Scan(&cmd.ID, &cmd.ClusterID, &cmd.DeploymentID, &cmd.Type, &payload, &cmd.Status,
 		&output, &errStr, &cmd.CreatedAt, &cmd.UpdatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("command: %w", api.ErrNotFound)
+		return nil, api.NotFound("command %s not found", id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get command: %w", err)
@@ -412,7 +412,7 @@ func (s *deploymentInfoStore) GetDepConfig(ctx context.Context, deploymentID uui
 	).Scan(&cfg.ID, &cfg.DeploymentId, &cfg.DependencyName, &cfg.DependencyType, &cfg.Managed,
 		&providerInputs, &userConfig, &cfg.Status, &cfg.CommandID, &output, &completedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("dep config: %w", api.ErrNotFound)
+		return nil, api.NotFound("deployment %s has no dependency named %q", deploymentID, depName)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get dep config: %w", err)

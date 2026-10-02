@@ -3,8 +3,10 @@ package tofu
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,50 +20,48 @@ func NewRunner() agent.TofuRunner {
 	return &runner{}
 }
 
-func (r *runner) Init(ctx context.Context, workDir string, logW io.Writer) error {
-	cmd := exec.CommandContext(ctx, "tofu", "init")
-	cmd.Dir = workDir
-	cmd.Stdout = logW
-	cmd.Stderr = logW
+// describe names the step by its provider module (the dependency type), which
+// is what the user declared in pond.yml.
+func describe(step, workDir string) string {
+	return fmt.Sprintf("tofu %s for provider module %q", step, filepath.Base(workDir))
+}
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tofu init: %w", err)
+func (r *runner) Init(ctx context.Context, workDir string, logW io.Writer) error {
+	if _, err := os.Stat(workDir); errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("this agent has no provider module %q (expected at %s); the dependency type is not supported by this agent version", filepath.Base(workDir), workDir)
 	}
-	return nil
+
+	cmd := exec.CommandContext(ctx, "tofu", "init", "-no-color")
+	cmd.Dir = workDir
+	return agent.RunLogged(ctx, cmd, logW, describe("init", workDir))
 }
 
 func (r *runner) Apply(ctx context.Context, workDir string, statePath string, vars map[string]any, logW io.Writer) error {
 	if err := os.MkdirAll(filepath.Dir(statePath), 0755); err != nil {
-		return fmt.Errorf("create state directory: %w", err)
+		return fmt.Errorf("create tofu state directory: %w", err)
 	}
 
 	varFile, err := os.CreateTemp("", "pond-tofu-vars-*.tfvars.json")
 	if err != nil {
-		return fmt.Errorf("create temp var file: %w", err)
+		return fmt.Errorf("create tofu var file: %w", err)
 	}
 	defer os.Remove(varFile.Name())
 
 	if err := json.NewEncoder(varFile).Encode(vars); err != nil {
 		varFile.Close()
-		return fmt.Errorf("write vars to temp file: %w", err)
+		return fmt.Errorf("write tofu var file: %w", err)
 	}
 	varFile.Close()
 
-	args := []string{"apply", "-auto-approve", "-input=false", "-state=" + statePath, "-var-file=" + varFile.Name()}
+	args := []string{"apply", "-auto-approve", "-input=false", "-no-color", "-state=" + statePath, "-var-file=" + varFile.Name()}
 
 	cmd := exec.CommandContext(ctx, "tofu", args...)
 	cmd.Dir = workDir
-	cmd.Stdout = logW
-	cmd.Stderr = logW
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tofu apply: %w", err)
-	}
-	return nil
+	return agent.RunLogged(ctx, cmd, logW, describe("apply", workDir))
 }
 
 func (r *runner) Output(ctx context.Context, workDir string, statePath string) (map[string]any, error) {
-	args := []string{"output", "-json"}
+	args := []string{"output", "-json", "-no-color"}
 	if statePath != "" {
 		args = append(args, "-state="+statePath)
 	}
@@ -71,14 +71,19 @@ func (r *runner) Output(ctx context.Context, workDir string, statePath string) (
 
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("tofu output: %w", err)
+		var stderr []byte
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			stderr = exitErr.Stderr
+		}
+		return nil, agent.CommandFailed(ctx, describe("output", workDir), err, stderr)
 	}
 
 	var tofuOutputs map[string]struct {
 		Value interface{} `json:"value"`
 	}
 	if err := json.Unmarshal(out, &tofuOutputs); err != nil {
-		return nil, fmt.Errorf("parse tofu output: %w", err)
+		return nil, fmt.Errorf("%s returned output that is not valid JSON (%v); output began with: %q", describe("output", workDir), err, preview(out))
 	}
 
 	result := make(map[string]any)
@@ -92,25 +97,27 @@ func (r *runner) Output(ctx context.Context, workDir string, statePath string) (
 func (r *runner) Destroy(ctx context.Context, workDir string, statePath string, vars map[string]any, logW io.Writer) error {
 	varFile, err := os.CreateTemp("", "pond-tofu-vars-*.tfvars.json")
 	if err != nil {
-		return fmt.Errorf("create temp var file: %w", err)
+		return fmt.Errorf("create tofu var file: %w", err)
 	}
 	defer os.Remove(varFile.Name())
 
 	if err := json.NewEncoder(varFile).Encode(vars); err != nil {
 		varFile.Close()
-		return fmt.Errorf("write vars to temp file: %w", err)
+		return fmt.Errorf("write tofu var file: %w", err)
 	}
 	varFile.Close()
 
-	args := []string{"destroy", "-auto-approve", "-input=false", "-state=" + statePath, "-var-file=" + varFile.Name()}
+	args := []string{"destroy", "-auto-approve", "-input=false", "-no-color", "-state=" + statePath, "-var-file=" + varFile.Name()}
 
 	cmd := exec.CommandContext(ctx, "tofu", args...)
 	cmd.Dir = workDir
-	cmd.Stdout = logW
-	cmd.Stderr = logW
+	return agent.RunLogged(ctx, cmd, logW, describe("destroy", workDir))
+}
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tofu destroy: %w", err)
+func preview(b []byte) string {
+	const max = 200
+	if len(b) > max {
+		return string(b[:max]) + "..."
 	}
-	return nil
+	return string(b)
 }

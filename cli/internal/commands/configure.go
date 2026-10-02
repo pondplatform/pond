@@ -29,17 +29,12 @@ func NewConfigureCmd() *cobra.Command {
 
 			sc := cmd.Context().Value(pondconfig.ClientKey{}).(client.ServerClient)
 
-			data, err := os.ReadFile(inputPath)
+			deps, err := readDependencyInput(inputPath)
 			if err != nil {
-				return fmt.Errorf("read input %q: %w", inputPath, err)
+				return err
 			}
 
-			var req api.ConfigureDeploymentRequest
-			if err := json.Unmarshal(data, &req); err != nil {
-				return fmt.Errorf("parse input %q: %w", inputPath, err)
-			}
-
-			if err := sc.ConfigureDeployment(cmd.Context(), id, req); err != nil {
+			if err := sc.ConfigureDeployment(cmd.Context(), id, api.ConfigureDeploymentRequest{Dependencies: deps}); err != nil {
 				return fmt.Errorf("configure deployment: %w", err)
 			}
 
@@ -54,4 +49,22 @@ func NewConfigureCmd() *cobra.Command {
 	cmd.MarkFlagRequired("input")
 
 	return cmd
+}
+
+// readDependencyInput never returns a nil map: on submit, nil means "no input
+// supplied", and a file without a dependencies key must not silently mean that.
+func readDependencyInput(path string) (map[string]api.DependencyInput, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read input %q: %w", path, err)
+	}
+
+	var req api.ConfigureDeploymentRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return nil, fmt.Errorf("parse input %q: %w", path, err)
+	}
+	if req.Dependencies == nil {
+		req.Dependencies = map[string]api.DependencyInput{}
+	}
+	return req.Dependencies, nil
 }

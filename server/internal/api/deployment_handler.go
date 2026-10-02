@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -31,8 +34,7 @@ func NewDeploymentHandler(svc service.DeploymentService, services store.ServiceR
 
 func (h *DeploymentHandler) Submit(c *gin.Context) {
 	req := defaultSubmitRequest()
-	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &req) {
 		return
 	}
 
@@ -40,7 +42,7 @@ func (h *DeploymentHandler) Submit(c *gin.Context) {
 	// cannot do the ownership check — verify here via the authorizer.
 	identity, ok := IdentityFromContext(c.Request.Context())
 	if !ok {
-		writeError(c, http.StatusInternalServerError, "internal server error")
+		writeInternalError(c, errors.New("no identity in request context"), h.log)
 		return
 	}
 	if err := h.authorizer.Authorize(c.Request.Context(), identity, auth.Action{
@@ -61,7 +63,10 @@ func (h *DeploymentHandler) Submit(c *gin.Context) {
 }
 
 func (h *DeploymentHandler) submit(ctx context.Context, req shared.SubmitRequest) (*domain.Deployment, error) {
-	encoded, _ := json.Marshal(req)
+	// Dependency values can carry credentials, so they stay out of the log.
+	logged := req
+	logged.Dependencies = nil
+	encoded, _ := json.Marshal(logged)
 	h.log.Info("Deploying service: " + string(encoded))
 
 	return h.svc.Submit(ctx, service.SubmitRequest{
@@ -71,6 +76,7 @@ func (h *DeploymentHandler) submit(ctx context.Context, req shared.SubmitRequest
 		ImageTag:          req.ImageTag,
 		TriggeredBy:       req.TriggeredBy,
 		CreateIfNotExists: req.CreateIfNotExists,
+		Dependencies:      req.Dependencies,
 	})
 }
 
@@ -89,9 +95,8 @@ func defaultSubmitRequest() shared.SubmitRequest {
 }
 
 func (h *DeploymentHandler) GetStatus(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("deploymentId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid deployment id")
+	id, ok := parseUUIDParam(c, "deploymentId", "deployment id")
+	if !ok {
 		return
 	}
 	detail, err := h.svc.GetStatus(c.Request.Context(), id)
@@ -161,9 +166,8 @@ func toDeploymentResponse(d *domain.Deployment) shared.Deployment {
 }
 
 func (h *DeploymentHandler) ListByService(c *gin.Context) {
-	serviceID, err := uuid.Parse(c.Param("serviceId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid service id")
+	serviceID, ok := parseUUIDParam(c, "serviceId", "service id")
+	if !ok {
 		return
 	}
 
@@ -171,7 +175,7 @@ func (h *DeploymentHandler) ListByService(c *gin.Context) {
 	if envStr := c.Query("environment_id"); envStr != "" {
 		id, err := uuid.Parse(envStr)
 		if err != nil {
-			writeError(c, http.StatusBadRequest, "invalid environment_id")
+			writeError(c, http.StatusBadRequest, fmt.Sprintf("invalid environment_id %q: expected a UUID", envStr))
 			return
 		}
 		environmentID = &id
@@ -180,10 +184,20 @@ func (h *DeploymentHandler) ListByService(c *gin.Context) {
 	var status *domain.DeploymentStatus
 	if statusStr := c.Query("status"); statusStr != "" {
 		s := domain.DeploymentStatus(statusStr)
+		if !slices.Contains(deploymentStatuses, s) {
+			writeError(c, http.StatusBadRequest, fmt.Sprintf("invalid status %q: expected one of %s", statusStr, joinStatuses(deploymentStatuses)))
+			return
+		}
 		status = &s
 	}
 
 	p := ParsePagination(c.Request)
+	if p.Cursor != "" {
+		if _, err := time.Parse(time.RFC3339Nano, p.Cursor); err != nil {
+			writeError(c, http.StatusBadRequest, fmt.Sprintf("invalid cursor %q: pass the nextCursor value from a previous response", p.Cursor))
+			return
+		}
+	}
 	items, nextCursor, err := h.listByService(c.Request.Context(), serviceID, environmentID, status, p)
 	if err != nil {
 		writeServiceError(c, err, h.log)
@@ -226,9 +240,8 @@ func (h *DeploymentHandler) listByService(ctx context.Context, serviceID uuid.UU
 }
 
 func (h *DeploymentHandler) Cancel(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("deploymentId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid deployment id")
+	id, ok := parseUUIDParam(c, "deploymentId", "deployment id")
+	if !ok {
 		return
 	}
 	if err := h.cancel(c.Request.Context(), id); err != nil {
@@ -239,22 +252,16 @@ func (h *DeploymentHandler) Cancel(c *gin.Context) {
 }
 
 func (h *DeploymentHandler) cancel(ctx context.Context, id uuid.UUID) error {
-	err := h.svc.Cancel(ctx, id)
-	if errors.Is(err, shared.ErrInvalidInput) {
-		return shared.ErrConflict
-	}
-	return err
+	return h.svc.Cancel(ctx, id)
 }
 
 func (h *DeploymentHandler) ConfigureDeployment(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("deploymentId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid deployment id")
+	id, ok := parseUUIDParam(c, "deploymentId", "deployment id")
+	if !ok {
 		return
 	}
 	var req shared.ConfigureDeploymentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &req) {
 		return
 	}
 	if err := h.configureDeployment(c.Request.Context(), id, req); err != nil {
@@ -269,9 +276,8 @@ func (h *DeploymentHandler) configureDeployment(ctx context.Context, id uuid.UUI
 }
 
 func (h *DeploymentHandler) GetCommandLogs(c *gin.Context) {
-	commandID, err := uuid.Parse(c.Param("commandId"))
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid command id")
+	commandID, ok := parseUUIDParam(c, "commandId", "command id")
+	if !ok {
 		return
 	}
 	items, err := h.getCommandLogs(c.Request.Context(), commandID)
@@ -292,4 +298,21 @@ func (h *DeploymentHandler) getCommandLogs(ctx context.Context, commandID uuid.U
 		items[i] = shared.CommandLog{Line: l.Line, LoggedAt: l.LoggedAt}
 	}
 	return items, nil
+}
+
+var deploymentStatuses = []domain.DeploymentStatus{
+	shared.DeploymentStatusPending,
+	shared.DeploymentStatusRunning,
+	shared.DeploymentStatusSucceeded,
+	shared.DeploymentStatusAwaitingInput,
+	shared.DeploymentStatusFailed,
+	shared.DeploymentStatusCancelled,
+}
+
+func joinStatuses(statuses []domain.DeploymentStatus) string {
+	names := make([]string, len(statuses))
+	for i, s := range statuses {
+		names[i] = string(s)
+	}
+	return strings.Join(names, ", ")
 }

@@ -150,14 +150,18 @@ pond deploy [flags]
 |---|---|---|
 | `-f, --pond-file` | `./pond.yml` | Path to the service definition file |
 | `-t, --tag` | _(required)_ | Image tag to deploy |
+| `-i, --input` | | Path to a JSON file with input for every dependency (same format as `pond deployment configure`) |
 | `--wait` | `false` | Block until the deployment reaches a terminal state |
 
 Without `--wait`, the command prints the deployment ID and exits. With `--wait`, it polls every 2 seconds and exits when the deployment succeeds or fails. If the server is waiting for dependency input (`awaiting_input` state), it prints a hint to run `pond deployment configure` and exits.
 
-**Example:**
+With `--input`, the dependency input is sent as part of the deployment request and stored atomically with the deployment, so it never enters `awaiting_input`. The file must cover every dependency declared in `pond.yml`. If an entry is missing, or names a dependency that is not declared, the server rejects the request and creates nothing.
+
+**Examples:**
 
 ```sh
 pond deploy --tag v1.2.3 --wait
+pond deploy --tag v1.2.3 --input ./deploy-input.json --wait
 ```
 
 ---

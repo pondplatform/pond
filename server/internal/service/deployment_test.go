@@ -27,7 +27,7 @@ func (m *MockTransactor) RunInTx(ctx context.Context, fn func(ctx context.Contex
 }
 
 type mockDependencyService struct {
-	createDependencyDeploymentsFn func(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment) (domain.DependencyDeploymentStatus, error)
+	createDependencyDeploymentsFn func(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment, inputs map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error)
 	dependencyDeploymentStatusFn  func(ctx context.Context, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error)
 	scheduleCommandsFn            func(ctx context.Context, deploymentId uuid.UUID) error
 	handleCommandResultFn         func(ctx context.Context, commandID uuid.UUID) error
@@ -35,9 +35,9 @@ type mockDependencyService struct {
 	validateFn                    func(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error
 }
 
-func (m *mockDependencyService) CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment) (domain.DependencyDeploymentStatus, error) {
+func (m *mockDependencyService) CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment, inputs map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
 	if m.createDependencyDeploymentsFn != nil {
-		return m.createDependencyDeploymentsFn(ctx, tx, service, dep)
+		return m.createDependencyDeploymentsFn(ctx, tx, service, dep, inputs)
 	}
 	return domain.DependencyDeploymentStatusSucceeded, nil
 }
@@ -127,7 +127,7 @@ func TestDeploymentService_Submit(t *testing.T) {
 
 	t.Run("Submit without dependencies", func(t *testing.T) {
 		// No deps → CreateDependencyDeployments returns Succeeded → helm enqueued immediately.
-		depSvc.createDependencyDeploymentsFn = func(_ context.Context, _ TxRepos, _ *domain.Service, _ *domain.Deployment) (domain.DependencyDeploymentStatus, error) {
+		depSvc.createDependencyDeploymentsFn = func(_ context.Context, _ TxRepos, _ *domain.Service, _ *domain.Deployment, _ map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
 			return domain.DependencyDeploymentStatusSucceeded, nil
 		}
 
@@ -197,7 +197,7 @@ func TestDeploymentService_Submit(t *testing.T) {
 
 	t.Run("Submit with first-time dependencies (awaiting input)", func(t *testing.T) {
 		// New deps with no prior config → awaiting_input → no commands created.
-		depSvc.createDependencyDeploymentsFn = func(_ context.Context, _ TxRepos, _ *domain.Service, _ *domain.Deployment) (domain.DependencyDeploymentStatus, error) {
+		depSvc.createDependencyDeploymentsFn = func(_ context.Context, _ TxRepos, _ *domain.Service, _ *domain.Deployment, _ map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
 			return domain.DependencyDeploymentStatusAwaitingInput, nil
 		}
 
@@ -293,7 +293,7 @@ func TestDeploymentService_Submit(t *testing.T) {
 
 	t.Run("Submit with prior managed dependencies (schedule immediately)", func(t *testing.T) {
 		// Re-deployment: deps have prior config → status=pending → ScheduleCommands called.
-		depSvc.createDependencyDeploymentsFn = func(_ context.Context, _ TxRepos, _ *domain.Service, _ *domain.Deployment) (domain.DependencyDeploymentStatus, error) {
+		depSvc.createDependencyDeploymentsFn = func(_ context.Context, _ TxRepos, _ *domain.Service, _ *domain.Deployment, _ map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
 			return domain.DependencyDeploymentStatusPending, nil
 		}
 
@@ -329,6 +329,118 @@ func TestDeploymentService_Submit(t *testing.T) {
 		}
 		if !scheduleCommandsCalled {
 			t.Error("expected ScheduleCommands to be called")
+		}
+	})
+
+	withDBDep := func(deps map[string]api.DependencyInput) SubmitRequest {
+		return SubmitRequest{
+			ProjectID:       projectID,
+			EnvironmentName: "staging",
+			OverridableConfig: serviceconfig.OverridableConfig{
+				ServiceConfig: serviceconfig.ServiceConfig{
+					Version: 1,
+					Name:    "my-service",
+					Image:   "ghcr.io/example/my-service",
+					Dependencies: map[string]serviceconfig.DependencyDeclaration{
+						"db": {Type: "postgres"},
+					},
+				},
+			},
+			ImageTag:     "v1",
+			TriggeredBy:  "user",
+			Dependencies: deps,
+		}
+	}
+
+	t.Run("Submit with inputs forwards them inside the transaction and schedules", func(t *testing.T) {
+		inputs := map[string]api.DependencyInput{"db": {Managed: true, Values: map[string]any{"instances": 1}}}
+
+		var inTx bool
+		tx.RunInTxFn = func(ctx context.Context, fn func(ctx context.Context, tx TxRepos) error) error {
+			inTx = true
+			defer func() { inTx = false }()
+			return fn(ctx, TxRepos{DeploymentInfo: infoStore})
+		}
+
+		var forwarded map[string]api.DependencyInput
+		depSvc.createDependencyDeploymentsFn = func(_ context.Context, _ TxRepos, _ *domain.Service, _ *domain.Deployment, got map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
+			if !inTx {
+				t.Error("dependency deployments must be created inside the transaction")
+			}
+			forwarded = got
+			return domain.DependencyDeploymentStatusPending, nil
+		}
+
+		var scheduleCommandsCalled bool
+		depSvc.scheduleCommandsFn = func(_ context.Context, _ uuid.UUID) error {
+			scheduleCommandsCalled = true
+			return nil
+		}
+
+		d, err := s.Submit(ctx, withDBDep(inputs))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if d.Status != api.DeploymentStatusPending {
+			t.Errorf("expected status pending, got %v", d.Status)
+		}
+		if forwarded["db"].Managed != true || forwarded["db"].Values["instances"] != 1 {
+			t.Errorf("expected inputs forwarded unchanged, got %+v", forwarded)
+		}
+		if !scheduleCommandsCalled {
+			t.Error("expected ScheduleCommands to be called")
+		}
+	})
+
+	t.Run("Submit rejects incomplete or unknown inputs before writing anything", func(t *testing.T) {
+		svcRepo.GetByNameFn = func(context.Context, uuid.UUID, string) (*domain.Service, error) {
+			return nil, api.ErrNotFound
+		}
+		var serviceCreated, txRan bool
+		svcRepo.CreateFn = func(context.Context, *domain.Service) error {
+			serviceCreated = true
+			return nil
+		}
+		tx.RunInTxFn = func(context.Context, func(ctx context.Context, tx TxRepos) error) error {
+			txRan = true
+			return nil
+		}
+
+		cases := map[string]struct {
+			inputs map[string]api.DependencyInput
+			want   []api.ValidationError
+		}{
+			"missing": {
+				inputs: map[string]api.DependencyInput{},
+				want:   []api.ValidationError{{Component: "dependency", Field: "db", Message: "missing input"}},
+			},
+			"unknown": {
+				inputs: map[string]api.DependencyInput{"db": {Managed: true}, "cache": {Managed: true}},
+				want:   []api.ValidationError{{Component: "dependency", Field: "cache", Message: "not declared in service config"}},
+			},
+		}
+		for name, tc := range cases {
+			t.Run(name, func(t *testing.T) {
+				req := withDBDep(tc.inputs)
+				req.CreateIfNotExists = true
+				_, err := s.Submit(ctx, req)
+
+				var ve *api.ValidationErrors
+				if !errors.As(err, &ve) {
+					t.Fatalf("expected *api.ValidationErrors so the handler returns 422, got %T: %v", err, err)
+				}
+				if len(ve.Errors) != len(tc.want) {
+					t.Fatalf("expected %+v, got %+v", tc.want, ve.Errors)
+				}
+				for i := range tc.want {
+					if ve.Errors[i] != tc.want[i] {
+						t.Errorf("error %d: expected %+v, got %+v", i, tc.want[i], ve.Errors[i])
+					}
+				}
+				if serviceCreated || txRan {
+					t.Error("nothing should be written when inputs are rejected")
+				}
+			})
 		}
 	})
 }

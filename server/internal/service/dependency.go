@@ -25,11 +25,11 @@ type dependencyService struct {
 	deploymentInfo store.DeploymentInfoStore
 }
 
-func (s *dependencyService) CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment) (domain.DependencyDeploymentStatus, error) {
+func (s *dependencyService) CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment, inputs map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
 	deps := make([]domain.DependencyDeployment, 0, len(dep.ServiceConfigSnapshot.Dependencies))
 
 	for depName := range dep.ServiceConfigSnapshot.Dependencies {
-		cfg, err := s.createDependencyDeployment(ctx, tx, service, dep, depName)
+		cfg, err := s.createDependencyDeployment(ctx, tx, service, dep, depName, inputs)
 		if err != nil {
 			return "", err
 		}
@@ -39,10 +39,12 @@ func (s *dependencyService) CreateDependencyDeployments(ctx context.Context, tx 
 	return s.computeStatus(deps), nil
 }
 
-func (s *dependencyService) createDependencyDeployment(ctx context.Context, tx TxRepos, service *domain.Service, deployment *domain.Deployment, dependencyName string) (*domain.DependencyDeployment, error) {
+func (s *dependencyService) createDependencyDeployment(ctx context.Context, tx TxRepos, service *domain.Service, deployment *domain.Deployment, dependencyName string, inputs map[string]api.DependencyInput) (*domain.DependencyDeployment, error) {
+	input, hasInput := inputs[dependencyName]
+
 	var previousConfig *domain.DependencyDeployment
 	var err error
-	if service.CurrentDeploymentID != nil {
+	if !hasInput && service.CurrentDeploymentID != nil {
 		previousConfig, err = tx.DeploymentInfo.GetDepConfig(ctx, *service.CurrentDeploymentID, dependencyName)
 		if err != nil {
 			return nil, err
@@ -51,7 +53,26 @@ func (s *dependencyService) createDependencyDeployment(ctx context.Context, tx T
 
 	dep := deployment.ServiceConfigSnapshot.Dependencies[dependencyName]
 	var cfg domain.DependencyDeployment
-	if previousConfig == nil {
+	if hasInput {
+		managed := input.Managed
+		cfg = domain.DependencyDeployment{
+			ID:             uuid.New(),
+			DeploymentId:   deployment.ID,
+			DependencyName: dependencyName,
+			DependencyType: dep.Type,
+			Managed:        &managed,
+			ProviderInputs: map[string]any{},
+			UserConfig:     map[string]any{},
+			Status:         domain.DependencyDeploymentStatusPending,
+		}
+		if input.Values != nil {
+			if managed {
+				cfg.ProviderInputs = input.Values
+			} else {
+				cfg.UserConfig = input.Values
+			}
+		}
+	} else if previousConfig == nil {
 		cfg = domain.DependencyDeployment{
 			ID:             uuid.New(),
 			DeploymentId:   deployment.ID,

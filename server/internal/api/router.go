@@ -29,7 +29,10 @@ type RouterDeps struct {
 func NewRouter(deps RouterDeps) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(GinLogger(deps.Log), gin.Recovery())
+	r.HandleMethodNotAllowed = true
+	r.Use(GinRequestID(), GinLogger(deps.Log), GinRecovery(deps.Log))
+	r.NoRoute(handleNoRoute)
+	r.NoMethod(handleNoMethod)
 
 	deployHandler := NewDeploymentHandler(deps.DeploySvc, deps.Services, deps.Authorizer, deps.Log)
 	clusterHandler := NewClusterHandler(deps.Clusters, deps.Log)
