@@ -54,10 +54,20 @@ The server exposes health endpoints on the management port (`9090` by default):
 
 | Endpoint | Description |
 |---|---|
-| `GET /health/live` | Always returns `200 {"status":"ok"}` |
-| `GET /health/ready` | Returns `503` if PostgreSQL is unreachable |
+| `GET /health/live` | Returns `503` if PostgreSQL is unreachable or the RabbitMQ connection is closed |
+| `GET /health/ready` | Same checks as `/health/live` |
 
-These are already wired into the Helm chart's liveness and readiness probes.
+Both endpoints report each check by name:
+
+```json
+{"status":"unavailable","checks":{"postgres":"ok","rabbitmq":"connection closed"}}
+```
+
+These are already wired into the Helm chart's liveness and readiness probes. The
+server does not reconnect to RabbitMQ, so the liveness probe restarts the pod when
+the connection drops. Because PostgreSQL is part of the liveness check too, a
+PostgreSQL outage also restarts the server, and it crash-loops until PostgreSQL is
+reachable again.
 
 ## Prometheus metrics
 

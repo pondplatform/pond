@@ -71,13 +71,13 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 	specRegistry := dependency.NewSpecRegistry()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	topics, closeTopics, err := events.NewRabbitMQTopics(amqpURL, log.WithGroup("rabbitmq"))
+	topics, rmq, err := events.NewRabbitMQTopics(amqpURL, log.WithGroup("rabbitmq"))
 	if err != nil {
 		cancel()
 		db.Close()
 		t.Fatalf("new rabbitmq topics: %v", err)
 	}
-	t.Cleanup(closeTopics)
+	t.Cleanup(rmq.Close)
 
 	depSvc := service.NewDependencyService(specRegistry, envStore, deploymentInfoStore)
 	helmGenerator := helmgen.NewGenerator()

@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -9,7 +10,8 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type rabbitMQBroker struct {
+// RabbitMQ is the AMQP connection backing the topics from NewRabbitMQTopics.
+type RabbitMQ struct {
 	conn *amqp.Connection
 	log  *slog.Logger
 
@@ -18,8 +20,8 @@ type rabbitMQBroker struct {
 }
 
 // NewRabbitMQTopics dials RabbitMQ at url and returns the domain topics backed
-// by AMQP. The returned closer must be called on shutdown to release the connection.
-func NewRabbitMQTopics(url string, log *slog.Logger) (Topics, func(), error) {
+// by AMQP. Close the returned RabbitMQ on shutdown to release the connection.
+func NewRabbitMQTopics(url string, log *slog.Logger) (Topics, *RabbitMQ, error) {
 	conn, err := amqp.Dial(url)
 	if err != nil {
 		return nil, nil, err
@@ -29,11 +31,27 @@ func NewRabbitMQTopics(url string, log *slog.Logger) (Topics, func(), error) {
 		conn.Close()
 		return nil, nil, err
 	}
-	b := &rabbitMQBroker{conn: conn, log: log, pubCh: pubCh}
-	return newTopics(b), func() { conn.Close() }, nil
+	b := &RabbitMQ{conn: conn, log: log, pubCh: pubCh}
+	return newTopics(b), b, nil
 }
 
-func (b *rabbitMQBroker) publish(ctx context.Context, name string, mode delivery, body []byte) error {
+func (b *RabbitMQ) Close() {
+	b.conn.Close()
+}
+
+// Check reports whether the connection and publish channel are still open.
+// Neither is ever reopened, so a failure is permanent for this process.
+func (b *RabbitMQ) Check(context.Context) error {
+	if b.conn.IsClosed() {
+		return errors.New("connection closed")
+	}
+	if b.pubCh.IsClosed() {
+		return errors.New("publish channel closed")
+	}
+	return nil
+}
+
+func (b *RabbitMQ) publish(ctx context.Context, name string, mode delivery, body []byte) error {
 	msg := amqp.Publishing{ContentType: "application/json", Body: body}
 
 	b.publishMu.Lock()
@@ -58,7 +76,7 @@ func (b *rabbitMQBroker) publish(ctx context.Context, name string, mode delivery
 	return nil
 }
 
-func (b *rabbitMQBroker) subscribe(name string, mode delivery, h func([]byte) error) (func(), error) {
+func (b *RabbitMQ) subscribe(name string, mode delivery, h func([]byte) error) (func(), error) {
 	if mode == fanout {
 		return b.subscribeFanout(name, h)
 	}
@@ -67,7 +85,7 @@ func (b *rabbitMQBroker) subscribe(name string, mode delivery, h func([]byte) er
 
 // subscribeWork binds a durable work-queue consumer to name. Each message is
 // delivered to exactly one consumer and acked after h returns.
-func (b *rabbitMQBroker) subscribeWork(name string, h func([]byte) error) (func(), error) {
+func (b *RabbitMQ) subscribeWork(name string, h func([]byte) error) (func(), error) {
 	ch, err := b.conn.Channel()
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq: open channel: %w", err)
@@ -111,7 +129,7 @@ func (b *rabbitMQBroker) subscribeWork(name string, h func([]byte) error) (func(
 
 // subscribeFanout binds an exclusive auto-delete queue to the fanout exchange
 // for name. Every current subscriber receives each message.
-func (b *rabbitMQBroker) subscribeFanout(name string, h func([]byte) error) (func(), error) {
+func (b *RabbitMQ) subscribeFanout(name string, h func([]byte) error) (func(), error) {
 	ch, err := b.conn.Channel()
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq: open channel: %w", err)

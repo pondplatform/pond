@@ -64,11 +64,11 @@ func startRabbitMQ(t *testing.T) string {
 //     the next command (none queued → "idle" frame).
 func TestAgentHandler_EventFlow(t *testing.T) {
 	amqpURL := startRabbitMQ(t)
-	topics, closeTopics, err := events.NewRabbitMQTopics(amqpURL, slog.Default())
+	topics, rmq, err := events.NewRabbitMQTopics(amqpURL, slog.Default())
 	if err != nil {
 		t.Fatalf("new rabbitmq topics: %v", err)
 	}
-	t.Cleanup(closeTopics)
+	t.Cleanup(rmq.Close)
 	ctx := context.Background()
 
 	clusterRepo := &testutil.MockClusterRepository{}

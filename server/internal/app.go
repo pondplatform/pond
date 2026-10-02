@@ -69,11 +69,11 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	specRegistry := dependency.NewSpecRegistry()
 
 	log.Info("connecting to rabbitmq", "url", cfg.RabbitMQURL)
-	topics, closeTopics, err := events.NewRabbitMQTopics(cfg.RabbitMQURL, log.WithGroup("rabbitmq"))
+	topics, rmq, err := events.NewRabbitMQTopics(cfg.RabbitMQURL, log.WithGroup("rabbitmq"))
 	if err != nil {
 		return fmt.Errorf("rabbitmq: %w", err)
 	}
-	defer closeTopics()
+	defer rmq.Close()
 	log.Info("rabbitmq connected")
 
 	// Services
@@ -120,8 +120,11 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 
 	mgmtServer := &http.Server{
-		Addr:    cfg.ManagementAddr,
-		Handler: api.NewManagementRouter(db),
+		Addr: cfg.ManagementAddr,
+		Handler: api.NewManagementRouter(map[string]api.HealthCheck{
+			"postgres": db.PingContext,
+			"rabbitmq": rmq.Check,
+		}),
 	}
 
 	// Shutdown both servers when context is cancelled or deployment service exits.
