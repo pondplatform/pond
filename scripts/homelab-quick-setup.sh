@@ -403,10 +403,12 @@ info "Project ID: $PROJECT_ID"
 # ── 10. Create environments ───────────────────────────────────────────────────
 step "Creating environments"
 
+DEFAULT_ENV=""
 IFS=',' read -ra ENV_NAMES <<< "$ENVIRONMENTS"
 for env_name in "${ENV_NAMES[@]}"; do
   env_name="${env_name// /}"
   [[ -n "$env_name" ]] || continue
+  DEFAULT_ENV="${DEFAULT_ENV:-$env_name}"
 
   env_namespace="${NAMESPACE}-${env_name}"
   info "Creating environment '$env_name' (namespace: $env_namespace)"
@@ -435,10 +437,18 @@ done
 # ── 11. Configure pond CLI context ────────────────────────────────────────────
 step "Configuring pond CLI context '$CONTEXT_NAME'"
 
+if [[ -n "$DEFAULT_ENV" ]]; then
+  info "Default environment for context: '$DEFAULT_ENV' (first of: ${ENVIRONMENTS})"
+  info "  Override per command with --env <name> or POND_ENV"
+else
+  info "No environments created — context will have no default environment"
+fi
+
 "$POND_CLI" context add "$CONTEXT_NAME" \
   --server "$SERVER_URL" \
   --token "$CLI_TOKEN" \
   --project "$PROJECT_ID" \
+  --env "$DEFAULT_ENV" \
   --kube-context "$KUBE_CONTEXT" \
   --kube-namespace "$NAMESPACE" \
   --kube-service "$SERVER_RELEASE" \
@@ -489,6 +499,7 @@ echo
 echo "  Server URL:          ${SERVER_URL}"
 echo "  Port-forward:        localhost:${FORWARD_PORT} -> svc/${SERVER_RELEASE}:8080 (PID ${PF_PID})"
 echo "  Pond CLI context:    ${CONTEXT_NAME}  ${bold}[active]${reset}"
+echo "  Default environment: ${DEFAULT_ENV:-<none>}"
 echo
 echo "  State file:          ${STATE_FILE}"
 echo "  (contains ADMIN_KEY and JWT_SECRET — keep secure)"
