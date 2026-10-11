@@ -16,16 +16,16 @@ import (
 )
 
 func NewDependencyService(specs dependency.SpecRegistry, envs store.EnvironmentRepository, deploymentInfo store.DeploymentInfoStore) DependencyService {
-	return &dependencyService{specs: specs, envs: envs, deploymentInfo: deploymentInfo}
+	return &internalDependencyService{specs: specs, envs: envs, deploymentInfo: deploymentInfo}
 }
 
-type dependencyService struct {
+type internalDependencyService struct {
 	specs          dependency.SpecRegistry
 	envs           store.EnvironmentRepository
 	deploymentInfo store.DeploymentInfoStore
 }
 
-func (s *dependencyService) CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment, inputs map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
+func (s *internalDependencyService) CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment, inputs map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
 	deps := make([]domain.DependencyDeployment, 0, len(dep.ServiceConfigSnapshot.Dependencies))
 
 	for depName := range dep.ServiceConfigSnapshot.Dependencies {
@@ -39,7 +39,7 @@ func (s *dependencyService) CreateDependencyDeployments(ctx context.Context, tx 
 	return s.computeStatus(deps), nil
 }
 
-func (s *dependencyService) createDependencyDeployment(ctx context.Context, tx TxRepos, service *domain.Service, deployment *domain.Deployment, dependencyName string, inputs map[string]api.DependencyInput) (*domain.DependencyDeployment, error) {
+func (s *internalDependencyService) createDependencyDeployment(ctx context.Context, tx TxRepos, service *domain.Service, deployment *domain.Deployment, dependencyName string, inputs map[string]api.DependencyInput) (*domain.DependencyDeployment, error) {
 	input, hasInput := inputs[dependencyName]
 
 	var previousConfig *domain.DependencyDeployment
@@ -109,7 +109,7 @@ func (s *dependencyService) createDependencyDeployment(ctx context.Context, tx T
 	return &cfg, nil
 }
 
-func (s *dependencyService) DependencyDeploymentStatus(ctx context.Context, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error) {
+func (s *internalDependencyService) DependencyDeploymentStatus(ctx context.Context, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error) {
 	deps, err := s.deploymentInfo.ListDepConfigs(ctx, deploymentId)
 	if err != nil {
 		return "", fmt.Errorf("list dep configs: %w", err)
@@ -118,7 +118,7 @@ func (s *dependencyService) DependencyDeploymentStatus(ctx context.Context, depl
 	return s.computeStatus(deps), nil
 }
 
-func (s *dependencyService) computeStatus(deps []domain.DependencyDeployment) domain.DependencyDeploymentStatus {
+func (s *internalDependencyService) computeStatus(deps []domain.DependencyDeployment) domain.DependencyDeploymentStatus {
 	for _, d := range deps {
 		if d.Status == domain.DependencyDeploymentStatusFailed {
 			return domain.DependencyDeploymentStatusFailed
@@ -137,7 +137,7 @@ func (s *dependencyService) computeStatus(deps []domain.DependencyDeployment) do
 	return domain.DependencyDeploymentStatusSucceeded
 }
 
-func (s *dependencyService) ScheduleCommands(ctx context.Context, deploymentId uuid.UUID) error {
+func (s *internalDependencyService) ScheduleCommands(ctx context.Context, deploymentId uuid.UUID) error {
 	dep, err := s.deploymentInfo.GetByID(ctx, deploymentId)
 	if err != nil {
 		return fmt.Errorf("get deployment: %w", err)
@@ -209,7 +209,7 @@ func (s *dependencyService) ScheduleCommands(ctx context.Context, deploymentId u
 	return nil
 }
 
-func (s *dependencyService) HandleCommandResult(ctx context.Context, commandID uuid.UUID) error {
+func (s *internalDependencyService) HandleCommandResult(ctx context.Context, commandID uuid.UUID) error {
 	cmd, err := s.deploymentInfo.GetCommand(ctx, commandID)
 	if err != nil {
 		return fmt.Errorf("get command: %w", err)
@@ -239,7 +239,7 @@ func (s *dependencyService) HandleCommandResult(ctx context.Context, commandID u
 	return nil
 }
 
-func (s *dependencyService) BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error) {
+func (s *internalDependencyService) BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error) {
 	contexts := make(map[string]map[string]any, len(rawOutputs))
 	for depName, raw := range rawOutputs {
 		var vals map[string]any
@@ -252,7 +252,7 @@ func (s *dependencyService) BuildContexts(rawOutputs map[string]json.RawMessage)
 }
 
 // Validate checks that all declared dependency types are known.
-func (s *dependencyService) Validate(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error {
+func (s *internalDependencyService) Validate(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error {
 	var errs api.ValidationErrors
 
 	for name, decl := range deps {

@@ -18,7 +18,7 @@ func makeDependencyService(
 	specs dependency.SpecRegistry,
 	envs *testutil.MockEnvironmentRepository,
 	store *testutil.MockDeploymentInfoStore,
-) *dependencyService {
+) *internalDependencyService {
 	if specs == nil {
 		specs = dependency.NewSpecRegistry()
 	}
@@ -28,13 +28,13 @@ func makeDependencyService(
 	if store == nil {
 		store = &testutil.MockDeploymentInfoStore{}
 	}
-	return &dependencyService{specs: specs, envs: envs, deploymentInfo: store}
+	return &internalDependencyService{specs: specs, envs: envs, deploymentInfo: store}
 }
 
 // --- computeStatus ---
 
 func TestComputeStatus_FailedWinsOverAll(t *testing.T) {
-	svc := &dependencyService{}
+	svc := &internalDependencyService{}
 	deps := []domain.DependencyDeployment{
 		{Status: domain.DependencyDeploymentStatusSucceeded},
 		{Status: domain.DependencyDeploymentStatusFailed},
@@ -46,7 +46,7 @@ func TestComputeStatus_FailedWinsOverAll(t *testing.T) {
 }
 
 func TestComputeStatus_AwaitingInputBeforesPending(t *testing.T) {
-	svc := &dependencyService{}
+	svc := &internalDependencyService{}
 	deps := []domain.DependencyDeployment{
 		{Status: domain.DependencyDeploymentStatusPending},
 		{Status: domain.DependencyDeploymentStatusAwaitingInput},
@@ -58,7 +58,7 @@ func TestComputeStatus_AwaitingInputBeforesPending(t *testing.T) {
 }
 
 func TestComputeStatus_PendingBeforeSucceeded(t *testing.T) {
-	svc := &dependencyService{}
+	svc := &internalDependencyService{}
 	deps := []domain.DependencyDeployment{
 		{Status: domain.DependencyDeploymentStatusSucceeded},
 		{Status: domain.DependencyDeploymentStatusPending},
@@ -69,7 +69,7 @@ func TestComputeStatus_PendingBeforeSucceeded(t *testing.T) {
 }
 
 func TestComputeStatus_AllSucceededReturnsSucceeded(t *testing.T) {
-	svc := &dependencyService{}
+	svc := &internalDependencyService{}
 	deps := []domain.DependencyDeployment{
 		{Status: domain.DependencyDeploymentStatusSucceeded},
 		{Status: domain.DependencyDeploymentStatusSucceeded},
@@ -80,7 +80,7 @@ func TestComputeStatus_AllSucceededReturnsSucceeded(t *testing.T) {
 }
 
 func TestComputeStatus_EmptySliceReturnsSucceeded(t *testing.T) {
-	svc := &dependencyService{}
+	svc := &internalDependencyService{}
 	if got := svc.computeStatus(nil); got != domain.DependencyDeploymentStatusSucceeded {
 		t.Errorf("expected succeeded for empty deps, got %s", got)
 	}
@@ -567,7 +567,7 @@ func TestHandleCommandResult_NoDepConfigReturnsNil(t *testing.T) {
 // --- BuildContexts ---
 
 func TestBuildContexts_UnmarshalsOutputsCorrectly(t *testing.T) {
-	svc := &dependencyService{}
+	svc := &internalDependencyService{}
 	rawOutputs := map[string]json.RawMessage{
 		"db":    json.RawMessage(`{"host":"db.internal","port":5432}`),
 		"cache": json.RawMessage(`{"url":"redis://cache:6379"}`),
@@ -589,7 +589,7 @@ func TestBuildContexts_UnmarshalsOutputsCorrectly(t *testing.T) {
 }
 
 func TestBuildContexts_InvalidJSONReturnsError(t *testing.T) {
-	svc := &dependencyService{}
+	svc := &internalDependencyService{}
 	rawOutputs := map[string]json.RawMessage{
 		"bad": json.RawMessage(`{not valid json}`),
 	}
@@ -600,7 +600,7 @@ func TestBuildContexts_InvalidJSONReturnsError(t *testing.T) {
 }
 
 func TestBuildContexts_EmptyInputReturnsEmptyMap(t *testing.T) {
-	svc := &dependencyService{}
+	svc := &internalDependencyService{}
 	contexts, err := svc.BuildContexts(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

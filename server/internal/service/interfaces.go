@@ -2,44 +2,65 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/server/internal/events"
-	domain "github.com/pondplatform/pond/server/internal/model/db"
+	"github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
 	"github.com/pondplatform/pond/shared/server/api"
 	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
-// DeploymentDetail is the enriched view of a deployment returned by GetStatus.
-// It includes the dependency states and their associated commands.
 type DeploymentDetail struct {
-	Deployment   *domain.Deployment
-	Dependencies []domain.DependencyDeployment
-	Commands     []*domain.Command
+	Deployment   *db.Deployment
+	Dependencies []db.DependencyDeployment
+	Commands     []*db.Command
 }
 
 type DeploymentService interface {
-	Submit(ctx context.Context, req api.SubmitRequest) (*domain.Deployment, error)
-	GetStatus(ctx context.Context, deploymentID uuid.UUID) (*DeploymentDetail, error)
+	Submit(ctx context.Context, req api.SubmitRequest) (*db.Deployment, error)
+	GetStatus(ctx context.Context, deploymentID uuid.UUID) (*DeploymentDetail, error)	
 	Validate(ctx context.Context, req api.SubmitRequest) (*ValidationResult, error)
-	// ListByService returns deployments for a service, optionally filtered by environment and status.
-	ListByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
-	// Cancel cancels an in-progress deployment. Returns an error if the deployment is already in a terminal state.
+	ListByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *db.DeploymentStatus, limit int, cursor string) ([]db.Deployment, error)
 	Cancel(ctx context.Context, deploymentID uuid.UUID) error
-	// ConfigureDeployment provides user input for all awaiting dependencies in
-	// one call and publishes a UserInputProvided event to trigger scheduling.
 	ConfigureDeployment(ctx context.Context, deploymentID uuid.UUID, inputs map[string]api.DependencyInput) error
-	// GetCommandLogs returns all log lines for a command in chronological order.
-	// Returns api.ErrNotFound if the command does not exist.
-	GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error)
-	// Start registers subscriptions on the event bus (agent.ready,
-	// command.started, command.results, command.logs, agent.disconnected,
-	// user_input.provided) and drives the deployment state machine in response.
-	// Returns an error if any subscription fails. Blocks until ctx is cancelled.
-	Start(ctx context.Context) error
+	GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]db.CommandLog, error)
+}
+
+type deploymentStateMachine interface {
+    InitializeDeployment(ctx context.Context, deployment db.Deployment, dependencies []db.DependencyDeployment) error
+    AdvanceOnCommandResult(ctx context.Context, commandResult events.CommandResult) error
+}
+
+type dependencyService interface {
+	Validate(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error
+	ScheduleCommand(ctx context.Context, deployment db.Deployment, dependency db.DependencyDeployment) error
+}
+
+
+type AgentConnectionService interface {
+	// NewSession creates a session for a connected agent. The session handles
+	// event bus subscriptions and command dispatch protocol.
+	NewSession(clusterID uuid.UUID, log *slog.Logger) AgentSession
+}
+
+type AgentSession interface {
+	// RequestNext signals agent readiness and waits for a command dispatch.
+	// Returns the command to send, or nil if no command is available within timeout.
+	RequestNext(ctx context.Context) (*db.Command, error)
+
+	// OnAck publishes CommandStarted when agent acknowledges a command.
+	OnAck(ctx context.Context, commandID uuid.UUID) error
+
+	// OnResult publishes CommandResult.
+	OnResult(ctx context.Context, result events.CommandResult) error
+
+	// OnLog publishes CommandLog for streaming.
+	OnLog(ctx context.Context, commandID uuid.UUID, line string) error
+
+	// Close publishes AgentDisconnected and unsubscribes from events.
+	Close() error
 }
 
 type SubmitRequest = api.SubmitRequest
@@ -60,58 +81,4 @@ type Transactor interface {
 	RunInTx(ctx context.Context, fn func(ctx context.Context, tx TxRepos) error) error
 }
 
-// DependencyService handles dependency command scheduling and context resolution.
-type DependencyService interface {
-	// CreateDependencyDeployments Creates the dependency deployments. A dependency
-	// with an entry in inputs is created already configured (pending).
-	CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment, inputs map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error)
 
-	// DependencyDeploymentStatus Get overall status of dependencies
-	DependencyDeploymentStatus(ctx context.Context, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error)
-
-	ScheduleCommands(ctx context.Context, deploymentId uuid.UUID) error
-
-	// BuildContexts unmarshals raw dependency outputs into a name→values map for
-	// helm value generation. rawOutputs comes from GetDepOutputsByDeployment and
-	// includes both managed (tofu) and non-managed (user_config) deps.
-	BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
-
-	// HandleCommandResult applies a completed tofu.apply command's outcome to the owning
-	// DependencyDeployment: marks it succeeded or failed, cancels sibling queued commands
-	// on failure, and returns the deploymentID and aggregate DependencyDeploymentStatus.
-	// Returns uuid.Nil + empty status if no dep config row is found for the command.
-	HandleCommandResult(ctx context.Context, commandID uuid.UUID) error
-
-	// Validate checks that all declared dep types are known.
-	Validate(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error
-}
-
-// AgentConnectionService manages the event-driven protocol for connected agents.
-type AgentConnectionService interface {
-	// NewSession creates a session for a connected agent. The session handles
-	// event bus subscriptions and command dispatch protocol.
-	NewSession(clusterID uuid.UUID, log *slog.Logger) AgentSession
-}
-
-// AgentSession represents an active agent connection's event protocol.
-type AgentSession interface {
-	// Start subscribes to events and returns channels for the handler to consume.
-	// Returns (dispatchCh, wakeCh, error). Caller must call Close() when done.
-	Start(ctx context.Context) (<-chan *domain.Command, <-chan struct{}, error)
-
-	// RequestNext signals agent readiness and waits for a command dispatch.
-	// Returns the command to send, or nil if no command is available within timeout.
-	RequestNext(ctx context.Context) *domain.Command
-
-	// OnAck publishes CommandStarted when agent acknowledges a command.
-	OnAck(ctx context.Context, commandID uuid.UUID)
-
-	// OnResult publishes CommandResult.
-	OnResult(ctx context.Context, result events.CommandResult)
-
-	// OnLog publishes CommandLog for streaming.
-	OnLog(ctx context.Context, commandID uuid.UUID, line string)
-
-	// Close publishes AgentDisconnected and unsubscribes from events.
-	Close()
-}

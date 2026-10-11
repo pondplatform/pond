@@ -67,11 +67,6 @@ func (s *deploymentService) GetCommandLogs(ctx context.Context, commandID uuid.U
 }
 
 func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (*domain.Deployment, error) {
-	// --- reads (outside the transaction) ---
-	// Note: Validate performs the same lookups. Submit re-fetches independently
-	// because the handler does not guarantee Validate was called first, and the
-	// data may have changed between the two calls.
-
 	env, err := s.envs.GetByName(ctx, req.ProjectID, req.EnvironmentName)
 	if errors.Is(err, api.ErrNotFound) {
 		return nil, s.environmentNotFound(ctx, req.ProjectID, req.EnvironmentName)
@@ -80,7 +75,6 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		return nil, fmt.Errorf("lookup environment %q: %w", req.EnvironmentName, err)
 	}
 
-	// Resolve environment-specific overrides to produce final ServiceConfig
 	svcConfig, err := s.resolver.Resolve(&req.OverridableConfig, env.Name)
 	if err != nil {
 		return nil, fmt.Errorf("resolve config for environment %q: %w", env.Name, err)
@@ -150,8 +144,6 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 	return d, nil
 }
 
-// validateDependencyInputs requires inputs to cover exactly the declared
-// dependencies, so a submit with inputs never lands in awaiting_input.
 func validateDependencyInputs(declared map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) error {
 	var errs api.ValidationErrors
 	for _, name := range slices.Sorted(maps.Keys(declared)) {
@@ -171,10 +163,6 @@ func validateDependencyInputs(declared map[string]serviceconfig.DependencyDeclar
 }
 
 func (s *deploymentService) launchCommand(ctx context.Context, command *domain.Command, deploymentId uuid.UUID) error {
-	// Persist before publishing. CommandQueued only wakes the agent, which then
-	// asks for the next queued command by querying this table — and a wake that
-	// finds nothing is never retried, so publishing first can strand the command
-	// in 'queued' forever.
 	if err := s.deploymentInfo.CreateCommand(ctx, command); err != nil {
 		return err
 	}
@@ -328,18 +316,15 @@ func (s *deploymentService) Cancel(ctx context.Context, deploymentID uuid.UUID) 
 		return fmt.Errorf("get deployment: %w", err)
 	}
 
-	// Check if deployment is already in a terminal state
 	if d.Status == api.DeploymentStatusSucceeded || d.Status == api.DeploymentStatusFailed {
 		return api.Conflict("deployment %s has already %s and can no longer be cancelled", deploymentID, d.Status)
 	}
 
-	// Update status to failed
 	now := time.Now()
 	if err := s.deploymentInfo.UpdateStatus(ctx, deploymentID, api.DeploymentStatusCancelled, &now); err != nil {
 		return fmt.Errorf("update deployment status: %w", err)
 	}
 
-	// Cancel any queued commands
 	if err := s.deploymentInfo.UpdateCommandsByDeployment(ctx, deploymentID, domain.CommandStatusQueued, domain.CommandStatusCancelled); err != nil {
 		return fmt.Errorf("cancel queued commands: %w", err)
 	}
@@ -347,9 +332,6 @@ func (s *deploymentService) Cancel(ctx context.Context, deploymentID uuid.UUID) 
 	return nil
 }
 
-// Start subscribes to every handler->service topic and drives the deployment
-// state machine in response. Returns an error if any subscription fails.
-// Blocks until ctx is cancelled.
 func (s *deploymentService) Start(ctx context.Context) error {
 	var unsubs []func()
 	defer func() {
