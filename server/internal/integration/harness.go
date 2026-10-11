@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	_ "github.com/lib/pq"
@@ -34,14 +35,49 @@ type TestHarness struct {
 	WsAddr     string // "127.0.0.1:<port>" (without ws:// prefix, for agent connection)
 	AdminToken string // JWT admin token for this harness
 
+	timing Timing
 	server *httptest.Server
 	cancel context.CancelFunc
+}
+
+// Timing holds the liveness deadlines and retry settings of the deployment
+// service's sweep. The zero value means the service defaults.
+type Timing struct {
+	QueueTimeout      time.Duration
+	AckTimeout        time.Duration
+	CommandTimeout    time.Duration
+	Grace             time.Duration
+	OrphanTimeout     time.Duration
+	SweepInterval     time.Duration
+	HeartbeatInterval time.Duration
+	MaxAttempts       int
+}
+
+// FastTiming shrinks every deadline so tests about recovery and timeouts
+// finish in seconds.
+var FastTiming = Timing{
+	QueueTimeout:      2 * time.Second,
+	AckTimeout:        1 * time.Second,
+	CommandTimeout:    1 * time.Second,
+	Grace:             500 * time.Millisecond,
+	OrphanTimeout:     3 * time.Second,
+	SweepInterval:     200 * time.Millisecond,
+	HeartbeatInterval: 300 * time.Millisecond,
+	MaxAttempts:       3,
 }
 
 // NewTestHarness creates a new test harness with a running server.
 // The server uses the database at the given connection string and the given
 // RabbitMQ AMQP URL.
 func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
+	t.Helper()
+	return NewTestHarnessWithTiming(t, connStr, amqpURL, Timing{})
+}
+
+// NewTestHarnessWithTiming is NewTestHarness with the given sweep timing.
+// The deployment service has no sweep yet, so the timing is only stored; the
+// PR that adds the sweep passes it to service.NewDeploymentService.
+func NewTestHarnessWithTiming(t *testing.T, connStr string, amqpURL string, timing Timing) *TestHarness {
 	t.Helper()
 
 	db, err := sql.Open("postgres", connStr)
@@ -129,6 +165,7 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 		BaseURL:    server.URL,
 		WsAddr:     wsAddr,
 		AdminToken: adminToken,
+		timing:     timing,
 		server:     server,
 		cancel:     cancel,
 	}

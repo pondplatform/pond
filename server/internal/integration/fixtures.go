@@ -90,3 +90,43 @@ func SubmitRequest(scenario ScenarioResult, cfg serviceconfig.ServiceConfig, ima
 		CreateIfNotExists: true,
 	}
 }
+
+// ServiceConfigWithDeps returns a ServiceConfig declaring the given
+// dependencies, keyed by name with the dependency type as value.
+func ServiceConfigWithDeps(name string, deps map[string]string) serviceconfig.ServiceConfig {
+	cfg := MinimalServiceConfig(name)
+	cfg.Dependencies = make(map[string]serviceconfig.DependencyDeclaration, len(deps))
+	for depName, depType := range deps {
+		cfg.Dependencies[depName] = serviceconfig.DependencyDeclaration{Type: depType}
+	}
+	return cfg
+}
+
+// WithConfigValues adds an app.yaml config file carrying values, so template
+// placeholders in them are rendered when helm values are generated.
+func WithConfigValues(cfg serviceconfig.ServiceConfig, values map[string]any) serviceconfig.ServiceConfig {
+	cfg.Configs = map[string]serviceconfig.ConfigFileSpec{
+		"app.yaml": {Format: "yaml", MountDir: "/etc/app", Values: values},
+	}
+	return cfg
+}
+
+// PostgresOutput is a tofu.apply output for a postgres dependency. It
+// deliberately has no username: the postgres spec declares that field, so
+// {{postgres.username}} passes up-front validation and fails only at render
+// time, after the dependency has succeeded.
+var PostgresOutput = map[string]any{
+	"host":     "db.test.local",
+	"port":     5432,
+	"database": "testdb",
+}
+
+// PostgresUserConfig carries every postgres output field, as an unmanaged
+// dependency must.
+var PostgresUserConfig = map[string]any{
+	"host":     "db.example.com",
+	"port":     5432,
+	"username": "app",
+	"password": "app-password",
+	"database": "app",
+}

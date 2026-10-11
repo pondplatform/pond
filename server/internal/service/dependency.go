@@ -239,9 +239,6 @@ func (s *dependencyService) HandleCommandResult(ctx context.Context, commandID u
 	return nil
 }
 
-// BuildContexts unmarshals raw dependency outputs into a name→values map for
-// helm value generation. All deps — managed (tofu outputs) and non-managed
-// (user_config, pre-seeded at scheduling time) — are present in rawOutputs.
 func (s *dependencyService) BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error) {
 	contexts := make(map[string]map[string]any, len(rawOutputs))
 	for depName, raw := range rawOutputs {

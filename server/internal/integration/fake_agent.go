@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"testing"
 	"time"
 
 	agentconn "github.com/pondplatform/pond/agent/connection"
@@ -25,6 +26,12 @@ type Behavior struct {
 
 	// PreResultDelay introduces a pause before sending the result.
 	PreResultDelay time.Duration
+
+	// Gate, if set, holds every command after its ack until the channel is
+	// closed, so a test can act while the command is in flight and then let
+	// the result arrive late. A gate that is never closed means "acked, never
+	// replies".
+	Gate <-chan struct{}
 }
 
 // DefaultBehavior succeeds every command immediately with empty output.
@@ -134,6 +141,14 @@ func (a *FakeAgent) Run(ctx context.Context) error {
 				}
 			}
 
+			if a.behavior.Gate != nil {
+				select {
+				case <-a.behavior.Gate:
+				case <-ctx.Done():
+					return nil
+				}
+			}
+
 			// Optional delay
 			if a.behavior.PreResultDelay > 0 {
 				select {
@@ -185,6 +200,37 @@ func (a *FakeAgent) ReceivedCommands() []*wire.CommandPayload {
 	result := make([]*wire.CommandPayload, len(a.Commands))
 	copy(result, a.Commands)
 	return result
+}
+
+// WaitForCommands blocks until the agent has received at least n commands,
+// and fails the test if that takes longer than 5 seconds.
+func (a *FakeAgent) WaitForCommands(ctx context.Context, t *testing.T, n int) []*wire.CommandPayload {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		cmds := a.ReceivedCommands()
+		if len(cmds) >= n {
+			return cmds
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fake agent received %d commands within 5s, want at least %d", len(cmds), n)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context done while waiting for %d commands: %v", n, ctx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// NewGate returns a gate for Behavior.Gate and the function that opens it.
+// The gate is also opened when the test ends.
+func NewGate(t *testing.T) (<-chan struct{}, func()) {
+	ch := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(ch) }) }
+	t.Cleanup(release)
+	return ch, release
 }
 
 // TofuOutputBehavior returns a behavior that succeeds tofu.apply commands
