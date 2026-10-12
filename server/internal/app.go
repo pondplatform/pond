@@ -77,20 +77,18 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	log.Info("rabbitmq connected")
 
 	// Services
-	depSvc := service.NewDependencyService(specRegistry, envStore, deploymentInfoStore)
 	helmGenerator := helmgen.NewGenerator()
 	tmplRenderer := service.NewTemplateRenderer()
 	resolver := config.NewResolver()
-	deploySvc := service.NewDeploymentService(
+	deploySvc, eventRouter := service.NewDeploymentService(
 		deploymentInfoStore, serviceStore, envStore,
-		depSvc, helmGenerator, tmplRenderer, resolver,
+		specRegistry, helmGenerator, tmplRenderer, resolver,
 		tx, topics, log.WithGroup("deployment"),
 	)
 
-	// Start the deployment service event loop (subscribes to all state-machine topics).
-	log.Info("starting deployment service event loop")
+	log.Info("starting deployment event router")
 	svcErr := make(chan error, 1)
-	go func() { svcErr <- deploySvc.Start(ctx) }()
+	go func() { svcErr <- eventRouter.Start(ctx) }()
 
 	// Agent handler
 	agentConnSvc := service.NewAgentConnectionService(topics)

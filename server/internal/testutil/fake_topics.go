@@ -112,7 +112,6 @@ type MockTopics struct {
 	AgentReady        FakeTopic[events.AgentReady]
 	CommandStarted    FakeTopic[events.CommandStarted]
 	AgentDisconnected FakeTopic[events.AgentDisconnected]
-	UserInputProvided FakeTopic[events.UserInputProvided]
 	CommandQueued     FakeKeyedTopic[events.CommandQueued]
 	CommandDispatch   FakeKeyedTopic[events.CommandDispatch]
 }
@@ -152,13 +151,6 @@ func (m *MockTopics) AgentDisconnectedPublisher() events.Publisher[events.AgentD
 }
 func (m *MockTopics) AgentDisconnectedSubscriber() events.Subscriber[events.AgentDisconnected] {
 	return &m.AgentDisconnected
-}
-
-func (m *MockTopics) UserInputProvidedPublisher() events.Publisher[events.UserInputProvided] {
-	return &m.UserInputProvided
-}
-func (m *MockTopics) UserInputProvidedSubscriber() events.Subscriber[events.UserInputProvided] {
-	return &m.UserInputProvided
 }
 
 func (m *MockTopics) CommandQueuedPublisher(clusterID uuid.UUID) events.Publisher[events.CommandQueued] {

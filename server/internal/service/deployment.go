@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pondplatform/pond/server/internal/dependency"
 	"github.com/pondplatform/pond/server/internal/events"
 	"github.com/pondplatform/pond/server/internal/helmgen"
-	domain "github.com/pondplatform/pond/server/internal/model/db"
+	"github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
 	"github.com/pondplatform/pond/shared/server/api"
 	"github.com/pondplatform/pond/shared/serviceconfig"
@@ -24,124 +25,185 @@ type deploymentService struct {
 	deploymentInfo store.DeploymentInfoStore
 	services       store.ServiceRepository
 	envs           store.EnvironmentRepository
-	depSvc         DependencyService
-	helmGen        helmgen.HelmValuesGenerator
-	tmplRenderer   TemplateRenderer
+	dependencies   dependencyService
+	stateMachine   deploymentStateMachine
 	resolver       config.ConfigResolver
 	tx             Transactor
-	topics         events.Topics
-	log            *slog.Logger
 }
 
 func NewDeploymentService(
 	deploymentInfo store.DeploymentInfoStore,
 	services store.ServiceRepository,
 	envs store.EnvironmentRepository,
-	depSvc DependencyService,
+	specs dependency.SpecRegistry,
 	helmGen helmgen.HelmValuesGenerator,
 	tmplRenderer TemplateRenderer,
 	resolver config.ConfigResolver,
 	tx Transactor,
 	topics events.Topics,
 	log *slog.Logger,
-) DeploymentService {
-	return &deploymentService{
-		deploymentInfo: deploymentInfo,
-		services:       services,
+) (DeploymentService, *EventRouter) {
+	dependencies := &internalDependencyService{
+		specs:          specs,
 		envs:           envs,
-		depSvc:         depSvc,
+		deploymentInfo: deploymentInfo,
+		tx:             tx,
+		topics:         topics,
+	}
+	machine := &stateMachine{
+		deploymentInfo: deploymentInfo,
+		envs:           envs,
+		dependencies:   dependencies,
 		helmGen:        helmGen,
 		tmplRenderer:   tmplRenderer,
-		resolver:       resolver,
 		tx:             tx,
 		topics:         topics,
 		log:            log,
 	}
+	service := &deploymentService{
+		deploymentInfo: deploymentInfo,
+		services:       services,
+		envs:           envs,
+		dependencies:   dependencies,
+		stateMachine:   machine,
+		resolver:       resolver,
+		tx:             tx,
+	}
+	router := &EventRouter{
+		deploymentInfo: deploymentInfo,
+		stateMachine:   machine,
+		topics:         topics,
+		log:            log,
+	}
+	return service, router
 }
 
-func (s *deploymentService) GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error) {
+func (s *deploymentService) GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]db.CommandLog, error) {
 	if _, err := s.deploymentInfo.GetCommand(ctx, commandID); err != nil {
 		return nil, err
 	}
 	return s.deploymentInfo.GetCommandLogs(ctx, commandID)
 }
 
-func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (*domain.Deployment, error) {
-	env, err := s.envs.GetByName(ctx, req.ProjectID, req.EnvironmentName)
+func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (*db.Deployment, error) {
+	env, err := s.lookupEnvironment(ctx, req.ProjectID, req.EnvironmentName)
+	if err != nil {
+		return nil, err
+	}
+	svcConfig, err := s.resolveServiceConfig(req, env.Name)
+	if err != nil {
+		return nil, err
+	}
+	svc, err := s.getOrCreateService(ctx, req, svcConfig.Name)
+	if err != nil {
+		return nil, err
+	}
+	previous, err := s.previousDependencies(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+
+	deployment := newDeployment(req, svc.ID, env.ID, *svcConfig)
+	dependencies := newDependencyDeployments(deployment, req.Dependencies, previous)
+	deployment.Status = initialStatus(dependencies)
+
+	if err := s.createDeployment(ctx, deployment, dependencies); err != nil {
+		return nil, err
+	}
+	if err := s.stateMachine.InitializeDeployment(ctx, deployment, dependencies); err != nil {
+		return nil, err
+	}
+	return &deployment, nil
+}
+
+func (s *deploymentService) lookupEnvironment(ctx context.Context, projectID uuid.UUID, name string) (*db.Environment, error) {
+	env, err := s.envs.GetByName(ctx, projectID, name)
 	if errors.Is(err, api.ErrNotFound) {
-		return nil, s.environmentNotFound(ctx, req.ProjectID, req.EnvironmentName)
+		return nil, s.environmentNotFound(ctx, projectID, name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("lookup environment %q: %w", req.EnvironmentName, err)
+		return nil, fmt.Errorf("lookup environment %q: %w", name, err)
 	}
+	return env, nil
+}
 
-	svcConfig, err := s.resolver.Resolve(&req.OverridableConfig, env.Name)
+func (s *deploymentService) resolveServiceConfig(req api.SubmitRequest, envName string) (*serviceconfig.ServiceConfig, error) {
+	svcConfig, err := s.resolver.Resolve(&req.OverridableConfig, envName)
 	if err != nil {
-		return nil, fmt.Errorf("resolve config for environment %q: %w", env.Name, err)
+		return nil, fmt.Errorf("resolve config for environment %q: %w", envName, err)
 	}
-
 	// Reject a malformed config here rather than letting it reach the cluster as
 	// a failed rollout the user has to read helm output to understand.
 	if err := config.Validate(svcConfig); err != nil {
 		return nil, err
 	}
-
 	if req.Dependencies != nil {
 		if err := validateDependencyInputs(svcConfig.Dependencies, req.Dependencies); err != nil {
 			return nil, err
 		}
 	}
+	return svcConfig, nil
+}
 
-	svc, err := s.services.GetByName(ctx, req.ProjectID, svcConfig.Name)
-	if err != nil {
-		if !errors.Is(err, api.ErrNotFound) || !req.CreateIfNotExists {
-			return nil, fmt.Errorf("lookup service %q: %w", svcConfig.Name, err)
-		}
-		svc = &domain.Service{
-			ID:        uuid.New(),
-			ProjectID: req.ProjectID,
-			Name:      svcConfig.Name,
-			CreatedAt: time.Now(),
-		}
-		if err := s.services.Create(ctx, svc); err != nil {
-			return nil, fmt.Errorf("create service %q: %w", svcConfig.Name, err)
-		}
+func (s *deploymentService) getOrCreateService(ctx context.Context, req api.SubmitRequest, name string) (*db.Service, error) {
+	svc, err := s.services.GetByName(ctx, req.ProjectID, name)
+	if err == nil {
+		return svc, nil
 	}
+	if !errors.Is(err, api.ErrNotFound) || !req.CreateIfNotExists {
+		return nil, fmt.Errorf("lookup service %q: %w", name, err)
+	}
+	svc = &db.Service{
+		ID:        uuid.New(),
+		ProjectID: req.ProjectID,
+		Name:      name,
+		CreatedAt: time.Now(),
+	}
+	if err := s.services.Create(ctx, svc); err != nil {
+		return nil, fmt.Errorf("create service %q: %w", name, err)
+	}
+	return svc, nil
+}
 
-	// --- writes (all in one transaction) ---
+func (s *deploymentService) previousDependencies(ctx context.Context, svc *db.Service) (map[string]db.DependencyDeployment, error) {
+	if svc.CurrentDeploymentID == nil {
+		return nil, nil
+	}
+	dependencies, err := s.deploymentInfo.ListDepConfigs(ctx, *svc.CurrentDeploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("list dependencies of the current deployment: %w", err)
+	}
+	byName := make(map[string]db.DependencyDeployment, len(dependencies))
+	for _, d := range dependencies {
+		byName[d.DependencyName] = d
+	}
+	return byName, nil
+}
 
-	var d *domain.Deployment
-	var status domain.DependencyDeploymentStatus
-	err = s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
-		now := time.Now()
-		d = &domain.Deployment{
-			ID:                    uuid.New(),
-			ServiceID:             svc.ID,
-			EnvironmentID:         env.ID,
-			ImageTag:              req.ImageTag,
-			ServiceConfigSnapshot: *svcConfig,
-			Status:                api.DeploymentStatusAwaitingInput,
-			TriggeredBy:           req.TriggeredBy,
-			CreatedAt:             now,
-		}
+func newDeployment(req api.SubmitRequest, serviceID, environmentID uuid.UUID, svcConfig serviceconfig.ServiceConfig) db.Deployment {
+	return db.Deployment{
+		ID:                    uuid.New(),
+		ServiceID:             serviceID,
+		EnvironmentID:         environmentID,
+		ImageTag:              req.ImageTag,
+		ServiceConfigSnapshot: svcConfig,
+		TriggeredBy:           req.TriggeredBy,
+		CreatedAt:             time.Now(),
+	}
+}
 
-		if err := tx.DeploymentInfo.Create(ctx, d); err != nil {
+func (s *deploymentService) createDeployment(ctx context.Context, deployment db.Deployment, dependencies []db.DependencyDeployment) error {
+	return s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
+		if err := tx.DeploymentInfo.Create(ctx, &deployment); err != nil {
 			return fmt.Errorf("create deployment: %w", err)
 		}
-
-		var err error
-		status, err = s.depSvc.CreateDependencyDeployments(ctx, tx, svc, d, req.Dependencies)
-		return err
+		for i := range dependencies {
+			if err := tx.DeploymentInfo.CreateDepConfig(ctx, &dependencies[i]); err != nil {
+				return fmt.Errorf("create dependency %q: %w", dependencies[i].DependencyName, err)
+			}
+		}
+		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	if err := s.advanceOnDependencyStatus(ctx, d, env, status); err != nil {
-		return nil, err
-	}
-
-	return d, nil
 }
 
 func validateDependencyInputs(declared map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) error {
@@ -151,60 +213,61 @@ func validateDependencyInputs(declared map[string]serviceconfig.DependencyDeclar
 			errs.Add("dependency", name, "missing input")
 		}
 	}
-	for _, name := range slices.Sorted(maps.Keys(inputs)) {
-		if _, ok := declared[name]; !ok {
-			errs.Add("dependency", name, "not declared in service config")
-		}
-	}
+	addUndeclaredInputErrors(&errs, declared, inputs)
 	if errs.HasErrors() {
 		return &errs
 	}
 	return nil
 }
 
-func (s *deploymentService) launchCommand(ctx context.Context, command *domain.Command, deploymentId uuid.UUID) error {
-	if err := s.deploymentInfo.CreateCommand(ctx, command); err != nil {
-		return err
+func validateDeclaredInputs(declared map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) error {
+	var errs api.ValidationErrors
+	addUndeclaredInputErrors(&errs, declared, inputs)
+	if errs.HasErrors() {
+		return &errs
 	}
-
-	if err := s.topics.CommandQueuedPublisher(command.ClusterID).Publish(ctx, events.CommandQueued{
-		ClusterID:    command.ClusterID,
-		CommandID:    command.ID,
-		DeploymentID: deploymentId,
-	}); err != nil {
-		return fmt.Errorf("notify cluster %s of queued command: %w", command.ClusterID, err)
-	}
-
 	return nil
 }
 
+func addUndeclaredInputErrors(errs *api.ValidationErrors, declared map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) {
+	for _, name := range slices.Sorted(maps.Keys(inputs)) {
+		if _, ok := declared[name]; !ok {
+			errs.Add("dependency", name, "not declared in service config")
+		}
+	}
+}
+
 func (s *deploymentService) ConfigureDeployment(ctx context.Context, deploymentID uuid.UUID, inputs map[string]api.DependencyInput) error {
-	for depName, input := range inputs {
-		cfg, err := s.deploymentInfo.GetDepConfig(ctx, deploymentID, depName)
-		if err != nil {
-			return fmt.Errorf("get dep config %q: %w", depName, err)
-		}
-
-		managed := input.Managed
-		cfg.Managed = &managed
-		if input.Managed {
-			cfg.ProviderInputs = input.Values
-		} else {
-			cfg.UserConfig = input.Values
-		}
-		cfg.Status = domain.DependencyDeploymentStatusPending
-
-		if err := s.deploymentInfo.UpdateDepConfig(ctx, cfg); err != nil {
-			return fmt.Errorf("update dep config %q: %w", depName, err)
-		}
+	deployment, err := s.deploymentInfo.GetByID(ctx, deploymentID)
+	if err != nil {
+		return fmt.Errorf("get deployment: %w", err)
+	}
+	if err := validateDeclaredInputs(deployment.ServiceConfigSnapshot.Dependencies, inputs); err != nil {
+		return err
+	}
+	current, err := s.deploymentInfo.ListDepConfigs(ctx, deploymentID)
+	if err != nil {
+		return fmt.Errorf("list dependencies: %w", err)
 	}
 
-	if err := s.topics.UserInputProvidedPublisher().Publish(ctx, events.UserInputProvided{
-		DeploymentID: deploymentID,
-	}); err != nil {
-		return fmt.Errorf("notify user input provided: %w", err)
+	dependencies := applyInputs(current, inputs)
+	if err := s.saveConfiguredDependencies(ctx, dependencies, inputs); err != nil {
+		return err
 	}
+	return s.stateMachine.InitializeDeployment(ctx, *deployment, dependencies)
+}
 
+// saveConfiguredDependencies writes only the rows named in inputs: rewriting
+// the others could overwrite a status a command result has just recorded.
+func (s *deploymentService) saveConfiguredDependencies(ctx context.Context, dependencies []db.DependencyDeployment, inputs map[string]api.DependencyInput) error {
+	for i := range dependencies {
+		if _, ok := inputs[dependencies[i].DependencyName]; !ok {
+			continue
+		}
+		if err := s.deploymentInfo.UpdateDepConfig(ctx, &dependencies[i]); err != nil {
+			return fmt.Errorf("update dependency %q: %w", dependencies[i].DependencyName, err)
+		}
+	}
 	return nil
 }
 
@@ -230,7 +293,7 @@ func (s *deploymentService) GetStatus(ctx context.Context, deploymentID uuid.UUI
 		commandIDs[*d.HelmCommandID] = struct{}{}
 	}
 
-	commands := make([]*domain.Command, 0, len(commandIDs))
+	commands := make([]*db.Command, 0, len(commandIDs))
 	for id := range commandIDs {
 		cmd, err := s.deploymentInfo.GetCommand(ctx, id)
 		if err != nil {
@@ -296,7 +359,7 @@ func (s *deploymentService) Validate(ctx context.Context, req api.SubmitRequest)
 		}
 	}
 
-	if err := s.depSvc.Validate(ctx, svcConfig.Dependencies); err != nil {
+	if err := s.dependencies.Validate(ctx, svcConfig.Dependencies); err != nil {
 		result.Valid = false
 		if ve, ok := err.(*api.ValidationErrors); ok {
 			result.Errors = append(result.Errors, ve.Errors...)
@@ -306,7 +369,7 @@ func (s *deploymentService) Validate(ctx context.Context, req api.SubmitRequest)
 	return result, nil
 }
 
-func (s *deploymentService) ListByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error) {
+func (s *deploymentService) ListByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *db.DeploymentStatus, limit int, cursor string) ([]db.Deployment, error) {
 	return s.deploymentInfo.ListByServiceFiltered(ctx, serviceID, environmentID, status, limit, cursor)
 }
 
@@ -325,55 +388,11 @@ func (s *deploymentService) Cancel(ctx context.Context, deploymentID uuid.UUID) 
 		return fmt.Errorf("update deployment status: %w", err)
 	}
 
-	if err := s.deploymentInfo.UpdateCommandsByDeployment(ctx, deploymentID, domain.CommandStatusQueued, domain.CommandStatusCancelled); err != nil {
+	if err := s.deploymentInfo.UpdateCommandsByDeployment(ctx, deploymentID, db.CommandStatusQueued, db.CommandStatusCancelled); err != nil {
 		return fmt.Errorf("cancel queued commands: %w", err)
 	}
 
 	return nil
-}
-
-func (s *deploymentService) Start(ctx context.Context) error {
-	var unsubs []func()
-	defer func() {
-		for _, u := range unsubs {
-			u()
-		}
-	}()
-
-	for _, subscribe := range []func() (func(), error){
-		func() (func(), error) {
-			return s.topics.CommandResultsSubscriber().Subscribe(ctx, s.handleCommandResult)
-		},
-		func() (func(), error) {
-			return s.topics.AgentReadySubscriber().Subscribe(ctx, s.handleAgentReady)
-		},
-		func() (func(), error) {
-			return s.topics.CommandStartedSubscriber().Subscribe(ctx, s.handleCommandStarted)
-		},
-		func() (func(), error) {
-			return s.topics.CommandLogsSubscriber().Subscribe(ctx, s.handleCommandLog)
-		},
-		func() (func(), error) {
-			return s.topics.AgentDisconnectedSubscriber().Subscribe(ctx, s.handleAgentDisconnected)
-		},
-		func() (func(), error) {
-			return s.topics.UserInputProvidedSubscriber().Subscribe(ctx, s.handleUserInputProvided)
-		},
-	} {
-		unsub, err := subscribe()
-		if err != nil {
-			return err
-		}
-		unsubs = append(unsubs, unsub)
-	}
-
-	<-ctx.Done()
-	return nil
-}
-
-func (s *deploymentService) storeDeploymentError(ctx context.Context, deploymentId uuid.UUID, err error) error {
-	now := time.Now()
-	return s.deploymentInfo.SetFailed(ctx, deploymentId, err.Error(), &now)
 }
 
 // environmentNotFound lists the project's environments, since a typo in the

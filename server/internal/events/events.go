@@ -61,12 +61,6 @@ type AgentDisconnected struct {
 	ClusterID uuid.UUID
 }
 
-// UserInputProvided is published when a user provides input for all awaiting
-// dependencies on a deployment.
-type UserInputProvided struct {
-	DeploymentID uuid.UUID
-}
-
 // topics is the single place where every domain topic's name, payload type
 // and delivery mode is defined.
 type topics struct {
@@ -77,7 +71,6 @@ type topics struct {
 	agentReady        *topic[AgentReady]
 	commandStarted    *topic[CommandStarted]
 	agentDisconnected *topic[AgentDisconnected]
-	userInputProvided *topic[UserInputProvided]
 }
 
 func newTopics(b broker) *topics {
@@ -88,7 +81,6 @@ func newTopics(b broker) *topics {
 		agentReady:        newTopic[AgentReady](b, "agent.ready", work),
 		commandStarted:    newTopic[CommandStarted](b, "command.started", work),
 		agentDisconnected: newTopic[AgentDisconnected](b, "agent.disconnected", work),
-		userInputProvided: newTopic[UserInputProvided](b, "user_input.provided", work),
 	}
 }
 
@@ -117,13 +109,6 @@ func (t *topics) AgentDisconnectedPublisher() Publisher[AgentDisconnected] {
 }
 func (t *topics) AgentDisconnectedSubscriber() Subscriber[AgentDisconnected] {
 	return t.agentDisconnected
-}
-
-func (t *topics) UserInputProvidedPublisher() Publisher[UserInputProvided] {
-	return t.userInputProvided
-}
-func (t *topics) UserInputProvidedSubscriber() Subscriber[UserInputProvided] {
-	return t.userInputProvided
 }
 
 func (t *topics) CommandQueuedPublisher(clusterID uuid.UUID) Publisher[CommandQueued] {

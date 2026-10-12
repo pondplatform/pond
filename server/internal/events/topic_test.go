@@ -75,7 +75,6 @@ func TestTopics_RoundTrip(t *testing.T) {
 	roundTrip(t, tp.AgentReadyPublisher(), tp.AgentReadySubscriber(), AgentReady{ClusterID: clusterID})
 	roundTrip(t, tp.CommandStartedPublisher(), tp.CommandStartedSubscriber(), CommandStarted{CommandID: uuid.New()})
 	roundTrip(t, tp.AgentDisconnectedPublisher(), tp.AgentDisconnectedSubscriber(), AgentDisconnected{ClusterID: clusterID})
-	roundTrip(t, tp.UserInputProvidedPublisher(), tp.UserInputProvidedSubscriber(), UserInputProvided{DeploymentID: uuid.New()})
 	roundTrip(t, tp.CommandQueuedPublisher(clusterID), tp.CommandQueuedSubscriber(clusterID), CommandQueued{
 		ClusterID: clusterID, CommandID: uuid.New(), DeploymentID: uuid.New(),
 	})
@@ -100,7 +99,6 @@ func TestTopics_NamesAndDelivery(t *testing.T) {
 		tp.AgentReadyPublisher().Publish(ctx, AgentReady{}),
 		tp.CommandStartedPublisher().Publish(ctx, CommandStarted{}),
 		tp.AgentDisconnectedPublisher().Publish(ctx, AgentDisconnected{}),
-		tp.UserInputProvidedPublisher().Publish(ctx, UserInputProvided{}),
 		tp.CommandQueuedPublisher(clusterID).Publish(ctx, CommandQueued{}),
 		tp.CommandDispatchPublisher(clusterID).Publish(ctx, CommandDispatch{}),
 	}
@@ -111,12 +109,11 @@ func TestTopics_NamesAndDelivery(t *testing.T) {
 	}
 
 	want := map[string]delivery{
-		"command.results":     work,
-		"command.logs":        fanout,
-		"agent.ready":         work,
-		"command.started":     work,
-		"agent.disconnected":  work,
-		"user_input.provided": work,
+		"command.results":    work,
+		"command.logs":       fanout,
+		"agent.ready":        work,
+		"command.started":    work,
+		"agent.disconnected": work,
 		"cluster." + clusterID.String() + ".command.queued":   work,
 		"cluster." + clusterID.String() + ".command.dispatch": work,
 	}

@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/server/internal/events"
-	domain "github.com/pondplatform/pond/server/internal/model/db"
+	"github.com/pondplatform/pond/server/internal/model/db"
 )
 
 type agentConnectionService struct {
@@ -23,7 +23,7 @@ func (s *agentConnectionService) NewSession(clusterID uuid.UUID, log *slog.Logge
 		clusterID:  clusterID,
 		topics:     s.topics,
 		log:        log,
-		dispatchCh: make(chan *domain.Command, 1),
+		dispatchCh: make(chan *db.Command, 1),
 		wakeCh:     make(chan struct{}, 1),
 	}
 }
@@ -32,12 +32,12 @@ type agentSession struct {
 	clusterID  uuid.UUID
 	topics     events.Topics
 	log        *slog.Logger
-	dispatchCh chan *domain.Command
+	dispatchCh chan *db.Command
 	wakeCh     chan struct{}
 	unsubs     []func()
 }
 
-func (s *agentSession) Start(ctx context.Context) (<-chan *domain.Command, <-chan struct{}, error) {
+func (s *agentSession) Start(ctx context.Context) (<-chan *db.Command, <-chan struct{}, error) {
 	unsubDispatch, err := s.topics.CommandDispatchSubscriber(s.clusterID).Subscribe(ctx, func(_ context.Context, e events.CommandDispatch) {
 		select {
 		case s.dispatchCh <- e.Cmd:
@@ -68,7 +68,7 @@ func (s *agentSession) Start(ctx context.Context) (<-chan *domain.Command, <-cha
 	return s.dispatchCh, s.wakeCh, nil
 }
 
-func (s *agentSession) RequestNext(ctx context.Context) *domain.Command {
+func (s *agentSession) RequestNext(ctx context.Context) *db.Command {
 	if err := s.topics.AgentReadyPublisher().Publish(ctx, events.AgentReady{ClusterID: s.clusterID}); err != nil {
 		s.log.Error("publish agent ready", "err", err)
 		return nil

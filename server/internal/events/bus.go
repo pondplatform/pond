@@ -41,9 +41,6 @@ type Topics interface {
 	AgentDisconnectedPublisher() Publisher[AgentDisconnected]
 	AgentDisconnectedSubscriber() Subscriber[AgentDisconnected]
 
-	UserInputProvidedPublisher() Publisher[UserInputProvided]
-	UserInputProvidedSubscriber() Subscriber[UserInputProvided]
-
 	CommandQueuedPublisher(clusterID uuid.UUID) Publisher[CommandQueued]
 	CommandQueuedSubscriber(clusterID uuid.UUID) Subscriber[CommandQueued]
 

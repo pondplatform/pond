@@ -115,15 +115,14 @@ func NewTestHarnessWithTiming(t *testing.T, connStr string, amqpURL string, timi
 	}
 	t.Cleanup(rmq.Close)
 
-	depSvc := service.NewDependencyService(specRegistry, envStore, deploymentInfoStore)
 	helmGenerator := helmgen.NewGenerator()
 	tmplRenderer := service.NewTemplateRenderer()
 	resolver := config.NewResolver()
-	deploySvc := service.NewDeploymentService(
+	deploySvc, eventRouter := service.NewDeploymentService(
 		deploymentInfoStore,
 		serviceStore,
 		envStore,
-		depSvc,
+		specRegistry,
 		helmGenerator,
 		tmplRenderer,
 		resolver,
@@ -132,8 +131,7 @@ func NewTestHarnessWithTiming(t *testing.T, connStr string, amqpURL string, timi
 		log.WithGroup("deployment"),
 	)
 
-	// Start the deployment service event loop
-	go deploySvc.Start(ctx)
+	go eventRouter.Start(ctx)
 
 	// Create the agent handler and router
 	agentConnSvc := service.NewAgentConnectionService(topics)

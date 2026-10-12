@@ -2,14 +2,13 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
-	domain "github.com/pondplatform/pond/server/internal/model/db"
+	"github.com/pondplatform/pond/server/internal/events"
+	"github.com/pondplatform/pond/server/internal/model/db"
+	"github.com/pondplatform/pond/server/internal/store"
 	"github.com/pondplatform/pond/server/internal/testutil"
 	"github.com/pondplatform/pond/shared/server/api"
 	"github.com/pondplatform/pond/shared/serviceconfig"
@@ -26,53 +25,49 @@ func (m *MockTransactor) RunInTx(ctx context.Context, fn func(ctx context.Contex
 	return nil
 }
 
+// inlineTx runs every transaction directly against store.
+func inlineTx(s store.DeploymentInfoStore) *MockTransactor {
+	return &MockTransactor{
+		RunInTxFn: func(ctx context.Context, fn func(ctx context.Context, tx TxRepos) error) error {
+			return fn(ctx, TxRepos{DeploymentInfo: s})
+		},
+	}
+}
+
 type mockDependencyService struct {
-	createDependencyDeploymentsFn func(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment, inputs map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error)
-	dependencyDeploymentStatusFn  func(ctx context.Context, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error)
-	scheduleCommandsFn            func(ctx context.Context, deploymentId uuid.UUID) error
-	handleCommandResultFn         func(ctx context.Context, commandID uuid.UUID) error
-	buildContextsFn               func(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error)
-	validateFn                    func(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error
-}
-
-func (m *mockDependencyService) CreateDependencyDeployments(ctx context.Context, tx TxRepos, service *domain.Service, dep *domain.Deployment, inputs map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
-	if m.createDependencyDeploymentsFn != nil {
-		return m.createDependencyDeploymentsFn(ctx, tx, service, dep, inputs)
-	}
-	return domain.DependencyDeploymentStatusSucceeded, nil
-}
-
-func (m *mockDependencyService) DependencyDeploymentStatus(ctx context.Context, deploymentId uuid.UUID) (domain.DependencyDeploymentStatus, error) {
-	if m.dependencyDeploymentStatusFn != nil {
-		return m.dependencyDeploymentStatusFn(ctx, deploymentId)
-	}
-	return domain.DependencyDeploymentStatusSucceeded, nil
-}
-
-func (m *mockDependencyService) ScheduleCommands(ctx context.Context, deploymentId uuid.UUID) error {
-	if m.scheduleCommandsFn != nil {
-		return m.scheduleCommandsFn(ctx, deploymentId)
-	}
-	return nil
-}
-
-func (m *mockDependencyService) HandleCommandResult(ctx context.Context, commandID uuid.UUID) error {
-	if m.handleCommandResultFn != nil {
-		return m.handleCommandResultFn(ctx, commandID)
-	}
-	return nil
-}
-
-func (m *mockDependencyService) BuildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error) {
-	if m.buildContextsFn != nil {
-		return m.buildContextsFn(rawOutputs)
-	}
-	return map[string]map[string]any{}, nil
+	validateFn        func(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error
+	scheduleCommandFn func(ctx context.Context, deployment db.Deployment, dependency db.DependencyDeployment) error
 }
 
 func (m *mockDependencyService) Validate(ctx context.Context, deps map[string]serviceconfig.DependencyDeclaration) error {
 	if m.validateFn != nil {
 		return m.validateFn(ctx, deps)
+	}
+	return nil
+}
+
+func (m *mockDependencyService) ScheduleCommand(ctx context.Context, deployment db.Deployment, dependency db.DependencyDeployment) error {
+	if m.scheduleCommandFn != nil {
+		return m.scheduleCommandFn(ctx, deployment, dependency)
+	}
+	return nil
+}
+
+type mockStateMachine struct {
+	initializeDeploymentFn   func(ctx context.Context, deployment db.Deployment, dependencies []db.DependencyDeployment) error
+	advanceOnCommandResultFn func(ctx context.Context, result events.CommandResult) error
+}
+
+func (m *mockStateMachine) InitializeDeployment(ctx context.Context, deployment db.Deployment, dependencies []db.DependencyDeployment) error {
+	if m.initializeDeploymentFn != nil {
+		return m.initializeDeploymentFn(ctx, deployment, dependencies)
+	}
+	return nil
+}
+
+func (m *mockStateMachine) AdvanceOnCommandResult(ctx context.Context, result events.CommandResult) error {
+	if m.advanceOnCommandResultFn != nil {
+		return m.advanceOnCommandResultFn(ctx, result)
 	}
 	return nil
 }
@@ -98,187 +93,206 @@ func TestDeploymentService_Submit(t *testing.T) {
 	ctx := context.Background()
 	projectID := uuid.New()
 	envID := uuid.New()
-	clusterID := uuid.New()
 	svcID := uuid.New()
 
-	svcRepo := &testutil.MockServiceRepository{
-		GetByNameFn: func(ctx context.Context, pID uuid.UUID, name string) (*domain.Service, error) {
-			return &domain.Service{ID: svcID, ProjectID: pID, Name: name}, nil
-		},
-	}
+	svcRepo := &testutil.MockServiceRepository{}
 	envRepo := &testutil.MockEnvironmentRepository{
-		GetByNameFn: func(ctx context.Context, projectID uuid.UUID, name string) (*domain.Environment, error) {
-			return &domain.Environment{ID: envID, Name: name, ClusterID: clusterID}, nil
+		GetByNameFn: func(ctx context.Context, projectID uuid.UUID, name string) (*db.Environment, error) {
+			return &db.Environment{ID: envID, Name: name}, nil
 		},
 	}
 	infoStore := &testutil.MockDeploymentInfoStore{}
-	depSvc := &mockDependencyService{}
-	helmGen := &testutil.MockHelmValuesGenerator{}
-	topics := &testutil.MockTopics{}
-	tx := &MockTransactor{
-		RunInTxFn: func(ctx context.Context, fn func(ctx context.Context, tx TxRepos) error) error {
-			return fn(ctx, TxRepos{DeploymentInfo: infoStore})
-		},
+	machine := &mockStateMachine{}
+	tx := &MockTransactor{}
+	s := &deploymentService{
+		deploymentInfo: infoStore,
+		services:       svcRepo,
+		envs:           envRepo,
+		dependencies:   &mockDependencyService{},
+		stateMachine:   machine,
+		resolver:       &mockConfigResolver{},
+		tx:             tx,
 	}
 
-	tmplRenderer := NewTemplateRenderer()
-	resolver := &mockConfigResolver{}
-	s := NewDeploymentService(infoStore, svcRepo, envRepo, depSvc, helmGen, tmplRenderer, resolver, tx, topics, slog.Default())
-
-	t.Run("Submit without dependencies", func(t *testing.T) {
-		// No deps → CreateDependencyDeployments returns Succeeded → helm enqueued immediately.
-		depSvc.createDependencyDeploymentsFn = func(_ context.Context, _ TxRepos, _ *domain.Service, _ *domain.Deployment, _ map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
-			return domain.DependencyDeploymentStatusSucceeded, nil
+	// reset restores the defaults every subtest starts from.
+	reset := func() {
+		*svcRepo = testutil.MockServiceRepository{
+			GetByNameFn: func(ctx context.Context, pID uuid.UUID, name string) (*db.Service, error) {
+				return &db.Service{ID: svcID, ProjectID: pID, Name: name}, nil
+			},
 		}
+		*infoStore = testutil.MockDeploymentInfoStore{}
+		*machine = mockStateMachine{}
+		*tx = *inlineTx(infoStore)
+	}
 
-		var createdDep *domain.Deployment
-		infoStore.CreateFn = func(ctx context.Context, d *domain.Deployment) error {
-			createdDep = d
-			return nil
-		}
-
-		var createdCmd *domain.Command
-		infoStore.CreateCommandFn = func(ctx context.Context, cmd *domain.Command) error {
-			if cmd.ClusterID != clusterID {
-				t.Errorf("expected clusterID %v, got %v", clusterID, cmd.ClusterID)
-			}
-			createdCmd = cmd
-			return nil
-		}
-
-		infoStore.SetHelmCommandIDFn = func(ctx context.Context, dID uuid.UUID, cmdID uuid.UUID) error {
-			if dID != createdDep.ID {
-				t.Errorf("expected deploymentID %v, got %v", createdDep.ID, dID)
-			}
-			return nil
-		}
-
-		infoStore.GetDepOutputsByDeploymentFn = func(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error) {
-			return map[string]json.RawMessage{}, nil
-		}
-
-		req := SubmitRequest{
+	request := func(deps map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) SubmitRequest {
+		return SubmitRequest{
 			ProjectID:       projectID,
 			EnvironmentName: "staging",
 			OverridableConfig: serviceconfig.OverridableConfig{
 				ServiceConfig: serviceconfig.ServiceConfig{
-					Version: 1,
-					Name:    "my-service",
-					Image:   "ghcr.io/example/my-service",
+					Version:      1,
+					Name:         "my-service",
+					Image:        "ghcr.io/example/my-service",
+					Dependencies: deps,
 				},
 			},
-			ImageTag:    "v1",
-			TriggeredBy: "user",
+			ImageTag:     "v1",
+			TriggeredBy:  "user",
+			Dependencies: inputs,
+		}
+	}
+	dbDep := map[string]serviceconfig.DependencyDeclaration{"db": {Type: "postgres"}}
+
+	t.Run("without dependencies creates a pending deployment and initializes it", func(t *testing.T) {
+		reset()
+		var created *db.Deployment
+		infoStore.CreateFn = func(_ context.Context, d *db.Deployment) error {
+			created = d
+			return nil
+		}
+		var initialized *db.Deployment
+		machine.initializeDeploymentFn = func(_ context.Context, d db.Deployment, deps []db.DependencyDeployment) error {
+			initialized = &d
+			if len(deps) != 0 {
+				t.Errorf("expected no dependencies, got %+v", deps)
+			}
+			return nil
 		}
 
-		d, err := s.Submit(ctx, req)
+		d, err := s.Submit(ctx, request(nil, nil))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if d == nil {
-			t.Fatal("expected deployment, got nil")
+		if d.ServiceID != svcID || d.EnvironmentID != envID {
+			t.Errorf("expected service %v and environment %v, got %v and %v", svcID, envID, d.ServiceID, d.EnvironmentID)
 		}
-		if d.ServiceID != svcID {
-			t.Errorf("expected serviceID %v, got %v", svcID, d.ServiceID)
+		if d.Status != api.DeploymentStatusPending {
+			t.Errorf("expected status pending, got %v", d.Status)
 		}
-		if d.EnvironmentID != envID {
-			t.Errorf("expected environmentID %v, got %v", envID, d.EnvironmentID)
+		if created == nil || created.Status != api.DeploymentStatusPending {
+			t.Fatalf("expected the deployment to be stored as pending, got %+v", created)
 		}
-		if createdCmd == nil {
-			t.Fatal("expected created command, got nil")
-		}
-		if createdCmd.Type != domain.CommandTypeHelmUpgrade {
-			t.Errorf("expected command type helm.upgrade, got %s", createdCmd.Type)
-		}
-		if createdCmd.Status != domain.CommandStatusQueued {
-			t.Errorf("expected command status queued, got %s", createdCmd.Status)
+		if initialized == nil || initialized.ID != d.ID {
+			t.Errorf("expected the created deployment to be initialized, got %+v", initialized)
 		}
 	})
 
-	t.Run("Submit with first-time dependencies (awaiting input)", func(t *testing.T) {
-		// New deps with no prior config → awaiting_input → no commands created.
-		depSvc.createDependencyDeploymentsFn = func(_ context.Context, _ TxRepos, _ *domain.Service, _ *domain.Deployment, _ map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
-			return domain.DependencyDeploymentStatusAwaitingInput, nil
-		}
-
-		var updatedStatus domain.DeploymentStatus
-		infoStore.UpdateStatusFn = func(ctx context.Context, id uuid.UUID, status domain.DeploymentStatus, completedAt *time.Time) error {
-			updatedStatus = status
+	t.Run("with first-time dependencies awaits input", func(t *testing.T) {
+		reset()
+		var createdDeps []db.DependencyDeployment
+		infoStore.CreateDepConfigFn = func(_ context.Context, cfg *db.DependencyDeployment) error {
+			createdDeps = append(createdDeps, *cfg)
 			return nil
 		}
 
-		var createdCmdCount int
-		infoStore.CreateCommandFn = func(ctx context.Context, cmd *domain.Command) error {
-			createdCmdCount++
-			return nil
-		}
-
-		req := SubmitRequest{
-			ProjectID:       projectID,
-			EnvironmentName: "staging",
-			OverridableConfig: serviceconfig.OverridableConfig{
-				ServiceConfig: serviceconfig.ServiceConfig{
-					Version: 1,
-					Name:    "my-service",
-					Image:   "ghcr.io/example/my-service",
-					Dependencies: map[string]serviceconfig.DependencyDeclaration{
-						"db": {Type: "postgres"},
-					},
-				},
-			},
-			ImageTag:    "v1",
-			TriggeredBy: "user",
-		}
-
-		d, err := s.Submit(ctx, req)
+		d, err := s.Submit(ctx, request(dbDep, nil))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if d.Status != api.DeploymentStatusAwaitingInput {
 			t.Errorf("expected status awaiting_input, got %v", d.Status)
 		}
-		if updatedStatus != api.DeploymentStatusAwaitingInput {
-			t.Errorf("expected DB status awaiting_input, got %v", updatedStatus)
-		}
-		if createdCmdCount != 0 {
-			t.Errorf("expected no commands created, got %d", createdCmdCount)
+		if len(createdDeps) != 1 || createdDeps[0].Status != db.DependencyDeploymentStatusAwaitingInput {
+			t.Errorf("expected one awaiting_input dependency, got %+v", createdDeps)
 		}
 	})
 
-	t.Run("Submit rejects an invalid probe before writing anything", func(t *testing.T) {
+	t.Run("with inputs creates configured dependencies inside the transaction", func(t *testing.T) {
+		reset()
+		var inTx bool
+		tx.RunInTxFn = func(ctx context.Context, fn func(ctx context.Context, tx TxRepos) error) error {
+			inTx = true
+			defer func() { inTx = false }()
+			return fn(ctx, TxRepos{DeploymentInfo: infoStore})
+		}
+		infoStore.CreateDepConfigFn = func(_ context.Context, _ *db.DependencyDeployment) error {
+			if !inTx {
+				t.Error("dependency deployments must be created inside the transaction")
+			}
+			return nil
+		}
+		var initialized []db.DependencyDeployment
+		machine.initializeDeploymentFn = func(_ context.Context, _ db.Deployment, deps []db.DependencyDeployment) error {
+			initialized = deps
+			return nil
+		}
+
+		inputs := map[string]api.DependencyInput{"db": {Managed: true, Values: map[string]any{"instances": 1}}}
+		d, err := s.Submit(ctx, request(dbDep, inputs))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if d.Status != api.DeploymentStatusPending {
+			t.Errorf("expected status pending, got %v", d.Status)
+		}
+		if len(initialized) != 1 || !isManaged(initialized[0]) || initialized[0].ProviderInputs["instances"] != 1 {
+			t.Errorf("expected a managed db dependency with its inputs, got %+v", initialized)
+		}
+	})
+
+	t.Run("carries over the current deployment's dependency config", func(t *testing.T) {
+		reset()
+		currentID := uuid.New()
+		managed := true
+		svcRepo.GetByNameFn = func(_ context.Context, pID uuid.UUID, name string) (*db.Service, error) {
+			return &db.Service{ID: svcID, ProjectID: pID, Name: name, CurrentDeploymentID: &currentID}, nil
+		}
+		infoStore.ListDepConfigsFn = func(_ context.Context, id uuid.UUID) ([]db.DependencyDeployment, error) {
+			if id != currentID {
+				t.Errorf("expected dependencies of %v, got %v", currentID, id)
+			}
+			return []db.DependencyDeployment{{DependencyName: "db", Managed: &managed, ProviderInputs: map[string]any{"instances": 2}}}, nil
+		}
+		var initialized []db.DependencyDeployment
+		machine.initializeDeploymentFn = func(_ context.Context, _ db.Deployment, deps []db.DependencyDeployment) error {
+			initialized = deps
+			return nil
+		}
+
+		d, err := s.Submit(ctx, request(dbDep, nil))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if d.Status != api.DeploymentStatusPending {
+			t.Errorf("expected status pending, got %v", d.Status)
+		}
+		if len(initialized) != 1 || initialized[0].Status != db.DependencyDeploymentStatusPending || initialized[0].ProviderInputs["instances"] != 2 {
+			t.Errorf("expected the db config carried over as pending, got %+v", initialized)
+		}
+	})
+
+	t.Run("propagates an initialization error", func(t *testing.T) {
+		reset()
+		initErr := errors.New("broker down")
+		machine.initializeDeploymentFn = func(context.Context, db.Deployment, []db.DependencyDeployment) error {
+			return initErr
+		}
+		if _, err := s.Submit(ctx, request(nil, nil)); !errors.Is(err, initErr) {
+			t.Fatalf("expected initialization error, got %v", err)
+		}
+	})
+
+	t.Run("rejects an invalid probe before writing anything", func(t *testing.T) {
+		reset()
 		var createCalled bool
-		infoStore.CreateFn = func(ctx context.Context, d *domain.Deployment) error {
+		infoStore.CreateFn = func(ctx context.Context, d *db.Deployment) error {
 			createCalled = true
 			return nil
 		}
 
-		req := SubmitRequest{
-			ProjectID:       projectID,
-			EnvironmentName: "staging",
-			OverridableConfig: serviceconfig.OverridableConfig{
-				ServiceConfig: serviceconfig.ServiceConfig{
-					Version: 1,
-					Name:    "my-service",
-					Image:   "ghcr.io/example/my-service",
-					Deployment: &serviceconfig.DeploymentSpec{
-						Management: &serviceconfig.ManagementConfig{
-							// No leading slash, and no service port to resolve against.
-							ReadinessProbe: &serviceconfig.Probe{
-								HTTPGet: &serviceconfig.HTTPGetAction{Path: "health"},
-							},
-						},
-					},
+		req := request(nil, nil)
+		req.OverridableConfig.ServiceConfig.Deployment = &serviceconfig.DeploymentSpec{
+			Management: &serviceconfig.ManagementConfig{
+				// No leading slash, and no service port to resolve against.
+				ReadinessProbe: &serviceconfig.Probe{
+					HTTPGet: &serviceconfig.HTTPGetAction{Path: "health"},
 				},
 			},
-			ImageTag:    "v1",
-			TriggeredBy: "user",
 		}
 
 		_, err := s.Submit(ctx, req)
-		if err == nil {
-			t.Fatal("expected a validation error")
-		}
-
 		var ve *api.ValidationErrors
 		if !errors.As(err, &ve) {
 			t.Fatalf("expected *api.ValidationErrors so the handler returns 422, got %T: %v", err, err)
@@ -291,121 +305,7 @@ func TestDeploymentService_Submit(t *testing.T) {
 		}
 	})
 
-	t.Run("Submit with prior managed dependencies (schedule immediately)", func(t *testing.T) {
-		// Re-deployment: deps have prior config → status=pending → ScheduleCommands called.
-		depSvc.createDependencyDeploymentsFn = func(_ context.Context, _ TxRepos, _ *domain.Service, _ *domain.Deployment, _ map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
-			return domain.DependencyDeploymentStatusPending, nil
-		}
-
-		var scheduleCommandsCalled bool
-		depSvc.scheduleCommandsFn = func(_ context.Context, deploymentId uuid.UUID) error {
-			scheduleCommandsCalled = true
-			return nil
-		}
-
-		req := SubmitRequest{
-			ProjectID:       projectID,
-			EnvironmentName: "staging",
-			OverridableConfig: serviceconfig.OverridableConfig{
-				ServiceConfig: serviceconfig.ServiceConfig{
-					Version: 1,
-					Name:    "my-service",
-					Image:   "ghcr.io/example/my-service",
-					Dependencies: map[string]serviceconfig.DependencyDeclaration{
-						"db": {Type: "postgres"},
-					},
-				},
-			},
-			ImageTag:    "v1",
-			TriggeredBy: "user",
-		}
-
-		d, err := s.Submit(ctx, req)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if d == nil {
-			t.Fatal("expected deployment, got nil")
-		}
-		if !scheduleCommandsCalled {
-			t.Error("expected ScheduleCommands to be called")
-		}
-	})
-
-	withDBDep := func(deps map[string]api.DependencyInput) SubmitRequest {
-		return SubmitRequest{
-			ProjectID:       projectID,
-			EnvironmentName: "staging",
-			OverridableConfig: serviceconfig.OverridableConfig{
-				ServiceConfig: serviceconfig.ServiceConfig{
-					Version: 1,
-					Name:    "my-service",
-					Image:   "ghcr.io/example/my-service",
-					Dependencies: map[string]serviceconfig.DependencyDeclaration{
-						"db": {Type: "postgres"},
-					},
-				},
-			},
-			ImageTag:     "v1",
-			TriggeredBy:  "user",
-			Dependencies: deps,
-		}
-	}
-
-	t.Run("Submit with inputs forwards them inside the transaction and schedules", func(t *testing.T) {
-		inputs := map[string]api.DependencyInput{"db": {Managed: true, Values: map[string]any{"instances": 1}}}
-
-		var inTx bool
-		tx.RunInTxFn = func(ctx context.Context, fn func(ctx context.Context, tx TxRepos) error) error {
-			inTx = true
-			defer func() { inTx = false }()
-			return fn(ctx, TxRepos{DeploymentInfo: infoStore})
-		}
-
-		var forwarded map[string]api.DependencyInput
-		depSvc.createDependencyDeploymentsFn = func(_ context.Context, _ TxRepos, _ *domain.Service, _ *domain.Deployment, got map[string]api.DependencyInput) (domain.DependencyDeploymentStatus, error) {
-			if !inTx {
-				t.Error("dependency deployments must be created inside the transaction")
-			}
-			forwarded = got
-			return domain.DependencyDeploymentStatusPending, nil
-		}
-
-		var scheduleCommandsCalled bool
-		depSvc.scheduleCommandsFn = func(_ context.Context, _ uuid.UUID) error {
-			scheduleCommandsCalled = true
-			return nil
-		}
-
-		d, err := s.Submit(ctx, withDBDep(inputs))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if d.Status != api.DeploymentStatusPending {
-			t.Errorf("expected status pending, got %v", d.Status)
-		}
-		if forwarded["db"].Managed != true || forwarded["db"].Values["instances"] != 1 {
-			t.Errorf("expected inputs forwarded unchanged, got %+v", forwarded)
-		}
-		if !scheduleCommandsCalled {
-			t.Error("expected ScheduleCommands to be called")
-		}
-	})
-
-	t.Run("Submit rejects incomplete or unknown inputs before writing anything", func(t *testing.T) {
-		svcRepo.GetByNameFn = func(context.Context, uuid.UUID, string) (*domain.Service, error) {
-			return nil, api.ErrNotFound
-		}
-		var serviceCreated, txRan bool
-		svcRepo.CreateFn = func(context.Context, *domain.Service) error {
-			serviceCreated = true
-			return nil
-		}
-		tx.RunInTxFn = func(context.Context, func(ctx context.Context, tx TxRepos) error) error {
-			txRan = true
-			return nil
-		}
-
+	t.Run("rejects incomplete or unknown inputs before writing anything", func(t *testing.T) {
 		cases := map[string]struct {
 			inputs map[string]api.DependencyInput
 			want   []api.ValidationError
@@ -421,7 +321,21 @@ func TestDeploymentService_Submit(t *testing.T) {
 		}
 		for name, tc := range cases {
 			t.Run(name, func(t *testing.T) {
-				req := withDBDep(tc.inputs)
+				reset()
+				svcRepo.GetByNameFn = func(context.Context, uuid.UUID, string) (*db.Service, error) {
+					return nil, api.ErrNotFound
+				}
+				var serviceCreated, txRan bool
+				svcRepo.CreateFn = func(context.Context, *db.Service) error {
+					serviceCreated = true
+					return nil
+				}
+				tx.RunInTxFn = func(context.Context, func(ctx context.Context, tx TxRepos) error) error {
+					txRan = true
+					return nil
+				}
+
+				req := request(dbDep, tc.inputs)
 				req.CreateIfNotExists = true
 				_, err := s.Submit(ctx, req)
 
@@ -446,34 +360,97 @@ func TestDeploymentService_Submit(t *testing.T) {
 }
 
 func TestConfigureDeployment(t *testing.T) {
+	ctx := context.Background()
 	deploymentID := uuid.New()
-	store := &testutil.MockDeploymentInfoStore{
-		GetDepConfigFn: func(_ context.Context, _ uuid.UUID, name string) (*domain.DependencyDeployment, error) {
-			return &domain.DependencyDeployment{}, nil
+	deployment := &db.Deployment{
+		ID: deploymentID,
+		ServiceConfigSnapshot: serviceconfig.ServiceConfig{
+			Dependencies: map[string]serviceconfig.DependencyDeclaration{
+				"db":    {Type: "postgres"},
+				"cache": {Type: "http-service"},
+			},
 		},
-		UpdateDepConfigFn: func(_ context.Context, _ *domain.DependencyDeployment) error { return nil },
 	}
-	inputs := map[string]api.DependencyInput{"db": {Managed: true}}
+	current := []db.DependencyDeployment{
+		{DependencyName: "cache", Status: db.DependencyDeploymentStatusAwaitingInput},
+		{DependencyName: "db", Status: db.DependencyDeploymentStatusAwaitingInput},
+	}
 
-	t.Run("publishes UserInputProvided", func(t *testing.T) {
-		topics := &testutil.MockTopics{}
-		svc := makeAdvanceSvc(store, nil, nil, nil, topics)
-		if err := svc.ConfigureDeployment(context.Background(), deploymentID, inputs); err != nil {
+	makeService := func(store *testutil.MockDeploymentInfoStore, machine *mockStateMachine) *deploymentService {
+		if store.GetByIDFn == nil {
+			store.GetByIDFn = func(context.Context, uuid.UUID) (*db.Deployment, error) { return deployment, nil }
+		}
+		store.ListDepConfigsFn = func(context.Context, uuid.UUID) ([]db.DependencyDeployment, error) {
+			return append([]db.DependencyDeployment(nil), current...), nil
+		}
+		return &deploymentService{deploymentInfo: store, stateMachine: machine}
+	}
+
+	t.Run("writes only the configured rows and initializes with all dependencies", func(t *testing.T) {
+		var updated []db.DependencyDeployment
+		store := &testutil.MockDeploymentInfoStore{
+			UpdateDepConfigFn: func(_ context.Context, cfg *db.DependencyDeployment) error {
+				updated = append(updated, *cfg)
+				return nil
+			},
+		}
+		var initialized []db.DependencyDeployment
+		machine := &mockStateMachine{
+			initializeDeploymentFn: func(_ context.Context, d db.Deployment, deps []db.DependencyDeployment) error {
+				if d.ID != deploymentID {
+					t.Errorf("expected deployment %v, got %v", deploymentID, d.ID)
+				}
+				initialized = deps
+				return nil
+			},
+		}
+
+		inputs := map[string]api.DependencyInput{"db": {Managed: true, Values: map[string]any{"instances": 1}}}
+		if err := makeService(store, machine).ConfigureDeployment(ctx, deploymentID, inputs); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		published := topics.UserInputProvided.Published()
-		if len(published) != 1 || published[0].DeploymentID != deploymentID {
-			t.Errorf("expected one UserInputProvided for %v, got %+v", deploymentID, published)
+		if len(updated) != 1 || updated[0].DependencyName != "db" || !isManaged(updated[0]) || updated[0].Status != db.DependencyDeploymentStatusPending {
+			t.Errorf("expected only db updated to managed pending, got %+v", updated)
+		}
+		if len(initialized) != 2 {
+			t.Fatalf("expected both dependencies passed to the state machine, got %+v", initialized)
+		}
+		if initialized[0].Status != db.DependencyDeploymentStatusAwaitingInput || initialized[1].Status != db.DependencyDeploymentStatusPending {
+			t.Errorf("expected cache still awaiting input and db pending, got %+v", initialized)
 		}
 	})
 
-	t.Run("propagates publish error", func(t *testing.T) {
-		publishErr := errors.New("broker down")
-		topics := &testutil.MockTopics{}
-		topics.UserInputProvided.PublishErr = publishErr
-		svc := makeAdvanceSvc(store, nil, nil, nil, topics)
-		if err := svc.ConfigureDeployment(context.Background(), deploymentID, inputs); !errors.Is(err, publishErr) {
-			t.Fatalf("expected publish error, got %v", err)
+	t.Run("rejects undeclared inputs before writing anything", func(t *testing.T) {
+		store := &testutil.MockDeploymentInfoStore{
+			UpdateDepConfigFn: func(context.Context, *db.DependencyDeployment) error {
+				t.Error("no dependency should be written when inputs are rejected")
+				return nil
+			},
+		}
+		machine := &mockStateMachine{
+			initializeDeploymentFn: func(context.Context, db.Deployment, []db.DependencyDeployment) error {
+				t.Error("the state machine must not run when inputs are rejected")
+				return nil
+			},
+		}
+
+		inputs := map[string]api.DependencyInput{"db": {Managed: true}, "nope": {Managed: true}}
+		err := makeService(store, machine).ConfigureDeployment(ctx, deploymentID, inputs)
+		var ve *api.ValidationErrors
+		if !errors.As(err, &ve) {
+			t.Fatalf("expected *api.ValidationErrors, got %T: %v", err, err)
+		}
+	})
+
+	t.Run("unknown deployment is not found", func(t *testing.T) {
+		store := &testutil.MockDeploymentInfoStore{
+			GetByIDFn: func(context.Context, uuid.UUID) (*db.Deployment, error) {
+				return nil, api.NotFound("deployment not found")
+			},
+		}
+		err := makeService(store, &mockStateMachine{}).ConfigureDeployment(ctx, deploymentID, nil)
+		if !errors.Is(err, api.ErrNotFound) {
+			t.Fatalf("expected not found, got %v", err)
 		}
 	})
 }
