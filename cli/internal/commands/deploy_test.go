@@ -92,6 +92,68 @@ func TestDeployInputWithoutDependenciesKeyStillSendsInput(t *testing.T) {
 	}
 }
 
+func TestDeployDefaultsToEnvInputFile(t *testing.T) {
+	for _, tc := range []struct{ name, content string }{
+		{"pond-input-prod.yml", "dependencies:\n  db:\n    managed: true\n    values:\n      instances: 1\n"},
+		{"pond-input-prod.json", `{"dependencies": {"db": {"managed": true, "values": {"instances": 1}}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			pondFile := filepath.Join(dir, "pond.yml")
+			writeFile(t, pondFile, deployTestPondYml)
+			writeFile(t, filepath.Join(dir, tc.name), tc.content)
+			writeFile(t, filepath.Join(dir, "pond-input-dev.yml"), "dependencies:\n  db:\n    managed: false\n")
+
+			c := newFakeClient()
+			if _, err := runDeployCmd(t, c, "-f", pondFile, "-t", "v1"); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(c.submitted) != 1 {
+				t.Fatalf("expected one submit, got %d", len(c.submitted))
+			}
+			db := c.submitted[0].Dependencies["db"]
+			if !db.Managed || db.Values["instances"] != float64(1) {
+				t.Errorf("expected managed db with instances=1 from %s, got %+v", tc.name, c.submitted[0].Dependencies)
+			}
+		})
+	}
+}
+
+func TestDeployExplicitInputOverridesEnvInputFile(t *testing.T) {
+	dir := t.TempDir()
+	pondFile := filepath.Join(dir, "pond.yml")
+	inputFile := filepath.Join(dir, "input.json")
+	writeFile(t, pondFile, deployTestPondYml)
+	writeFile(t, inputFile, `{"dependencies": {"db": {"managed": true}}}`)
+	writeFile(t, filepath.Join(dir, "pond-input-prod.yml"), "dependencies:\n  db:\n    managed: false\n")
+
+	c := newFakeClient()
+	if _, err := runDeployCmd(t, c, "-f", pondFile, "-t", "v1", "--input", inputFile); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(c.submitted) != 1 || !c.submitted[0].Dependencies["db"].Managed {
+		t.Fatalf("expected --input to win over pond-input-prod.yml, got %+v", c.submitted)
+	}
+}
+
+func TestDeployAmbiguousEnvInputFilesFailBeforeSubmit(t *testing.T) {
+	dir := t.TempDir()
+	pondFile := filepath.Join(dir, "pond.yml")
+	writeFile(t, pondFile, deployTestPondYml)
+	writeFile(t, filepath.Join(dir, "pond-input-prod.yml"), "dependencies: {}\n")
+	writeFile(t, filepath.Join(dir, "pond-input-prod.json"), `{"dependencies": {}}`)
+
+	c := newFakeClient()
+	if _, err := runDeployCmd(t, c, "-f", pondFile, "-t", "v1"); err == nil {
+		t.Fatal("expected an error when both pond-input-prod.yml and pond-input-prod.json exist")
+	}
+	if len(c.submitted) != 0 {
+		t.Errorf("expected no submit, got %d", len(c.submitted))
+	}
+}
+
 func TestDeployMalformedInputFailsBeforeSubmit(t *testing.T) {
 	dir := t.TempDir()
 	pondFile := filepath.Join(dir, "pond.yml")

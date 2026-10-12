@@ -150,17 +150,19 @@ pond deploy [flags]
 |---|---|---|
 | `-f, --pond-file` | `./pond.yml` | Path to the service definition file |
 | `-t, --tag` | _(required)_ | Image tag to deploy |
-| `-i, --input` | | Path to a JSON file with input for dependencies; see [Dependencies](../services/dependencies.md) for the format |
+| `-i, --input` | `pond-input-<env>.yml` or `.json`, if present | Path to a JSON or YAML file with input for dependencies; see [Dependencies](../services/dependencies.md) for the format |
 | `--wait` | `false` | Block until the deployment reaches a terminal state |
 
 Without `--wait`, the command prints the deployment ID and exits. With `--wait`, it polls every 2 seconds and exits when the deployment succeeds, fails or is cancelled.
 
-Every dependency declared in `pond.yml` needs input. A dependency missing from `--input` reuses the input of the service's previous deployment, as long as its type is unchanged. If a dependency has input from neither, or the file names a dependency that is not declared, the server rejects the request and creates nothing. The first deployment of a service with dependencies therefore needs `--input`.
+Every dependency declared in `pond.yml` needs input. A dependency missing from `--input` reuses the input of the service's previous deployment, as long as its type is unchanged. If a dependency has input from neither, or the file names a dependency that is not declared, the server rejects the request and creates nothing. The first deployment of a service with dependencies therefore needs input.
+
+Without `--input`, the command looks for `pond-input-<env>.yml` or `pond-input-<env>.json` in the directory of the pond file, where `<env>` is the resolved environment, and uses it if present. If both exist, the command fails; remove one or pass `--input`. Files ending in `.yml` or `.yaml` are read as YAML, everything else as JSON.
 
 **Examples:**
 
 ```sh
-pond deploy --tag v1.2.3 --wait
+pond deploy --tag v1.2.3 --wait                                   # uses ./pond-input-<env>.yml or .json if present
 pond deploy --tag v1.2.3 --input ./deploy-input.json --wait
 ```
 

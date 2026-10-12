@@ -3,9 +3,12 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +17,7 @@ import (
 	api "github.com/pondplatform/pond/shared/server/api"
 	"github.com/pondplatform/pond/shared/serviceconfig/config"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 func NewDeployCmd() *cobra.Command {
@@ -61,6 +65,15 @@ func NewDeployCmd() *cobra.Command {
 				CreateIfNotExists: true,
 			}
 
+			if inputPath == "" {
+				inputPath, err = defaultInputPath(filepath.Dir(filePath), resolved.Env)
+				if err != nil {
+					return err
+				}
+				if inputPath != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Using input from %s\n", inputPath)
+				}
+			}
 			if inputPath != "" {
 				deps, err := readDependencyInput(inputPath)
 				if err != nil {
@@ -85,7 +98,7 @@ func NewDeployCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&filePath, "pond-file", "f", "./pond.yml", "Path to pond.yml")
 	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Image tag to deploy")
-	cmd.Flags().StringVarP(&inputPath, "input", "i", "", "Path to JSON file with input for every dependency (same format as 'deployment configure')")
+	cmd.Flags().StringVarP(&inputPath, "input", "i", "", "Path to a JSON or YAML file with input for dependencies (default: pond-input-<env>.yml or .json next to the pond file, if present)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for completion")
 	cmd.MarkFlagRequired("tag")
 
@@ -119,6 +132,26 @@ func waitForDeployment(ctx context.Context, out io.Writer, c client.ServerClient
 	}
 }
 
+func defaultInputPath(dir, env string) (string, error) {
+	var found []string
+	for _, ext := range []string{".yml", ".json"} {
+		p := filepath.Join(dir, "pond-input-"+env+ext)
+		if _, err := os.Stat(p); err == nil {
+			found = append(found, p)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("check input %q: %w", p, err)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", nil
+	case 1:
+		return found[0], nil
+	default:
+		return "", fmt.Errorf("both %s and %s exist: remove one or pass --input", found[0], found[1])
+	}
+}
+
 // readDependencyInput never returns a nil map: on submit, nil means "reuse the
 // previous deployment's input", and a file without a dependencies key must not
 // silently mean that.
@@ -126,6 +159,17 @@ func readDependencyInput(path string) (map[string]api.DependencyInput, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read input %q: %w", path, err)
+	}
+
+	// YAML goes through JSON so the api types' json tags stay the one source of field names.
+	if ext := filepath.Ext(path); ext == ".yml" || ext == ".yaml" {
+		var v any
+		if err := yaml.Unmarshal(data, &v); err != nil {
+			return nil, fmt.Errorf("parse input %q: %w", path, err)
+		}
+		if data, err = json.Marshal(v); err != nil {
+			return nil, fmt.Errorf("parse input %q: %w", path, err)
+		}
 	}
 
 	var req api.ConfigureDeploymentRequest
