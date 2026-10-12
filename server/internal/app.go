@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	_ "github.com/lib/pq"
 	dbmigrate "github.com/pondplatform/pond/server/db"
@@ -25,6 +26,9 @@ type Config struct {
 	// Configured via the POND_ADMIN_KEY environment variable.
 	AdminKey  string
 	JWTSecret string
+	// StopCheckInterval is how often an agent connection checks whether the
+	// command its agent runs should be cancelled. Zero means 2s.
+	StopCheckInterval time.Duration
 }
 
 func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
@@ -94,6 +98,11 @@ func Build(db *sql.DB, cfg Config, log *slog.Logger) http.Handler {
 		repos, store.NewTransactor(db), specRegistry, config.NewResolver(), log.WithGroup("deployment"),
 	)
 
+	stopCheck := cfg.StopCheckInterval
+	if stopCheck <= 0 {
+		stopCheck = 2 * time.Second
+	}
+
 	jwtSecret := []byte(cfg.JWTSecret)
 	return api.NewRouter(api.RouterDeps{
 		DeploySvc:     deploySvc,
@@ -103,7 +112,7 @@ func Build(db *sql.DB, cfg Config, log *slog.Logger) http.Handler {
 		Clusters:      repos.Clusters,
 		JWTSecret:     jwtSecret,
 		SpecRegistry:  specRegistry,
-		AgentHandler:  api.NewAgentHandler(repos.Clusters, agents, log.WithGroup("agent_handler")),
+		AgentHandler:  api.NewAgentHandler(repos.Clusters, agents, stopCheck, log.WithGroup("agent_handler")),
 		Authenticator: auth.NewAdminKeyAuthenticator(cfg.AdminKey, auth.NewJWTAuthenticator(jwtSecret)),
 		Authorizer:    auth.NewRoleAuthorizer(),
 		Log:           log.WithGroup("http"),

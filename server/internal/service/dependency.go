@@ -23,7 +23,7 @@ func newTofuApplyCommand(deployment db.Deployment, env db.Environment, dependenc
 	if err != nil {
 		return nil, fmt.Errorf("build tofu payload for dependency %q: %w", dependency.DependencyName, err)
 	}
-	return newCommand(env.ClusterID, deployment.ID, db.CommandTypeTofuApply, phaseDependencies, payload), nil
+	return newCommand(env.ClusterID, deployment.ID, db.CommandTypeTofuApply, payload), nil
 }
 
 func buildContexts(rawOutputs map[string]json.RawMessage) (map[string]map[string]any, error) {

@@ -55,7 +55,6 @@ CREATE TABLE deployments
     service_config_snapshot JSONB       NOT NULL,
     status                  TEXT        NOT NULL DEFAULT 'in_progress',
     triggered_by            TEXT,
-    helm_command_id         UUID,
     error                   TEXT,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at            TIMESTAMPTZ
@@ -77,18 +76,15 @@ CREATE TABLE dependency_deployments
     UNIQUE (deployment_id, dependency_name)
 );
 
--- A deployment's commands run in phases: dependencies (0), then the rollout
--- (1). A command waits until every command of its deployment in a lower phase
--- has succeeded. A payload built from an earlier phase's outputs is written
--- when its own phase starts, so it is empty until then.
+-- A command is created only once it can run: a deployment's tofu commands at
+-- submit, its helm command once every dependency is ready.
 CREATE TABLE commands
 (
     id            UUID PRIMARY KEY,
     cluster_id    UUID        NOT NULL REFERENCES clusters (id),
     deployment_id UUID        NOT NULL REFERENCES deployments (id),
     type          TEXT        NOT NULL,
-    phase         INT         NOT NULL DEFAULT 0,
-    payload       JSONB,
+    payload       JSONB       NOT NULL,
     status        TEXT        NOT NULL DEFAULT 'queued',
     output        JSONB,
     error         TEXT,

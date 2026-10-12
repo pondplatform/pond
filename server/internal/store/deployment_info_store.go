@@ -29,12 +29,17 @@ type rowScanner interface {
 
 // ── Deployment operations ────────────────────────────────────────────────────
 
-// startedSQL is true once an agent has picked up any command of deployment d.
-const startedSQL = `EXISTS (SELECT 1 FROM commands c WHERE c.deployment_id = d.id AND c.status <> '` +
-	string(domain.CommandStatusQueued) + `')`
+// startedSQL is true once an agent has picked up any command of deployment d;
+// stoppingSQL while an agent is still running one.
+const (
+	startedSQL = `EXISTS (SELECT 1 FROM commands c WHERE c.deployment_id = d.id AND c.status <> '` +
+		string(domain.CommandStatusQueued) + `')`
+	stoppingSQL = `EXISTS (SELECT 1 FROM commands c WHERE c.deployment_id = d.id AND c.status = '` +
+		string(domain.CommandStatusDispatched) + `')`
+)
 
 const deploymentColumns = `d.id, d.service_id, d.environment_id, d.image_tag, d.service_config_snapshot,
-	d.status, d.triggered_by, d.helm_command_id, d.created_at, d.completed_at, d.error, ` + startedSQL
+	d.status, d.triggered_by, d.created_at, d.completed_at, d.error, ` + startedSQL + `, ` + stoppingSQL
 
 func scanDeployment(row rowScanner) (*domain.Deployment, error) {
 	var d domain.Deployment
@@ -42,7 +47,7 @@ func scanDeployment(row rowScanner) (*domain.Deployment, error) {
 	var triggeredBy sql.NullString
 	if err := row.Scan(
 		&d.ID, &d.ServiceID, &d.EnvironmentID, &d.ImageTag, &configJSON,
-		&d.Status, &triggeredBy, &d.HelmCommandID, &d.CreatedAt, &d.CompletedAt, &d.Error, &d.Started,
+		&d.Status, &triggeredBy, &d.CreatedAt, &d.CompletedAt, &d.Error, &d.Started, &d.Stopping,
 	); err != nil {
 		return nil, err
 	}
@@ -84,7 +89,8 @@ func (s *deploymentInfoStore) ListByServiceFiltered(ctx context.Context, service
 	}
 
 	if status != nil {
-		// pending and running are both in_progress, told apart by startedSQL.
+		// Some API statuses share a stored one; startedSQL and stoppingSQL tell
+		// them apart, as Deployment.APIStatus does.
 		stored := domain.DeploymentState(*status)
 		switch *status {
 		case api.DeploymentStatusPending:
@@ -93,6 +99,11 @@ func (s *deploymentInfoStore) ListByServiceFiltered(ctx context.Context, service
 		case api.DeploymentStatusRunning:
 			stored = domain.DeploymentInProgress
 			query += " AND " + startedSQL
+		case api.DeploymentStatusCancelling:
+			stored = domain.DeploymentCancelled
+			query += " AND " + stoppingSQL
+		case api.DeploymentStatusCancelled:
+			query += " AND NOT " + stoppingSQL
 		}
 		query += fmt.Sprintf(" AND d.status = $%d", argIdx)
 		args = append(args, stored)
@@ -133,10 +144,10 @@ func (s *deploymentInfoStore) Create(ctx context.Context, d *domain.Deployment) 
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO deployments
 		        (id, service_id, environment_id, image_tag, service_config_snapshot,
-		         status, triggered_by, helm_command_id, created_at, completed_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		         status, triggered_by, created_at, completed_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		d.ID, d.ServiceID, d.EnvironmentID, d.ImageTag, configJSON,
-		d.Status, d.TriggeredBy, d.HelmCommandID, d.CreatedAt, d.CompletedAt,
+		d.Status, d.TriggeredBy, d.CreatedAt, d.CompletedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("create deployment: %w", err)
@@ -157,19 +168,17 @@ func (s *deploymentInfoStore) SaveDeployment(ctx context.Context, d *domain.Depl
 
 // ── Command operations ───────────────────────────────────────────────────────
 
-const commandColumns = `id, cluster_id, deployment_id, type, phase, payload, status, output, error, created_at, updated_at`
+const commandColumns = `id, cluster_id, deployment_id, type, payload, status, output, error, created_at, updated_at`
 
 func scanCommand(row rowScanner) (*domain.Command, error) {
 	var cmd domain.Command
 	var payload, output []byte
 	var errStr sql.NullString
-	if err := row.Scan(&cmd.ID, &cmd.ClusterID, &cmd.DeploymentID, &cmd.Type, &cmd.Phase, &payload, &cmd.Status,
+	if err := row.Scan(&cmd.ID, &cmd.ClusterID, &cmd.DeploymentID, &cmd.Type, &payload, &cmd.Status,
 		&output, &errStr, &cmd.CreatedAt, &cmd.UpdatedAt); err != nil {
 		return nil, err
 	}
-	if payload != nil {
-		cmd.Payload = payload
-	}
+	cmd.Payload = payload
 	if output != nil {
 		cmd.Output = output
 	}
@@ -197,9 +206,9 @@ func (s *deploymentInfoStore) listCommands(ctx context.Context, query string, ar
 
 func (s *deploymentInfoStore) CreateCommand(ctx context.Context, cmd *domain.Command) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO commands (id, cluster_id, deployment_id, type, phase, payload, status, output, error, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		cmd.ID, cmd.ClusterID, cmd.DeploymentID, cmd.Type, cmd.Phase, nullableJSON(cmd.Payload), cmd.Status,
+		`INSERT INTO commands (id, cluster_id, deployment_id, type, payload, status, output, error, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		cmd.ID, cmd.ClusterID, cmd.DeploymentID, cmd.Type, []byte(cmd.Payload), cmd.Status,
 		nullableJSON(cmd.Output), cmd.Error, cmd.CreatedAt, cmd.UpdatedAt,
 	)
 	if err != nil {
@@ -221,8 +230,8 @@ func (s *deploymentInfoStore) GetCommand(ctx context.Context, id uuid.UUID) (*do
 
 func (s *deploymentInfoStore) UpdateCommand(ctx context.Context, cmd *domain.Command) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET payload = $2, status = $3, output = $4, error = $5, updated_at = $6 WHERE id = $1`,
-		cmd.ID, nullableJSON(cmd.Payload), cmd.Status, nullableJSON(cmd.Output), cmd.Error, cmd.UpdatedAt,
+		`UPDATE commands SET status = $2, output = $3, error = $4, updated_at = $5 WHERE id = $1`,
+		cmd.ID, cmd.Status, nullableJSON(cmd.Output), cmd.Error, cmd.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("update command: %w", err)
@@ -232,7 +241,7 @@ func (s *deploymentInfoStore) UpdateCommand(ctx context.Context, cmd *domain.Com
 
 func (s *deploymentInfoStore) ListCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error) {
 	return s.listCommands(ctx,
-		`SELECT `+commandColumns+` FROM commands WHERE deployment_id = $1 ORDER BY phase, created_at, id`,
+		`SELECT `+commandColumns+` FROM commands WHERE deployment_id = $1 ORDER BY created_at, id`,
 		deploymentID,
 	)
 }
@@ -242,17 +251,13 @@ func (s *deploymentInfoStore) ClaimNextCommand(ctx context.Context, clusterID uu
 	// getting a different command.
 	cmd, err := scanCommand(s.db.QueryRowContext(ctx,
 		`UPDATE commands SET status = $2, updated_at = $3
-		  WHERE id = (
-		        SELECT c.id FROM commands c JOIN deployments d ON d.id = c.deployment_id
-		         WHERE c.cluster_id = $1 AND c.status = $4 AND d.status = $5
-		           AND NOT EXISTS (SELECT 1 FROM commands p
-		                            WHERE p.deployment_id = c.deployment_id AND p.phase < c.phase AND p.status <> $6)
-		         ORDER BY c.created_at, c.id
-		         LIMIT 1
-		           FOR UPDATE OF c SKIP LOCKED)
+		  WHERE id = (SELECT id FROM commands
+		               WHERE cluster_id = $1 AND status = $4
+		               ORDER BY created_at, id
+		               LIMIT 1
+		                 FOR UPDATE SKIP LOCKED)
 		 RETURNING `+commandColumns,
-		clusterID, domain.CommandStatusDispatched, at,
-		domain.CommandStatusQueued, domain.DeploymentInProgress, domain.CommandStatusSucceeded,
+		clusterID, domain.CommandStatusDispatched, at, domain.CommandStatusQueued,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -261,6 +266,21 @@ func (s *deploymentInfoStore) ClaimNextCommand(ctx context.Context, clusterID uu
 		return nil, fmt.Errorf("claim next command: %w", err)
 	}
 	return cmd, nil
+}
+
+func (s *deploymentInfoStore) DeploymentStateOfCommand(ctx context.Context, commandID uuid.UUID) (domain.DeploymentState, error) {
+	var state domain.DeploymentState
+	err := s.db.QueryRowContext(ctx,
+		`SELECT d.status FROM commands c JOIN deployments d ON d.id = c.deployment_id WHERE c.id = $1`,
+		commandID,
+	).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", api.NotFound("command %s not found", commandID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("get deployment state of command: %w", err)
+	}
+	return state, nil
 }
 
 func (s *deploymentInfoStore) UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error {

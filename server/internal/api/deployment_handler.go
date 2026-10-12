@@ -295,6 +295,7 @@ var deploymentStatuses = []shared.DeploymentStatus{
 	shared.DeploymentStatusRunning,
 	shared.DeploymentStatusSucceeded,
 	shared.DeploymentStatusFailed,
+	shared.DeploymentStatusCancelling,
 	shared.DeploymentStatusCancelled,
 }
 

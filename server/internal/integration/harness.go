@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	_ "github.com/lib/pq"
@@ -45,7 +46,11 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 	}
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	ts := httptest.NewServer(server.Build(db, server.Config{DatabaseURL: connStr, JWTSecret: testJWTSecret}, log))
+	ts := httptest.NewServer(server.Build(db, server.Config{
+		DatabaseURL:       connStr,
+		JWTSecret:         testJWTSecret,
+		StopCheckInterval: 50 * time.Millisecond,
+	}, log))
 
 	h := &TestHarness{
 		DB:         db,

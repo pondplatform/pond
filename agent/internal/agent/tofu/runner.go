@@ -31,7 +31,7 @@ func (r *runner) Init(ctx context.Context, workDir string, logW io.Writer) error
 		return fmt.Errorf("this agent has no provider module %q (expected at %s); the dependency type is not supported by this agent version", filepath.Base(workDir), workDir)
 	}
 
-	cmd := exec.CommandContext(ctx, "tofu", "init", "-no-color")
+	cmd := agent.Interruptible(exec.CommandContext(ctx, "tofu", "init", "-no-color"))
 	cmd.Dir = workDir
 	return agent.RunLogged(ctx, cmd, logW, describe("init", workDir))
 }
@@ -55,7 +55,7 @@ func (r *runner) Apply(ctx context.Context, workDir string, statePath string, va
 
 	args := []string{"apply", "-auto-approve", "-input=false", "-no-color", "-state=" + statePath, "-var-file=" + varFile.Name()}
 
-	cmd := exec.CommandContext(ctx, "tofu", args...)
+	cmd := agent.Interruptible(exec.CommandContext(ctx, "tofu", args...))
 	cmd.Dir = workDir
 	return agent.RunLogged(ctx, cmd, logW, describe("apply", workDir))
 }
@@ -66,7 +66,7 @@ func (r *runner) Output(ctx context.Context, workDir string, statePath string) (
 		args = append(args, "-state="+statePath)
 	}
 
-	cmd := exec.CommandContext(ctx, "tofu", args...)
+	cmd := agent.Interruptible(exec.CommandContext(ctx, "tofu", args...))
 	cmd.Dir = workDir
 
 	out, err := cmd.Output()
@@ -109,7 +109,7 @@ func (r *runner) Destroy(ctx context.Context, workDir string, statePath string, 
 
 	args := []string{"destroy", "-auto-approve", "-input=false", "-no-color", "-state=" + statePath, "-var-file=" + varFile.Name()}
 
-	cmd := exec.CommandContext(ctx, "tofu", args...)
+	cmd := agent.Interruptible(exec.CommandContext(ctx, "tofu", args...))
 	cmd.Dir = workDir
 	return agent.RunLogged(ctx, cmd, logW, describe("destroy", workDir))
 }

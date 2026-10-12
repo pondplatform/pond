@@ -14,6 +14,23 @@ type Envelope struct {
 	Data json.RawMessage `json:"data"`
 }
 
+// Message types. The agent asks for work with ready, and the server answers
+// with command or idle. The agent reports with result and log. The server
+// pushes cancel when the deployment of the command an agent runs has ended.
+const (
+	MessageReady   = "ready"
+	MessageCommand = "command"
+	MessageIdle    = "idle"
+	MessageResult  = "result"
+	MessageLog     = "log"
+	MessageCancel  = "cancel"
+)
+
+// CancelPayload is the "cancel" message: the agent should stop the command.
+type CancelPayload struct {
+	CommandID uuid.UUID `json:"commandId"`
+}
+
 // CommandType identifies the kind of work the agent should perform.
 type CommandType = string
 

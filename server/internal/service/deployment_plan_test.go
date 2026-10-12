@@ -1,18 +1,13 @@
 package service
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/server/internal/helmgen"
 	"github.com/pondplatform/pond/server/internal/model/db"
-	"github.com/pondplatform/pond/shared/agent/wire"
 	"github.com/pondplatform/pond/shared/server/api"
 	"github.com/pondplatform/pond/shared/serviceconfig"
-	"gopkg.in/yaml.v3"
 )
 
 var testEnv = db.Environment{ID: uuid.New(), ClusterID: uuid.New(), Name: "staging", Namespace: "staging"}
@@ -77,7 +72,7 @@ func TestResolveInputs(t *testing.T) {
 	})
 }
 
-func TestPlan_ProvisionsManagedDependenciesThenRollsOut(t *testing.T) {
+func TestPlan_ProvisionsEveryManagedDependency(t *testing.T) {
 	deployment := planTestDeployment(map[string]string{"db": "postgres", "api": "http-service"}, nil)
 	deps, cmds, err := plan(deployment, testEnv, map[string]api.DependencyInput{
 		"db":  {Managed: true, Values: map[string]any{"instances": 1}},
@@ -86,12 +81,8 @@ func TestPlan_ProvisionsManagedDependenciesThenRollsOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cmds) != 2 || cmds[0].Type != db.CommandTypeTofuApply || cmds[0].Phase != phaseDependencies ||
-		cmds[1].Type != db.CommandTypeHelmUpgrade || cmds[1].Phase != phaseRollout {
-		t.Fatalf("expected a tofu command in phase 0 and helm in phase 1, got %+v", cmds)
-	}
-	if cmds[0].Payload == nil || cmds[1].Payload != nil {
-		t.Errorf("expected tofu ready to run and helm left for its phase")
+	if len(cmds) != 1 || cmds[0].Type != db.CommandTypeTofuApply || cmds[0].Status != db.CommandStatusQueued || len(cmds[0].Payload) == 0 {
+		t.Fatalf("expected one queued tofu command ready to run, got %+v", cmds)
 	}
 	for _, dep := range deps {
 		switch dep.DependencyName {
@@ -105,130 +96,15 @@ func TestPlan_ProvisionsManagedDependenciesThenRollsOut(t *testing.T) {
 			}
 		}
 	}
-	if firstPhase(cmds) != phaseDependencies {
-		t.Errorf("expected the dependencies' phase to run first")
-	}
 }
 
-func TestPlan_WithoutManagedDependenciesStartsWithTheRollout(t *testing.T) {
-	_, cmds, err := plan(planTestDeployment(nil, nil), testEnv, nil)
+func TestPlan_WithoutManagedDependenciesQueuesNothing(t *testing.T) {
+	_, cmds, err := plan(planTestDeployment(map[string]string{"api": "http-service"}, nil), testEnv,
+		map[string]api.DependencyInput{"api": {Values: map[string]any{"url": "http://api"}}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(cmds) != 1 || firstPhase(cmds) != phaseRollout {
-		t.Errorf("expected only the rollout, got %+v", cmds)
+	if len(cmds) != 0 {
+		t.Errorf("expected no commands; the rollout is the state machine's, got %+v", cmds)
 	}
-}
-
-func TestActivate_RendersTheRolloutFromDependencyOutputs(t *testing.T) {
-	deployment := planTestDeployment(map[string]string{"db": "postgres", "api": "http-service"},
-		map[string]any{"DB_HOST": "{{db.host}}", "API_URL": "{{api.url}}"})
-	deps, cmds, _ := plan(deployment, testEnv, map[string]api.DependencyInput{
-		"db":  {Managed: true},
-		"api": {Values: map[string]any{"url": "http://api"}},
-	})
-	cmds[0].Status = db.CommandStatusSucceeded
-	cmds[0].Output = json.RawMessage(`{"host":"db.internal"}`)
-
-	changed, err := activate(deployment, testEnv, deps, cmds, phaseRollout, helmgen.NewGenerator())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(changed) != 1 || changed[0] != cmds[1] {
-		t.Fatalf("expected the helm command rendered, got %+v", changed)
-	}
-	var payload wire.HelmUpgradePayload
-	if err := json.Unmarshal(cmds[1].Payload, &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	var values struct {
-		Configs []struct {
-			Data string `yaml:"data"`
-		} `yaml:"configs"`
-	}
-	if err := yaml.Unmarshal(payload.Values, &values); err != nil || len(values.Configs) != 1 {
-		t.Fatalf("decode helm values %s: %v", payload.Values, err)
-	}
-	file, _ := base64.StdEncoding.DecodeString(values.Configs[0].Data)
-	if !strings.Contains(string(file), "db.internal") || !strings.Contains(string(file), "http://api") {
-		t.Errorf("expected both outputs in the rendered config, got %q", file)
-	}
-}
-
-func TestActivate_FailsOnAReferenceThatDoesNotResolve(t *testing.T) {
-	deployment := planTestDeployment(map[string]string{"db": "postgres"}, map[string]any{"DB_USER": "{{db.username}}"})
-	deps, cmds, _ := plan(deployment, testEnv, map[string]api.DependencyInput{"db": {Managed: true}})
-	cmds[0].Status = db.CommandStatusSucceeded
-	cmds[0].Output = json.RawMessage(`{"host":"db.internal"}`)
-
-	if _, err := activate(deployment, testEnv, deps, cmds, phaseRollout, helmgen.NewGenerator()); err == nil || !strings.Contains(err.Error(), "db.username") {
-		t.Errorf("expected an error naming db.username, got %v", err)
-	}
-}
-
-func TestAfterResult(t *testing.T) {
-	dbID, otherID, helmID := uuid.New(), uuid.New(), uuid.New()
-	deps := []db.DependencyDeployment{
-		{DependencyName: "db", Managed: true, CommandID: &dbID},
-		{DependencyName: "other", Managed: true, CommandID: &otherID},
-	}
-	commands := func(db0, other db.CommandStatus, dbOutput string) []*db.Command {
-		return []*db.Command{
-			{ID: dbID, Type: db.CommandTypeTofuApply, Phase: phaseDependencies, Status: db0, Output: json.RawMessage(dbOutput), Error: "exit status 1"},
-			{ID: otherID, Type: db.CommandTypeTofuApply, Phase: phaseDependencies, Status: other, Output: json.RawMessage(`{}`)},
-			{ID: helmID, Type: db.CommandTypeHelmUpgrade, Phase: phaseRollout, Status: db.CommandStatusQueued, Error: "timed out"},
-		}
-	}
-
-	cases := map[string]struct {
-		cmds      []*db.Command
-		finished  uuid.UUID
-		failure   string
-		done      bool
-		nextPhase int
-	}{
-		"a failed dependency fails the deployment": {
-			cmds: commands(db.CommandStatusFailed, db.CommandStatusDispatched, ``), finished: dbID,
-			failure: `dependency "db" failed: exit status 1`,
-		},
-		"tofu outputs that are not an object fail it": {
-			cmds: commands(db.CommandStatusSucceeded, db.CommandStatusDispatched, `[1]`), finished: dbID,
-			failure: `dependency "db": tofu outputs must be a JSON object, got [1]`,
-		},
-		"a phase still running waits": {
-			cmds: commands(db.CommandStatusSucceeded, db.CommandStatusDispatched, `{}`), finished: dbID,
-			nextPhase: -1,
-		},
-		"a finished phase starts the next one": {
-			cmds: commands(db.CommandStatusSucceeded, db.CommandStatusSucceeded, `{}`), finished: dbID,
-			nextPhase: phaseRollout,
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			got := afterResult(commandByID(tc.cmds, &tc.finished), tc.cmds, deps)
-			if got.failure != tc.failure || got.done != tc.done {
-				t.Fatalf("expected failure %q and done %v, got %+v", tc.failure, tc.done, got)
-			}
-			if tc.nextPhase == -1 && got.start != nil || tc.nextPhase > 0 && (got.start == nil || *got.start != tc.nextPhase) {
-				t.Errorf("expected next phase %d, got %+v", tc.nextPhase, got.start)
-			}
-		})
-	}
-
-	t.Run("the last phase finishing completes the deployment", func(t *testing.T) {
-		cmds := commands(db.CommandStatusSucceeded, db.CommandStatusSucceeded, `{}`)
-		cmds[2].Status = db.CommandStatusSucceeded
-		if got := afterResult(cmds[2], cmds, deps); !got.done {
-			t.Errorf("expected done, got %+v", got)
-		}
-	})
-
-	t.Run("a failed rollout fails the deployment", func(t *testing.T) {
-		cmds := commands(db.CommandStatusSucceeded, db.CommandStatusSucceeded, `{}`)
-		cmds[2].Status = db.CommandStatusFailed
-		if got := afterResult(cmds[2], cmds, deps); got.failure != "helm upgrade failed: timed out" {
-			t.Errorf("expected the helm failure, got %+v", got)
-		}
-	})
 }

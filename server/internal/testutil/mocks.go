@@ -25,6 +25,7 @@ type MockDeploymentInfoStore struct {
 	UpdateCommandFn              func(ctx context.Context, cmd *domain.Command) error
 	ListCommandsByDeploymentFn   func(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error)
 	ClaimNextCommandFn           func(ctx context.Context, clusterID uuid.UUID, at time.Time) (*domain.Command, error)
+	DeploymentStateOfCommandFn   func(ctx context.Context, commandID uuid.UUID) (domain.DeploymentState, error)
 	UpdateCommandsByDeploymentFn func(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error
 	AppendLogFn                  func(ctx context.Context, clusterID, commandID uuid.UUID, line string) error
 	GetCommandLogsFn             func(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error)
@@ -91,6 +92,12 @@ func (m *MockDeploymentInfoStore) ClaimNextCommand(ctx context.Context, clusterI
 		return m.ClaimNextCommandFn(ctx, clusterID, at)
 	}
 	return nil, nil
+}
+func (m *MockDeploymentInfoStore) DeploymentStateOfCommand(ctx context.Context, commandID uuid.UUID) (domain.DeploymentState, error) {
+	if m.DeploymentStateOfCommandFn != nil {
+		return m.DeploymentStateOfCommandFn(ctx, commandID)
+	}
+	return "", nil
 }
 func (m *MockDeploymentInfoStore) UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error {
 	if m.UpdateCommandsByDeploymentFn != nil {

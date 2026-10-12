@@ -108,7 +108,9 @@ func TestStateMachine_RenderFailureAfterDepsFails(t *testing.T) {
 	if errMsg := field(body, "error"); !strings.Contains(errMsg, "postgres.username") {
 		t.Errorf("expected the error to name postgres.username, got %q", errMsg)
 	}
-	assertNeverRan(t, h, id, wire.CommandHelmUpgrade)
+	if n := countCommands(t, h.DB, id, wire.CommandHelmUpgrade); n != 0 {
+		t.Errorf("expected no helm.upgrade command, got %d\n%s", n, describeDeployment(h.DB, id))
+	}
 }
 
 // TestStateMachine_NonObjectTofuOutputFails checks that a tofu.apply output
@@ -138,7 +140,9 @@ func TestStateMachine_NonObjectTofuOutputFails(t *testing.T) {
 	if errMsg := field(body, "error"); !strings.Contains(errMsg, "postgres") {
 		t.Errorf("expected the error to name the postgres dependency, got %q", errMsg)
 	}
-	assertNeverRan(t, h, id, wire.CommandHelmUpgrade)
+	if n := countCommands(t, h.DB, id, wire.CommandHelmUpgrade); n != 0 {
+		t.Errorf("expected no helm.upgrade command, got %d\n%s", n, describeDeployment(h.DB, id))
+	}
 }
 
 // TestStateMachine_LateHelmResultAfterCancelIgnored checks that a helm result
@@ -152,17 +156,20 @@ func TestStateMachine_LateHelmResultAfterCancelIgnored(t *testing.T) {
 	h := NewTestHarness(t, testConnStr)
 	scenario := BuildScenario(ctx, t, h)
 	gate, release := NewGate(t)
-	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, Behavior{Gate: gate})
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, Behavior{Gate: gate, IgnoreCancel: true})
 
 	id := submitDeployment(ctx, t, h, SubmitRequest(scenario, MinimalServiceConfig("test-service"), "v1.0.0"))
-	fa.WaitForCommands(ctx, t, 1)
+	cmdID := fa.WaitForCommands(ctx, t, 1)[0].ID
 
 	if code, resp := cancelDeployment(ctx, t, h, id); code != http.StatusNoContent {
 		t.Fatalf("cancel: expected 204, got %d: %s", code, resp)
 	}
 	release()
 
-	assertStatusHolds(ctx, t, h, id, "cancelled", 2*time.Second)
+	// Cancelling until the late result arrives, then cancelled for good.
+	waitForAPIStatus(ctx, t, h, id, "cancelled", 2*time.Second)
+	assertStatusHolds(ctx, t, h, id, "cancelled", time.Second)
+	waitForCommandStatus(t, h, id, cmdID, "succeeded", time.Second)
 }
 
 // TestStateMachine_LateTofuResultAfterCancelIgnored checks that a tofu result
@@ -177,6 +184,7 @@ func TestStateMachine_LateTofuResultAfterCancelIgnored(t *testing.T) {
 	gate, release := NewGate(t)
 	behavior := TofuOutputBehavior(PostgresOutput)
 	behavior.Gate = gate
+	behavior.IgnoreCancel = true
 	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, behavior)
 
 	req := SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.0")
@@ -189,8 +197,12 @@ func TestStateMachine_LateTofuResultAfterCancelIgnored(t *testing.T) {
 	}
 	release()
 
-	assertStatusHolds(ctx, t, h, id, "cancelled", 2*time.Second)
-	assertNeverRan(t, h, id, wire.CommandHelmUpgrade)
+	// Cancelling until the late result arrives, then cancelled for good.
+	waitForAPIStatus(ctx, t, h, id, "cancelled", 2*time.Second)
+	assertStatusHolds(ctx, t, h, id, "cancelled", time.Second)
+	if n := countCommands(t, h.DB, id, wire.CommandHelmUpgrade); n != 0 {
+		t.Errorf("expected no helm.upgrade command, got %d\n%s", n, describeDeployment(h.DB, id))
+	}
 }
 
 // TestCancel_CancelsDispatchedCommand checks that a cancel also cancels the
@@ -272,15 +284,4 @@ func TestDeployment_SecondSubmitReusesDependencyConfig(t *testing.T) {
 		t.Fatalf("second deployment: expected succeeded, got %q\n%s", got, describeDeployment(h.DB, secondID))
 	}
 	assertCommandCounts(t, h, secondID, 1, 1)
-}
-
-// assertNeverRan checks that no command of the given type was ever handed to
-// an agent: it is still queued, or was cancelled before it ran.
-func assertNeverRan(t *testing.T, h *TestHarness, id uuid.UUID, cmdType string) {
-	t.Helper()
-	for _, cmd := range commandsOf(t, h.DB, id) {
-		if cmd.Type == cmdType && cmd.Status != "queued" && cmd.Status != "cancelled" {
-			t.Errorf("expected %s never to run, but it is %s\n%s", cmdType, cmd.Status, describeDeployment(h.DB, id))
-		}
-	}
 }

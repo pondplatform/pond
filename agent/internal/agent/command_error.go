@@ -5,14 +5,34 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 const (
 	tailMaxBytes = 4096
 	tailMaxLines = 20
 )
+
+// interruptGrace is how long helm or tofu get to stop cleanly after an
+// interrupt before they are killed.
+const interruptGrace = 2 * time.Minute
+
+// errCancelledByServer is the cause a command's context is cancelled with
+// when the server tells the agent to stop it.
+var errCancelledByServer = errors.New("cancelled by the server")
+
+// Interruptible makes cancelling the context of cmd, which must come from
+// exec.CommandContext, send SIGINT instead of killing it: tofu then saves its state and releases its lock, and helm marks
+// the release failed rather than leaving it pending. A command still running
+// after interruptGrace is killed.
+func Interruptible(cmd *exec.Cmd) *exec.Cmd {
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = interruptGrace
+	return cmd
+}
 
 // RunLogged runs cmd with its combined output streamed to logW. On failure the
 // returned error names the command (desc) and quotes the last lines it
@@ -35,6 +55,8 @@ func CommandFailed(ctx context.Context, desc string, err error, output []byte) e
 	var reason string
 	var exitErr *exec.ExitError
 	switch {
+	case errors.Is(context.Cause(ctx), errCancelledByServer):
+		reason = "cancelled by the server"
 	case ctx.Err() != nil:
 		reason = "interrupted because the agent is shutting down"
 	case errors.As(err, &exitErr) && exitErr.ExitCode() >= 0:

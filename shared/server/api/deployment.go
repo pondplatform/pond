@@ -14,7 +14,10 @@ const (
 	DeploymentStatusRunning   DeploymentStatus = "running"
 	DeploymentStatusSucceeded DeploymentStatus = "succeeded"
 	DeploymentStatusFailed    DeploymentStatus = "failed"
-	DeploymentStatusCancelled DeploymentStatus = "cancelled"
+	// DeploymentStatusCancelling is a cancelled deployment whose agent is
+	// still stopping the command it was running.
+	DeploymentStatusCancelling DeploymentStatus = "cancelling"
+	DeploymentStatusCancelled  DeploymentStatus = "cancelled"
 )
 
 type CommandStatus string

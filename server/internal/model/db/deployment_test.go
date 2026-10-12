@@ -8,19 +8,20 @@ import (
 
 func TestDeployment_APIStatus(t *testing.T) {
 	cases := []struct {
-		state   DeploymentState
-		started bool
-		want    api.DeploymentStatus
+		state             DeploymentState
+		started, stopping bool
+		want              api.DeploymentStatus
 	}{
-		{DeploymentInProgress, false, api.DeploymentStatusPending},
-		{DeploymentInProgress, true, api.DeploymentStatusRunning},
-		{DeploymentSucceeded, true, api.DeploymentStatusSucceeded},
-		{DeploymentFailed, true, api.DeploymentStatusFailed},
-		{DeploymentCancelled, false, api.DeploymentStatusCancelled},
+		{DeploymentInProgress, false, false, api.DeploymentStatusPending},
+		{DeploymentInProgress, true, true, api.DeploymentStatusRunning},
+		{DeploymentSucceeded, true, false, api.DeploymentStatusSucceeded},
+		{DeploymentFailed, true, true, api.DeploymentStatusFailed},
+		{DeploymentCancelled, true, true, api.DeploymentStatusCancelling},
+		{DeploymentCancelled, true, false, api.DeploymentStatusCancelled},
 	}
 	for _, tc := range cases {
-		if got := (Deployment{Status: tc.state, Started: tc.started}).APIStatus(); got != tc.want {
-			t.Errorf("%s started=%v: expected %s, got %s", tc.state, tc.started, tc.want, got)
+		if got := (Deployment{Status: tc.state, Started: tc.started, Stopping: tc.stopping}).APIStatus(); got != tc.want {
+			t.Errorf("%s started=%v stopping=%v: expected %s, got %s", tc.state, tc.started, tc.stopping, tc.want, got)
 		}
 	}
 }

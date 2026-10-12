@@ -24,7 +24,7 @@ type deploymentService struct {
 	tx       store.Transactor
 	specs    dependency.SpecRegistry
 	resolver config.ConfigResolver
-	helmGen  helmgen.HelmValuesGenerator
+	machine  *stateMachine
 	log      *slog.Logger
 	now      func() time.Time
 }
@@ -38,20 +38,20 @@ func NewDeploymentService(
 	resolver config.ConfigResolver,
 	log *slog.Logger,
 ) (DeploymentService, *AgentCommands) {
-	helmGen := helmgen.NewGenerator()
+	machine := &stateMachine{helmGen: helmgen.NewGenerator(), now: time.Now}
 	service := &deploymentService{
 		repos:    repos,
 		tx:       tx,
 		specs:    specs,
 		resolver: resolver,
-		helmGen:  helmGen,
+		machine:  machine,
 		log:      log,
 		now:      time.Now,
 	}
 	agents := &AgentCommands{
 		repos:   repos,
 		tx:      tx,
-		helmGen: helmGen,
+		machine: machine,
 		log:     log.With("component", "agent_commands"),
 		now:     time.Now,
 	}
@@ -65,9 +65,9 @@ func (s *deploymentService) GetCommandLogs(ctx context.Context, commandID uuid.U
 	return s.repos.Deployments.GetCommandLogs(ctx, commandID)
 }
 
-// Submit verifies the request, resolves every dependency's input and plans
-// the deployment's commands, all in one transaction: either the whole
-// deployment is created, or nothing is.
+// Submit verifies the request, resolves every dependency's input, plans the
+// deployment and enters the state machine, all in one transaction: either the
+// deployment is created and started, or nothing is.
 func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (*db.Deployment, error) {
 	env, svcConfig, err := s.validateSubmission(ctx, req)
 	if err != nil {
@@ -88,25 +88,15 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		if err != nil {
 			return err
 		}
+		if err := verifyUnmanagedReferences(svcConfig, inputs); err != nil {
+			return err
+		}
 
 		deployment = newDeployment(req, svc.ID, env.ID, *svcConfig, s.now())
 		dependencies, commands, err := plan(deployment, *env, inputs)
 		if err != nil {
 			return err
 		}
-		if _, err := activate(deployment, *env, dependencies, commands, firstPhase(commands), s.helmGen); err != nil {
-			// Nothing has run, so a config that cannot render is the request's
-			// fault.
-			var errs api.ValidationErrors
-			errs.Add("config", "configs", err.Error())
-			return &errs
-		}
-		for _, cmd := range commands {
-			if cmd.Type == db.CommandTypeHelmUpgrade {
-				deployment.HelmCommandID = &cmd.ID
-			}
-		}
-
 		if err := tx.Deployments.Create(ctx, &deployment); err != nil {
 			return fmt.Errorf("create deployment: %w", err)
 		}
@@ -120,7 +110,10 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 				return fmt.Errorf("create %s command: %w", cmd.Type, err)
 			}
 		}
-		return tx.Services.SetCurrentDeployment(ctx, svc.ID, deployment.ID)
+		if err := tx.Services.SetCurrentDeployment(ctx, svc.ID, deployment.ID); err != nil {
+			return err
+		}
+		return s.machine.advance(ctx, tx, &deployment)
 	})
 	if err != nil {
 		return nil, err
@@ -202,17 +195,14 @@ func (s *deploymentService) ListByService(ctx context.Context, serviceID uuid.UU
 	return s.repos.Deployments.ListByServiceFiltered(ctx, serviceID, environmentID, status, limit, cursor)
 }
 
-// Cancel ends the deployment and cancels its commands, including one an agent
-// is running: its late result is then recorded but changes nothing.
+// Cancel stops the deployment: commands that have not started are cancelled
+// at once, and an agent running one is told to cancel it.
 func (s *deploymentService) Cancel(ctx context.Context, deploymentID uuid.UUID) error {
 	return s.tx.RunInTx(ctx, func(ctx context.Context, tx store.Repos) error {
 		d, err := tx.Deployments.LockDeployment(ctx, deploymentID)
 		if err != nil {
 			return err
 		}
-		if d.Status != db.DeploymentInProgress {
-			return api.Conflict("deployment %s has already %s and can no longer be cancelled", deploymentID, d.APIStatus())
-		}
-		return finish(ctx, tx, d, db.DeploymentCancelled, "", s.now())
+		return s.machine.cancel(ctx, tx, d)
 	})
 }

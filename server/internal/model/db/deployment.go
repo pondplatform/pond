@@ -27,17 +27,19 @@ type Deployment struct {
 	ServiceConfigSnapshot serviceconfig.ServiceConfig `json:"serviceConfigSnapshot"`
 	Status                DeploymentState             `json:"status"`
 	TriggeredBy           string                      `json:"triggeredBy"`
-	HelmCommandID         *uuid.UUID                  `json:"helmCommandId"`
 	CreatedAt             time.Time                   `json:"createdAt"`
 	CompletedAt           *time.Time                  `json:"completedAt"`
 	Error                 *string                     `json:"error,omitempty"`
-	// Started is computed, not stored: an agent has picked up one of the
-	// deployment's commands.
-	Started bool `json:"-"`
+	// Started and Stopping are computed, not stored. Started: an agent has
+	// picked up one of the deployment's commands. Stopping: an agent is still
+	// running one, though the deployment may already have ended.
+	Started  bool `json:"-"`
+	Stopping bool `json:"-"`
 }
 
-// APIStatus is the status users see: the outcome once the deployment has
-// finished, and before that pending until an agent starts on it.
+// APIStatus is the status users see: pending until an agent starts on the
+// deployment, then running, then its outcome. A cancelled deployment shows as
+// cancelling until its agents have stopped what they were running.
 func (d Deployment) APIStatus() api.DeploymentStatus {
 	switch d.Status {
 	case DeploymentSucceeded:
@@ -45,6 +47,9 @@ func (d Deployment) APIStatus() api.DeploymentStatus {
 	case DeploymentFailed:
 		return api.DeploymentStatusFailed
 	case DeploymentCancelled:
+		if d.Stopping {
+			return api.DeploymentStatusCancelling
+		}
 		return api.DeploymentStatusCancelled
 	}
 	if d.Started {

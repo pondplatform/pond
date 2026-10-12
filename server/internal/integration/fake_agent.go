@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	agentconn "github.com/pondplatform/pond/agent/connection"
 	"github.com/pondplatform/pond/shared/agent/wire"
 )
@@ -32,6 +33,10 @@ type Behavior struct {
 	// the result arrive late. A gate that is never closed means the agent
 	// never replies.
 	Gate <-chan struct{}
+
+	// IgnoreCancel makes the agent finish a command even when the server
+	// cancels it, like one that got the cancel too late.
+	IgnoreCancel bool
 }
 
 // DefaultBehavior succeeds every command immediately with empty output.
@@ -67,10 +72,12 @@ type FakeAgent struct {
 	behavior   Behavior
 	conn       agentconn.AgentConnection
 
-	mu       sync.Mutex
-	Commands []*wire.CommandPayload // commands received, in order
-	done     chan struct{}
-	cancel   context.CancelFunc
+	mu        sync.Mutex
+	Commands  []*wire.CommandPayload // commands received, in order
+	cancelled []uuid.UUID            // commands the server told it to cancel
+	stops     map[uuid.UUID]chan struct{}
+	done      chan struct{}
+	cancel    context.CancelFunc
 }
 
 // NewFakeAgent creates a new fake agent that will connect to the given server.
@@ -82,6 +89,7 @@ func NewFakeAgent(serverAddr, token string, b Behavior) *FakeAgent {
 		serverAddr: serverAddr,
 		token:      token,
 		behavior:   b,
+		stops:      make(map[uuid.UUID]chan struct{}),
 		done:       make(chan struct{}),
 	}
 }
@@ -100,6 +108,8 @@ func (a *FakeAgent) Connect(ctx context.Context) error {
 }
 
 // Run starts the message loop. It blocks until the context is cancelled or Stop is called.
+// Each command runs in its own goroutine, so the loop keeps reading and can
+// receive a cancel for it.
 func (a *FakeAgent) Run(ctx context.Context) error {
 	ctx, a.cancel = context.WithCancel(ctx)
 	defer close(a.done)
@@ -116,57 +126,33 @@ func (a *FakeAgent) Run(ctx context.Context) error {
 		}
 
 		switch msg.Type {
-		case "command":
+		case wire.MessageCommand:
 			var cmd wire.CommandPayload
 			if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 				continue
 			}
-
+			stop := make(chan struct{})
 			a.mu.Lock()
 			a.Commands = append(a.Commands, &cmd)
+			a.stops[cmd.ID] = stop
 			a.mu.Unlock()
+			go a.execute(ctx, &cmd, stop)
 
-			// Send logs if configured
-			for _, line := range a.behavior.Logs {
-				entry := wire.LogPayload{
-					CommandID: cmd.ID,
-					Line:      line,
-					Timestamp: time.Now(),
-					Stream:    "stdout",
-				}
-				if err := a.conn.SendLog(ctx, entry); err != nil {
-					return fmt.Errorf("send log: %w", err)
-				}
+		case wire.MessageCancel:
+			var cancel wire.CancelPayload
+			if err := json.Unmarshal(msg.Data, &cancel); err != nil {
+				continue
+			}
+			a.mu.Lock()
+			a.cancelled = append(a.cancelled, cancel.CommandID)
+			stop, running := a.stops[cancel.CommandID]
+			delete(a.stops, cancel.CommandID)
+			a.mu.Unlock()
+			if running && !a.behavior.IgnoreCancel {
+				close(stop)
 			}
 
-			if a.behavior.Gate != nil {
-				select {
-				case <-a.behavior.Gate:
-				case <-ctx.Done():
-					return nil
-				}
-			}
-
-			// Optional delay
-			if a.behavior.PreResultDelay > 0 {
-				select {
-				case <-time.After(a.behavior.PreResultDelay):
-				case <-ctx.Done():
-					return nil
-				}
-			}
-
-			// Execute handler and send result
-			result := a.behavior.Handler(&cmd)
-			result.DeploymentID = cmd.DeploymentID
-			if err := a.conn.SendResult(ctx, result); err != nil {
-				return fmt.Errorf("send result: %w", err)
-			}
-			if err := a.conn.SendReady(ctx); err != nil {
-				return fmt.Errorf("send ready: %w", err)
-			}
-
-		case "idle":
+		case wire.MessageIdle:
 			select {
 			case <-time.After(fakeAgentPollInterval):
 			case <-ctx.Done():
@@ -175,11 +161,66 @@ func (a *FakeAgent) Run(ctx context.Context) error {
 			if err := a.conn.SendReady(ctx); err != nil {
 				return fmt.Errorf("send ready: %w", err)
 			}
-
-		default:
-			// Ignore unknown message types
 		}
 	}
+}
+
+// execute plays out one command: logs, then the gate and delay, then the
+// handler's result. A cancel cuts it short with a failed result.
+func (a *FakeAgent) execute(ctx context.Context, cmd *wire.CommandPayload, stop <-chan struct{}) {
+	defer func() {
+		a.mu.Lock()
+		delete(a.stops, cmd.ID)
+		a.mu.Unlock()
+	}()
+	for _, line := range a.behavior.Logs {
+		_ = a.conn.SendLog(ctx, wire.LogPayload{CommandID: cmd.ID, Line: line, Timestamp: time.Now(), Stream: "stdout"})
+	}
+
+	result := &wire.ResultPayload{CommandID: cmd.ID, Success: false, Error: "cancelled by the server"}
+	if a.wait(ctx, a.behavior.Gate, stop) && a.wait(ctx, delay(a.behavior.PreResultDelay), stop) {
+		result = a.behavior.Handler(cmd)
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	result.DeploymentID = cmd.DeploymentID
+	if err := a.conn.SendResult(ctx, result); err != nil {
+		return
+	}
+	_ = a.conn.SendReady(ctx)
+}
+
+// wait blocks until ready is closed, and reports false if the command was
+// cancelled first. A nil ready does not block.
+func (a *FakeAgent) wait(ctx context.Context, ready <-chan struct{}, stop <-chan struct{}) bool {
+	if ready == nil {
+		return true
+	}
+	select {
+	case <-ready:
+		return true
+	case <-stop:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func delay(d time.Duration) <-chan struct{} {
+	if d <= 0 {
+		return nil
+	}
+	ch := make(chan struct{})
+	time.AfterFunc(d, func() { close(ch) })
+	return ch
+}
+
+// CancelledCommands returns the commands the server told this agent to cancel.
+func (a *FakeAgent) CancelledCommands() []uuid.UUID {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]uuid.UUID(nil), a.cancelled...)
 }
 
 // Stop gracefully stops the agent.

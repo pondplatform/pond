@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pondplatform/pond/server/internal/auth"
@@ -24,7 +25,7 @@ func serveWS(handler *AgentHandler, req *http.Request) *httptest.ResponseRecorde
 
 func TestAgentHandler_ServeWS_Auth(t *testing.T) {
 	clusterRepo := &testutil.MockClusterRepository{}
-	handler := NewAgentHandler(clusterRepo, nil, slog.Default())
+	handler := NewAgentHandler(clusterRepo, nil, time.Second, slog.Default())
 
 	t.Run("Unauthorized - no token", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/ws", nil)

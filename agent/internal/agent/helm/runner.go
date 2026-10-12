@@ -38,7 +38,7 @@ func (r *runner) Upgrade(ctx context.Context, req wire.HelmUpgradePayload, logW 
 		"--wait",
 	}
 
-	cmd := exec.CommandContext(ctx, "helm", args...)
+	cmd := agent.Interruptible(exec.CommandContext(ctx, "helm", args...))
 	_, _ = fmt.Fprintf(logW, "Executing command %s\n", cmd.String())
 
 	desc := fmt.Sprintf("helm upgrade of release %q in namespace %q", req.ReleaseName, req.Namespace)

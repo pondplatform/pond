@@ -34,43 +34,122 @@ func Run(ctx context.Context, cfg Config, exec CommandExecutor, log *slog.Logger
 
 // serve pulls commands one at a time: it asks for work, runs what it gets,
 // reports the result, and asks again. When the server has nothing, it waits
-// a poll interval before asking again.
+// a poll interval before asking again. While a command runs, it keeps reading,
+// so the server can tell it to cancel.
 func serve(ctx context.Context, conn AgentConnection, exec CommandExecutor, poll time.Duration, log *slog.Logger) error {
-	for {
-		if err := conn.SendReady(ctx); err != nil {
-			return fmt.Errorf("send ready: %w", err)
-		}
-		msg, err := conn.ReceiveMessage(ctx)
-		if err != nil {
-			return fmt.Errorf("receive message: %w", err)
-		}
-
-		switch msg.Type {
-		case "command":
-			if err := runCommand(ctx, conn, exec, msg.Data, log); err != nil {
-				return err
+	inbox := make(chan *wire.Envelope)
+	readErr := make(chan error, 1)
+	go func() {
+		for {
+			msg, err := conn.ReceiveMessage(ctx)
+			if err != nil {
+				readErr <- err
+				return
 			}
-
-		case "idle":
 			select {
+			case inbox <- msg:
 			case <-ctx.Done():
-				return nil
-			case <-time.After(poll):
+				return
+			}
+		}
+	}()
+
+	var running *runningCommand
+	defer func() {
+		if running != nil {
+			running.cancel(nil)
+		}
+	}()
+	var askAgain <-chan time.Time
+	if err := conn.SendReady(ctx); err != nil {
+		return fmt.Errorf("send ready: %w", err)
+	}
+
+	for {
+		var finished <-chan *wire.ResultPayload
+		if running != nil {
+			finished = running.result
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+
+		case err := <-readErr:
+			return fmt.Errorf("receive message: %w", err)
+
+		case <-askAgain:
+			askAgain = nil
+			if err := conn.SendReady(ctx); err != nil {
+				return fmt.Errorf("send ready: %w", err)
 			}
 
-		default:
-			log.Warn("unexpected message type", "type", msg.Type)
+		case result := <-finished:
+			running = nil
+			if err := conn.SendResult(ctx, result); err != nil {
+				return fmt.Errorf("send result: %w", err)
+			}
+			if err := conn.SendReady(ctx); err != nil {
+				return fmt.Errorf("send ready: %w", err)
+			}
+
+		case msg := <-inbox:
+			switch msg.Type {
+			case wire.MessageCommand:
+				var cmd wire.CommandPayload
+				if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+					log.Error("decode command", "err", err)
+					if err := reportUndecodableCommand(ctx, conn, msg.Data, err); err != nil {
+						return err
+					}
+					if err := conn.SendReady(ctx); err != nil {
+						return fmt.Errorf("send ready: %w", err)
+					}
+					continue
+				}
+				running = start(ctx, conn, exec, cmd, log)
+
+			case wire.MessageIdle:
+				askAgain = time.After(poll)
+
+			case wire.MessageCancel:
+				var cancel wire.CancelPayload
+				if err := json.Unmarshal(msg.Data, &cancel); err != nil {
+					log.Error("decode cancel", "err", err)
+					continue
+				}
+				if running != nil && running.id == cancel.CommandID {
+					log.Info("server cancelled the command", "command_id", cancel.CommandID)
+					running.cancel(errCancelledByServer)
+				}
+
+			default:
+				log.Warn("unexpected message type", "type", msg.Type)
+			}
 		}
 	}
 }
 
-// runCommand executes one command and reports its result.
-func runCommand(ctx context.Context, conn AgentConnection, exec CommandExecutor, data json.RawMessage, log *slog.Logger) error {
-	var cmd wire.CommandPayload
-	if err := json.Unmarshal(data, &cmd); err != nil {
-		log.Error("decode command", "err", err)
-		return reportUndecodableCommand(ctx, conn, data, err)
-	}
+// runningCommand is a command executing in the background.
+type runningCommand struct {
+	id     uuid.UUID
+	cancel context.CancelCauseFunc
+	result chan *wire.ResultPayload
+}
+
+// start runs cmd in the background; its result arrives on result.
+func start(ctx context.Context, conn AgentConnection, exec CommandExecutor, cmd wire.CommandPayload, log *slog.Logger) *runningCommand {
+	cmdCtx, cancel := context.WithCancelCause(ctx)
+	r := &runningCommand{id: cmd.ID, cancel: cancel, result: make(chan *wire.ResultPayload, 1)}
+	go func() {
+		defer cancel(nil)
+		r.result <- execute(cmdCtx, conn, exec, &cmd, log)
+	}()
+	return r
+}
+
+// execute runs one command and returns its result.
+func execute(ctx context.Context, conn AgentConnection, exec CommandExecutor, cmd *wire.CommandPayload, log *slog.Logger) *wire.ResultPayload {
 	log.Info("received command", "type", cmd.Type, "command_id", cmd.ID)
 
 	logSink := func(entry wire.LogPayload) {
@@ -79,24 +158,19 @@ func runCommand(ctx context.Context, conn AgentConnection, exec CommandExecutor,
 		}
 	}
 
-	result, err := exec.Execute(ctx, &cmd, logSink)
+	result, err := exec.Execute(ctx, cmd, logSink)
 	if err != nil {
 		log.Error("execute command failed", "command_id", cmd.ID, "err", err)
-		result = &wire.ResultPayload{
+		return &wire.ResultPayload{
 			CommandID:    cmd.ID,
 			DeploymentID: cmd.DeploymentID,
 			Success:      false,
 			Error:        err.Error(),
 		}
-	} else {
-		result.CommandID = cmd.ID
-		log.Info("command completed", "command_id", cmd.ID, "success", result.Success)
 	}
-
-	if err := conn.SendResult(ctx, result); err != nil {
-		return fmt.Errorf("send result: %w", err)
-	}
-	return nil
+	result.CommandID = cmd.ID
+	log.Info("command completed", "command_id", cmd.ID, "success", result.Success)
+	return result
 }
 
 // reportUndecodableCommand fails the command on the server so the deployment

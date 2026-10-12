@@ -105,3 +105,26 @@ func addTemplateReferenceErrors(errs *api.ValidationErrors, cfg *serviceconfig.S
 		}
 	}
 }
+
+// verifyUnmanagedReferences rejects a {{dep.key}} on an unmanaged dependency
+// whose input has no such key: its values are known now, so the rollout could
+// never render.
+func verifyUnmanagedReferences(cfg *serviceconfig.ServiceConfig, inputs map[string]api.DependencyInput) error {
+	var errs api.ValidationErrors
+	for _, file := range slices.Sorted(maps.Keys(cfg.Configs)) {
+		for _, ref := range templateReferences(cfg.Configs[file].Values) {
+			name, key, ok := strings.Cut(ref, ".")
+			input, declared := inputs[name]
+			if !ok || !declared || input.Managed {
+				continue
+			}
+			if _, has := input.Values[key]; !has {
+				errs.Add("config", file, fmt.Sprintf("template variable {{%s}}: the input of unmanaged dependency %q has no %q", ref, name, key))
+			}
+		}
+	}
+	if errs.HasErrors() {
+		return &errs
+	}
+	return nil
+}

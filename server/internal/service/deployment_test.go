@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/server/internal/dependency"
-	"github.com/pondplatform/pond/server/internal/helmgen"
 	"github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
 	"github.com/pondplatform/pond/server/internal/testutil"
@@ -49,7 +48,7 @@ func newTestService(deployments *testutil.MockDeploymentInfoStore) *deploymentSe
 		tx:       inlineTx{repos},
 		specs:    dependency.NewSpecRegistry(),
 		resolver: config.NewResolver(),
-		helmGen:  helmgen.NewGenerator(),
+		machine:  testMachine(),
 		log:      slog.New(slog.DiscardHandler),
 		now:      time.Now,
 	}
@@ -198,60 +197,18 @@ func TestSubmit_WritesNothingWhenValidationFails(t *testing.T) {
 	}
 }
 
-func lockedDeployment(status db.DeploymentState) *testutil.MockDeploymentInfoStore {
-	return &testutil.MockDeploymentInfoStore{
-		LockDeploymentFn: func(_ context.Context, id uuid.UUID) (*db.Deployment, error) {
-			return &db.Deployment{
-				ID:     id,
-				Status: status,
-				ServiceConfigSnapshot: serviceconfig.ServiceConfig{
-					Dependencies: postgresDep,
-				},
-			}, nil
-		},
+func TestVerifyUnmanagedReferences(t *testing.T) {
+	cfg := withConfigValues(submitRequest(nil, nil), map[string]any{
+		"API_URL":   "{{api.url}}",
+		"API_TOKEN": "{{api.token}}",
+		"DB_HOST":   "{{db.host}}",
+	}).OverridableConfig.ServiceConfig
+	inputs := map[string]api.DependencyInput{
+		"api": {Managed: false, Values: map[string]any{"url": "http://api"}},
+		"db":  {Managed: true},
 	}
-}
-
-func TestCancel_CancelsTheDeploymentAndItsLiveCommands(t *testing.T) {
-	{
-		{
-			deployments := lockedDeployment(db.DeploymentInProgress)
-			var saved *db.Deployment
-			deployments.SaveDeploymentFn = func(_ context.Context, d *db.Deployment) error {
-				saved = d
-				return nil
-			}
-			var to db.CommandStatus
-			var from []db.CommandStatus
-			deployments.UpdateCommandsByDeploymentFn = func(_ context.Context, _ uuid.UUID, t db.CommandStatus, f ...db.CommandStatus) error {
-				to, from = t, f
-				return nil
-			}
-
-			if err := newTestService(deployments).Cancel(context.Background(), uuid.New()); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if saved == nil || saved.Status != db.DeploymentCancelled || saved.CompletedAt == nil {
-				t.Errorf("expected the deployment saved as cancelled with completedAt, got %+v", saved)
-			}
-			if to != db.CommandStatusCancelled || len(from) != 2 || from[0] != db.CommandStatusQueued || from[1] != db.CommandStatusDispatched {
-				t.Errorf("expected queued and dispatched commands cancelled, got %v -> %v", from, to)
-			}
-		}
-	}
-}
-
-func TestCancel_ConflictsOnceFinished(t *testing.T) {
-	for _, status := range []db.DeploymentState{db.DeploymentSucceeded, db.DeploymentFailed, db.DeploymentCancelled} {
-		t.Run(string(status), func(t *testing.T) {
-			deployments := lockedDeployment(status)
-			deployments.SaveDeploymentFn = func(context.Context, *db.Deployment) error {
-				t.Error("a finished deployment must not be written")
-				return nil
-			}
-			if err := newTestService(deployments).Cancel(context.Background(), uuid.New()); !errors.Is(err, api.ErrConflict) {
-				t.Fatalf("expected conflict, got %v", err)
-			}
-		})
+	got := validationErrors(t, verifyUnmanagedReferences(&cfg, inputs))
+	if len(got) != 1 || !strings.Contains(got[0].Message, "{{api.token}}") {
+		t.Errorf("expected only api.token rejected; a managed dependency's outputs are not known yet. Got %+v", got)
 	}
 }

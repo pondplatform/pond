@@ -75,15 +75,15 @@ func (c *connection) ReceiveMessage(ctx context.Context) (*wire.Envelope, error)
 }
 
 func (c *connection) SendReady(ctx context.Context) error {
-	return c.send("ready", struct{}{})
+	return c.send(wire.MessageReady, struct{}{})
 }
 
 func (c *connection) SendResult(ctx context.Context, result *wire.ResultPayload) error {
-	return c.send("result", result)
+	return c.send(wire.MessageResult, result)
 }
 
 func (c *connection) SendLog(ctx context.Context, entry wire.LogPayload) error {
-	return c.send("log", entry)
+	return c.send(wire.MessageLog, entry)
 }
 
 func (c *connection) send(msgType string, payload any) error {

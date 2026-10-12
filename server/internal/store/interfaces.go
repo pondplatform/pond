@@ -24,14 +24,16 @@ type DeploymentInfoStore interface {
 	// Command operations
 	CreateCommand(ctx context.Context, cmd *domain.Command) error
 	GetCommand(ctx context.Context, id uuid.UUID) (*domain.Command, error)
-	// UpdateCommand writes payload, status, output, error and updated_at.
+	// UpdateCommand writes status, output, error and updated_at.
 	UpdateCommand(ctx context.Context, cmd *domain.Command) error
-	// ListCommandsByDeployment returns the deployment's commands by phase.
+	// ListCommandsByDeployment returns the deployment's commands, oldest first.
 	ListCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error)
-	// ClaimNextCommand dispatches the cluster's oldest command that is ready
-	// to run: queued, of a deployment in progress, and with every lower phase
-	// of its deployment succeeded. It returns nil when there is none.
+	// ClaimNextCommand dispatches the cluster's oldest queued command, or
+	// returns nil when there is none.
 	ClaimNextCommand(ctx context.Context, clusterID uuid.UUID, at time.Time) (*domain.Command, error)
+	// DeploymentStateOfCommand returns the stored state of the command's
+	// deployment.
+	DeploymentStateOfCommand(ctx context.Context, commandID uuid.UUID) (domain.DeploymentState, error)
 	// UpdateCommandsByDeployment moves the deployment's commands in any of the
 	// from statuses to the to status.
 	UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error
