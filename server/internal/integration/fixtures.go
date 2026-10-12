@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/shared/serviceconfig"
 	shared "github.com/pondplatform/pond/shared/server/api"
+	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
 // ScenarioResult contains the IDs and credentials created by BuildScenario.
@@ -106,7 +106,7 @@ func ServiceConfigWithDeps(name string, deps map[string]string) serviceconfig.Se
 // placeholders in them are rendered when helm values are generated.
 func WithConfigValues(cfg serviceconfig.ServiceConfig, values map[string]any) serviceconfig.ServiceConfig {
 	cfg.Configs = map[string]serviceconfig.ConfigFileSpec{
-		"app.yaml": {Format: "yaml", MountDir: "/etc/app", Values: values},
+		"app.yaml": {Format: "yaml", MountPath: "/etc/app/app.yaml", Values: values},
 	}
 	return cfg
 }

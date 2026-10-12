@@ -369,17 +369,13 @@ func validateEnv(errs *api.ValidationErrors, env map[string]string) {
 }
 
 func validateConfigs(errs *api.ValidationErrors, configs map[string]serviceconfig.ConfigFileSpec) {
+	mountedBy := make(map[string]string, len(configs))
 	for _, name := range slices.Sorted(maps.Keys(configs)) {
 		spec := configs[name]
 		field := fmt.Sprintf("configs[%q]", name)
 
-		// The key is the file name, appended to mountDir when the file is
-		// mounted, so a path here would land the file somewhere unexpected.
-		switch {
-		case name == "":
+		if name == "" {
 			errs.Add(validationComponent, field, "must not be empty")
-		case strings.Contains(name, "/"):
-			errs.Add(validationComponent, field, "must be a file name without a path: put the directory in mountDir")
 		}
 
 		if !slices.Contains(configFormats, spec.Format) {
@@ -387,10 +383,16 @@ func validateConfigs(errs *api.ValidationErrors, configs map[string]serviceconfi
 		}
 
 		switch {
-		case spec.MountDir == "":
-			errs.Add(validationComponent, field+".mountDir", "must not be empty")
-		case !strings.HasPrefix(spec.MountDir, "/"):
-			errs.Add(validationComponent, field+".mountDir", fmt.Sprintf("must be an absolute path, got %q", spec.MountDir))
+		case spec.MountPath == "":
+			errs.Add(validationComponent, field+".mountPath", "must not be empty")
+		case !strings.HasPrefix(spec.MountPath, "/"):
+			errs.Add(validationComponent, field+".mountPath", fmt.Sprintf("must be an absolute path, got %q", spec.MountPath))
+		case strings.HasSuffix(spec.MountPath, "/"):
+			errs.Add(validationComponent, field+".mountPath", fmt.Sprintf("must be the full path of the file, not a directory, got %q", spec.MountPath))
+		case mountedBy[spec.MountPath] != "":
+			errs.Add(validationComponent, field+".mountPath", fmt.Sprintf("%q is already mounted by configs[%q]", spec.MountPath, mountedBy[spec.MountPath]))
+		default:
+			mountedBy[spec.MountPath] = name
 		}
 	}
 }

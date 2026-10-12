@@ -114,7 +114,7 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 
 		vals.Configs = append(vals.Configs, HelmConfig{
 			Enabled:       true,
-			MountLocation: strings.TrimSuffix(cfgFile.MountDir, "/") + "/" + name,
+			MountLocation: cfgFile.MountPath,
 			Data:          encoded,
 		})
 	}
@@ -146,7 +146,7 @@ func encodeConfigFile(format string, values map[string]any) (string, error) {
 func marshalEnv(values map[string]any) ([]byte, error) {
 	var result []byte
 	for k, v := range values {
-	    escaped := strings.ReplaceAll(fmt.Sprintf("%v", v),"\\", "\\\\")
+		escaped := strings.ReplaceAll(fmt.Sprintf("%v", v), "\\", "\\\\")
 		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
 		escaped = strings.ReplaceAll(escaped, "$", "\\$")
 		line := fmt.Sprintf("%s=\"%s\"\n", k, escaped)

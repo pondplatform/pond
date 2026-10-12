@@ -66,7 +66,7 @@ dependencies:
 configs:
   .env:
     format: .env
-    mountDir: /app
+    mountPath: /app/.env
     values:
       DB_HOST: "{{db.host}}"
       DB_PORT: "{{db.port}}"
@@ -223,13 +223,13 @@ env:
 
 ### `configs`
 
-A map of config files to render and mount into the container. See [Config Files](config-files.md) for the full template syntax.
+A map of config files to render and mount into the container. `mountPath` is the full path of the file inside the container. See [Config Files](config-files.md) for the full template syntax.
 
 ```yaml
 configs:
-  <filename>:
+  <name>:
     format: .env | yaml | json
-    mountDir: /path/in/container
+    mountPath: /path/in/container/file
     values:
       KEY: "static or {{templated}} value"
 ```

@@ -97,7 +97,7 @@ func TestValidate_FullConfigIsValid(t *testing.T) {
 	cfg.Env = map[string]string{"LOG_LEVEL": "info"}
 	cfg.Dependencies = map[string]serviceconfig.DependencyDeclaration{"db": {Type: "postgres"}}
 	cfg.Configs = map[string]serviceconfig.ConfigFileSpec{
-		".env": {Format: ".env", MountDir: "/app", Values: map[string]any{"DB_HOST": "{{db.host}}"}},
+		".env": {Format: ".env", MountPath: "/app/.env", Values: map[string]any{"DB_HOST": "{{db.host}}"}},
 	}
 
 	if err := Validate(cfg); err != nil {
@@ -509,29 +509,39 @@ func TestValidate_EnvConfigsAndDependencies(t *testing.T) {
 			wantFields: []string{`env["LOG LEVEL"]`},
 		},
 		{
-			name: "config file name carrying a path",
+			name: "config mount path pointing at a directory",
 			mutate: func(c *serviceconfig.ServiceConfig) {
 				c.Configs = map[string]serviceconfig.ConfigFileSpec{
-					"conf/app.yaml": {Format: "yaml", MountDir: "/app"},
+					"app": {Format: "yaml", MountPath: "/etc/app/"},
 				}
 			},
-			wantFields: []string{`configs["conf/app.yaml"]`},
+			wantFields: []string{`configs["app"].mountPath`},
 		},
 		{
-			name: "unsupported config format and relative mount dir",
+			name: "two configs mounted at the same path",
 			mutate: func(c *serviceconfig.ServiceConfig) {
 				c.Configs = map[string]serviceconfig.ConfigFileSpec{
-					"app.toml": {Format: "toml", MountDir: "app"},
+					"a": {Format: "yaml", MountPath: "/etc/app/app.yaml"},
+					"b": {Format: "yaml", MountPath: "/etc/app/app.yaml"},
 				}
 			},
-			wantFields: []string{`configs["app.toml"].format`, `configs["app.toml"].mountDir`},
+			wantFields: []string{`configs["b"].mountPath`},
 		},
 		{
-			name: "config without a format or mount dir",
+			name: "unsupported config format and relative mount path",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				c.Configs = map[string]serviceconfig.ConfigFileSpec{
+					"app.toml": {Format: "toml", MountPath: "app"},
+				}
+			},
+			wantFields: []string{`configs["app.toml"].format`, `configs["app.toml"].mountPath`},
+		},
+		{
+			name: "config without a format or mount path",
 			mutate: func(c *serviceconfig.ServiceConfig) {
 				c.Configs = map[string]serviceconfig.ConfigFileSpec{"app.yaml": {}}
 			},
-			wantFields: []string{`configs["app.yaml"].format`, `configs["app.yaml"].mountDir`},
+			wantFields: []string{`configs["app.yaml"].format`, `configs["app.yaml"].mountPath`},
 		},
 		{
 			// Config templates reference dependencies as {{name.field}}, which

@@ -6,14 +6,14 @@ The `configs` block lets you render configuration files from templates and mount
 
 ```yaml
 configs:
-  <filename>:
+  <name>:
     format: .env | yaml | json
-    mountDir: /path/in/container
+    mountPath: /path/in/container/file
     values:
       KEY: "value or {{template}}"
 ```
 
-Pond renders the file from `values`, formats it according to `format`, and mounts it at `<mountDir>/<filename>` inside the container.
+Pond renders the file from `values`, formats it according to `format`, and mounts it at `mountPath` inside the container. `mountPath` is the full, absolute path of the file (including the file name), and each config must use a different `mountPath`. The `<name>` key only identifies the config.
 
 ---
 
@@ -32,7 +32,7 @@ OTHER_KEY=other_value
 configs:
   .env:
     format: .env
-    mountDir: /app
+    mountPath: /app/.env
     values:
       PORT: "8080"
       DB_HOST: "{{db.host}}"
@@ -46,7 +46,7 @@ Renders a YAML file:
 configs:
   config.yaml:
     format: yaml
-    mountDir: /etc/myapp
+    mountPath: /etc/myapp/config.yaml
     values:
       database:
         host: "{{db.host}}"
@@ -61,7 +61,7 @@ Renders a JSON file:
 configs:
   config.json:
     format: json
-    mountDir: /etc/myapp
+    mountPath: /etc/myapp/config.json
     values:
       dbHost: "{{db.host}}"
       servicePort: "{{service.port}}"
@@ -103,7 +103,7 @@ dependencies:
 configs:
   .env:
     format: .env
-    mountDir: /usr/src/app
+    mountPath: /usr/src/app/.env
     values:
       DB_HOST: "{{db.host}}"
       DB_PORT: "{{db.port}}"

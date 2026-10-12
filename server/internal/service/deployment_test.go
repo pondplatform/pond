@@ -74,7 +74,7 @@ func submitRequest(deps map[string]serviceconfig.DependencyDeclaration, inputs m
 
 func withConfigValues(req api.SubmitRequest, values map[string]any) api.SubmitRequest {
 	req.OverridableConfig.ServiceConfig.Configs = map[string]serviceconfig.ConfigFileSpec{
-		"app.env": {Format: ".env", MountDir: "/etc/app", Values: values},
+		"app.env": {Format: ".env", MountPath: "/etc/app/app.env", Values: values},
 	}
 	return req
 }

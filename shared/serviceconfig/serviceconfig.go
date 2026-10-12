@@ -155,9 +155,9 @@ type MetricsConfig struct {
 }
 
 type ConfigFileSpec struct {
-	Format   string         `json:"format,omitempty"   yaml:"format"`
-	MountDir string         `json:"mountDir,omitempty" yaml:"mountDir"`
-	Values   map[string]any `json:"values,omitempty"   yaml:"values"`
+	Format    string         `json:"format,omitempty"   yaml:"format"`
+	MountPath string         `json:"mountPath,omitempty" yaml:"mountPath"`
+	Values    map[string]any `json:"values,omitempty"   yaml:"values"`
 }
 
 type DependencyDeclaration struct {

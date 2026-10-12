@@ -30,7 +30,7 @@ func planTestDeployment(deps map[string]string, configValues map[string]any) db.
 	}
 	if configValues != nil {
 		d.ServiceConfigSnapshot.Configs = map[string]serviceconfig.ConfigFileSpec{
-			"app.env": {Format: ".env", MountDir: "/etc/app", Values: configValues},
+			"app.env": {Format: ".env", MountPath: "/etc/app/app.env", Values: configValues},
 		}
 	}
 	return d

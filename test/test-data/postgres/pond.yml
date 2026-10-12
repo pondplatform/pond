@@ -12,7 +12,7 @@ dependencies:
 configs:
   .env:
     format: .env
-    mountDir: /usr/src/app/
+    mountPath: /usr/src/app/.env
     values:
       DB_HOST: "{{db.host}}"
       DB_PORT: "{{db.port}}"

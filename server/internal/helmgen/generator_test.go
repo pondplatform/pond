@@ -18,8 +18,8 @@ func TestGenerator_Generate_ConfigFiles(t *testing.T) {
 		Name: "test-service",
 		Configs: map[string]serviceconfig.ConfigFileSpec{
 			"app.yaml": {
-				Format:   "yaml",
-				MountDir: "/etc/app",
+				Format:    "yaml",
+				MountPath: "/etc/app/app.yaml",
 				Values: map[string]any{
 					"database_url": "postgres://admin:password123@db-host:5432/mydb",
 					"debug":        true,
