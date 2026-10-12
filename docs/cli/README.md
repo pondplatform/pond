@@ -199,11 +199,25 @@ When an environment is set — via `--env`, `POND_ENV` or the active context —
 pond deployment status api --env prod
 ```
 
+With `--follow`, the command streams the logs of every command of that one deployment as they arrive, along with each command's status changes, until the deployment finishes. It then exits non-zero if the deployment failed or was cancelled. Following needs a single deployment, so it requires an environment or `--deployment-id`. Following a deployment that has already finished prints all of its logs and exits.
+
+```sh
+$ pond deployment status api --env prod --follow
+...
+Command 66666666-6666-6666-6666-666666666666 (deploy): dispatched
+  pulling image
+  installing
+Command 66666666-6666-6666-6666-666666666666 (deploy): succeeded
+
+Deployment succeeded
+```
+
 | Flag | Required | Description |
 |---|---|---|
 | `-e, --env` | no | Restrict to one environment and show its full deployment detail |
 | `-f, --pond-file` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
 | `--deployment-id` | no | Show one deployment by UUID instead of a service; cannot be combined with a service name |
+| `--follow` | no | Stream the deployment's logs until it finishes; needs an environment or `--deployment-id` |
 
 ### pond deployment list
 

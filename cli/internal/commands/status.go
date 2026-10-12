@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/cli/internal/client"
@@ -22,6 +23,7 @@ func NewStatusCmd() *cobra.Command {
 	var (
 		deploymentID string
 		filePath     string
+		follow       bool
 	)
 
 	cmd := &cobra.Command{
@@ -31,7 +33,9 @@ func NewStatusCmd() *cobra.Command {
 			"The service name defaults to the name in ./pond.yml, so it can be omitted when\n" +
 			"running from a service directory.\n\n" +
 			"When an environment is set (--env, POND_ENV or the active context), only that\n" +
-			"environment is shown, with its dependencies, commands and logs.",
+			"environment is shown, with its dependencies, commands and logs.\n\n" +
+			"With --follow, the logs of a single deployment are streamed until it finishes;\n" +
+			"the command then exits non-zero if the deployment failed or was cancelled.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sc := cmd.Context().Value(pondconfig.ClientKey{}).(client.ServerClient)
@@ -49,6 +53,9 @@ func NewStatusCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("get deployment: %w", err)
 				}
+				if follow {
+					return followDeployment(cmd.Context(), out, sc, d)
+				}
 				printDeploymentStatus(cmd.Context(), out, sc, d)
 				return nil
 			}
@@ -57,12 +64,13 @@ func NewStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runServiceStatus(cmd.Context(), out, sc, serviceName)
+			return runServiceStatus(cmd.Context(), out, sc, serviceName, follow)
 		},
 	}
 
 	cmd.Flags().StringVar(&deploymentID, "deployment-id", "", "Show a single deployment by ID instead of a service")
 	cmd.Flags().StringVarP(&filePath, "pond-file", "f", "./pond.yml", "Path to pond.yml, read for the service name when no service argument is given")
+	cmd.Flags().BoolVar(&follow, "follow", false, "Stream the deployment's logs until it finishes (needs an environment or --deployment-id)")
 
 	return cmd
 }
@@ -104,10 +112,13 @@ func projectFromContext(ctx context.Context) (pondconfig.ResolvedConfig, uuid.UU
 	return resolved, projID, nil
 }
 
-func runServiceStatus(ctx context.Context, out io.Writer, c client.ServerClient, serviceName string) error {
+func runServiceStatus(ctx context.Context, out io.Writer, c client.ServerClient, serviceName string, follow bool) error {
 	resolved, projID, err := projectFromContext(ctx)
 	if err != nil {
 		return err
+	}
+	if follow && resolved.Env == "" {
+		return errors.New("--follow needs a single deployment: set an environment (--env, POND_ENV or a context) or pass --deployment-id")
 	}
 
 	svc, err := findService(ctx, c, projID, serviceName)
@@ -126,7 +137,7 @@ func runServiceStatus(ctx context.Context, out io.Writer, c client.ServerClient,
 		if !ok {
 			return fmt.Errorf("environment %q not found in project %s%s", resolved.Env, projID, availableEnvs(envs))
 		}
-		return printServiceStatusForEnv(ctx, out, c, svc, env)
+		return printServiceStatusForEnv(ctx, out, c, svc, env, follow)
 	}
 
 	if len(envs) == 0 {
@@ -182,7 +193,7 @@ func availableEnvs(envs []api.Environment) string {
 
 // printServiceStatusForEnv prints the full status of the service's latest
 // deployment in a single environment.
-func printServiceStatusForEnv(ctx context.Context, out io.Writer, c client.ServerClient, svc api.Service, env api.Environment) error {
+func printServiceStatusForEnv(ctx context.Context, out io.Writer, c client.ServerClient, svc api.Service, env api.Environment, follow bool) error {
 	latest, err := latestDeployment(ctx, c, svc.ID, env.ID)
 	if err != nil {
 		return err
@@ -197,6 +208,9 @@ func printServiceStatusForEnv(ctx context.Context, out io.Writer, c client.Serve
 	d, err := c.GetDeployment(ctx, latest.ID)
 	if err != nil {
 		return fmt.Errorf("get deployment %s: %w", latest.ID, err)
+	}
+	if follow {
+		return followDeployment(ctx, out, c, d)
 	}
 	printDeploymentStatus(ctx, out, c, d)
 	return nil
@@ -239,6 +253,21 @@ func latestDeployment(ctx context.Context, c client.ServerClient, serviceID, env
 }
 
 func printDeploymentStatus(ctx context.Context, out io.Writer, c client.ServerClient, d *api.Deployment) {
+	printDeploymentSummary(out, d)
+
+	if len(d.Commands) > 0 {
+		fmt.Fprintf(out, "\nCommands:\n")
+		for _, cmd := range d.Commands {
+			fmt.Fprintf(out, "  %s  %-15s  %s\n", cmd.ID, cmd.Type, cmd.Status)
+			if cmd.Error != "" {
+				fmt.Fprintf(out, "    Error: %s\n", cmd.Error)
+			}
+			printCommandLogsIfNeeded(ctx, out, c, cmd)
+		}
+	}
+}
+
+func printDeploymentSummary(out io.Writer, d *api.Deployment) {
 	fmt.Fprintf(out, "Deployment %s\n", d.ID)
 	fmt.Fprintf(out, "  Status:     %s\n", d.Status)
 	fmt.Fprintf(out, "  Image:      %s\n", d.ImageTag)
@@ -258,17 +287,104 @@ func printDeploymentStatus(ctx context.Context, out io.Writer, c client.ServerCl
 			fmt.Fprintf(out, "  %-20s  %-15s  [%s]\n", dep.Name, dep.Status, managed)
 		}
 	}
+}
 
-	if len(d.Commands) > 0 {
-		fmt.Fprintf(out, "\nCommands:\n")
+var followPollInterval = 2 * time.Second
+
+// followDeployment prints the deployment, then polls it and prints each
+// command's status changes and new log lines until the deployment finishes.
+func followDeployment(ctx context.Context, out io.Writer, c client.ServerClient, d *api.Deployment) error {
+	printDeploymentSummary(out, d)
+	fmt.Fprintln(out)
+
+	f := commandFollower{status: map[uuid.UUID]api.CommandStatus{}, printed: map[uuid.UUID]int{}}
+	for {
 		for _, cmd := range d.Commands {
-			fmt.Fprintf(out, "  %s  %-15s  %s\n", cmd.ID, cmd.Type, cmd.Status)
-			if cmd.Error != "" {
-				fmt.Fprintf(out, "    Error: %s\n", cmd.Error)
+			if err := f.print(ctx, out, c, cmd); err != nil {
+				return err
 			}
-			printCommandLogsIfNeeded(ctx, out, c, cmd)
+		}
+		if deploymentDone(d.Status) {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(followPollInterval):
+		}
+		var err error
+		if d, err = c.GetDeployment(ctx, d.ID); err != nil {
+			return fmt.Errorf("get deployment: %w", err)
 		}
 	}
+
+	fmt.Fprintf(out, "\nDeployment %s\n", d.Status)
+	switch d.Status {
+	case api.DeploymentStatusFailed:
+		if d.Error != nil && *d.Error != "" {
+			return fmt.Errorf("deployment failed: %s", *d.Error)
+		}
+		return errors.New("deployment failed")
+	case api.DeploymentStatusCancelled:
+		return errors.New("deployment cancelled")
+	}
+	return nil
+}
+
+// commandFollower remembers what it has printed per command, so each poll
+// prints only what changed.
+type commandFollower struct {
+	status  map[uuid.UUID]api.CommandStatus
+	printed map[uuid.UUID]int
+}
+
+func (f *commandFollower) print(ctx context.Context, out io.Writer, c client.ServerClient, cmd api.CommandSummary) error {
+	prev, seen := f.status[cmd.ID]
+	// The agent sends all logs before its result, so the logs fetched right
+	// after first seeing a finished command are complete.
+	if seen && commandDone(prev) {
+		return nil
+	}
+	f.status[cmd.ID] = cmd.Status
+	changed := !seen || prev != cmd.Status
+	// A command finishing while followed gets its status after the logs that led to it.
+	statusFirst := !seen || !commandDone(cmd.Status)
+
+	if changed && statusFirst {
+		printCommandStatus(out, cmd)
+	}
+
+	logs, err := c.GetCommandLogs(ctx, cmd.ID)
+	if err != nil {
+		return fmt.Errorf("get logs of command %s: %w", cmd.ID, err)
+	}
+	if n := f.printed[cmd.ID]; len(logs) > n {
+		for _, l := range logs[n:] {
+			fmt.Fprintf(out, "  %s\n", l.Line)
+		}
+		f.printed[cmd.ID] = len(logs)
+	}
+
+	if changed && !statusFirst {
+		printCommandStatus(out, cmd)
+	}
+	return nil
+}
+
+func printCommandStatus(out io.Writer, cmd api.CommandSummary) {
+	fmt.Fprintf(out, "Command %s (%s): %s\n", cmd.ID, cmd.Type, cmd.Status)
+	if cmd.Error != "" {
+		fmt.Fprintf(out, "  Error: %s\n", cmd.Error)
+	}
+}
+
+func deploymentDone(s api.DeploymentStatus) bool {
+	return s == api.DeploymentStatusSucceeded || s == api.DeploymentStatusFailed || s == api.DeploymentStatusCancelled
+}
+
+func commandDone(s api.CommandStatus) bool {
+	return s == api.CommandStatusSucceeded || s == api.CommandStatusFailed || s == api.CommandStatusCancelled
 }
 
 func printCommandLogsIfNeeded(ctx context.Context, out io.Writer, c client.ServerClient, cmd api.CommandSummary) {

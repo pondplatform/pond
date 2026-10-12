@@ -283,6 +283,111 @@ func TestStatusByDeploymentID(t *testing.T) {
 	}
 }
 
+// followClient serves a scripted sequence of deployment snapshots: each
+// GetDeployment call advances to the next one, and the last one repeats.
+type followClient struct {
+	*fakeClient
+	polls []followPoll
+	n     int
+}
+
+type followPoll struct {
+	deployment *api.Deployment
+	logs       map[uuid.UUID][]string
+}
+
+func (f *followClient) GetDeployment(context.Context, uuid.UUID) (*api.Deployment, error) {
+	if f.n < len(f.polls) {
+		f.n++
+	}
+	return f.polls[f.n-1].deployment, nil
+}
+
+func (f *followClient) GetCommandLogs(_ context.Context, id uuid.UUID) ([]api.CommandLog, error) {
+	var logs []api.CommandLog
+	for _, line := range f.polls[f.n-1].logs[id] {
+		logs = append(logs, api.CommandLog{Line: line})
+	}
+	return logs, nil
+}
+
+const testCommandID = "66666666-6666-6666-6666-666666666666"
+
+func followSnapshot(status api.DeploymentStatus, cmdStatus api.CommandStatus, cmdErr string, lines ...string) followPoll {
+	d := *newFakeClient().detail
+	d.Status = status
+	d.Commands = []api.CommandSummary{{ID: uuid.MustParse(testCommandID), Type: "deploy", Status: cmdStatus, Error: cmdErr}}
+	return followPoll{deployment: &d, logs: map[uuid.UUID][]string{uuid.MustParse(testCommandID): lines}}
+}
+
+func TestStatusFollowStreamsLogsUntilDone(t *testing.T) {
+	commands.SetFollowPollInterval(t, time.Millisecond)
+	c := &followClient{fakeClient: newFakeClient(), polls: []followPoll{
+		followSnapshot(api.DeploymentStatusRunning, api.CommandStatusQueued, ""),
+		followSnapshot(api.DeploymentStatusRunning, api.CommandStatusDispatched, "", "pulling image"),
+		followSnapshot(api.DeploymentStatusRunning, api.CommandStatusDispatched, "", "pulling image", "installing"),
+		followSnapshot(api.DeploymentStatusSucceeded, api.CommandStatusSucceeded, "", "pulling image", "installing", "done"),
+	}}
+
+	out, err := runStatusCmd(t, c, "prod", "api", "--follow")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, out)
+	}
+
+	cmdPrefix := "Command " + testCommandID + " (deploy): "
+	want := []string{
+		cmdPrefix + "queued",
+		cmdPrefix + "dispatched",
+		"  pulling image",
+		"  installing",
+		"  done",
+		cmdPrefix + "succeeded",
+		"Deployment succeeded",
+	}
+	pos := 0
+	for _, w := range want {
+		i := strings.Index(out[pos:], w)
+		if i < 0 {
+			t.Fatalf("expected %q after position %d, got:\n%s", w, pos, out)
+		}
+		pos += i + len(w)
+	}
+	if n := strings.Count(out, "pulling image"); n != 1 {
+		t.Errorf("expected each log line once, got %q %d times:\n%s", "pulling image", n, out)
+	}
+}
+
+func TestStatusFollowFailedDeploymentReturnsError(t *testing.T) {
+	commands.SetFollowPollInterval(t, time.Millisecond)
+	failed := followSnapshot(api.DeploymentStatusFailed, api.CommandStatusFailed, "helm exited 1", "boom")
+	reason := "command deploy failed"
+	failed.deployment.Error = &reason
+	c := &followClient{fakeClient: newFakeClient(), polls: []followPoll{failed}}
+
+	out, err := runStatusCmd(t, c, "", "--deployment-id", testDeployID, "--follow")
+	if err == nil {
+		t.Fatalf("expected an error for a failed deployment, got:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), reason) {
+		t.Errorf("expected the error to carry the failure reason, got: %v", err)
+	}
+	for _, w := range []string{"  boom", "Error: helm exited 1", "Deployment failed"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("expected %q in output, got:\n%s", w, out)
+		}
+	}
+}
+
+func TestStatusFollowNeedsSingleDeployment(t *testing.T) {
+	_, err := runStatusCmd(t, newFakeClient(), "", "api", "--follow")
+	if err == nil {
+		t.Fatal("expected an error when following without an environment")
+	}
+	if !strings.Contains(err.Error(), "--deployment-id") {
+		t.Errorf("expected the error to say how to pick a deployment, got: %v", err)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
