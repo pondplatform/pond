@@ -80,11 +80,7 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		if err != nil {
 			return err
 		}
-		previous, err := previousDependencies(ctx, tx.Deployments, svc)
-		if err != nil {
-			return err
-		}
-		inputs, err := resolveInputs(svcConfig.Dependencies, req.Dependencies, previous)
+		inputs, err := resolveInputs(svcConfig.Dependencies, req.Dependencies)
 		if err != nil {
 			return err
 		}
@@ -139,23 +135,6 @@ func getOrCreateService(ctx context.Context, services store.ServiceRepository, r
 		return nil, fmt.Errorf("create service %q: %w", name, err)
 	}
 	return svc, nil
-}
-
-// previousDependencies returns the dependencies of the service's most recent
-// deployment, by name, so their input can be reused.
-func previousDependencies(ctx context.Context, deployments store.DeploymentInfoStore, svc *db.Service) (map[string]db.DependencyDeployment, error) {
-	if svc.CurrentDeploymentID == nil {
-		return nil, nil
-	}
-	dependencies, err := deployments.ListDepConfigs(ctx, *svc.CurrentDeploymentID)
-	if err != nil {
-		return nil, fmt.Errorf("list dependencies of the current deployment: %w", err)
-	}
-	byName := make(map[string]db.DependencyDeployment, len(dependencies))
-	for _, d := range dependencies {
-		byName[d.DependencyName] = d
-	}
-	return byName, nil
 }
 
 func newDeployment(req api.SubmitRequest, serviceID, environmentID uuid.UUID, svcConfig serviceconfig.ServiceConfig, now time.Time) db.Deployment {

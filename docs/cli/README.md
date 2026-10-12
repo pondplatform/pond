@@ -155,7 +155,7 @@ pond deploy [flags]
 
 Without `--wait`, the command prints the deployment ID and exits. With `--wait`, it polls every 2 seconds and exits when the deployment succeeds, fails or is cancelled.
 
-Every dependency declared in `pond.yml` needs input. A dependency missing from `--input` reuses the input of the service's previous deployment, as long as its type is unchanged. If a dependency has input from neither, or the file names a dependency that is not declared, the server rejects the request and creates nothing. The first deployment of a service with dependencies therefore needs input.
+Every dependency declared in `pond.yml` needs input on every deployment; input from earlier deployments is not reused. If `--input` leaves out a declared dependency, or names a dependency that is not declared, the server rejects the request and creates nothing.
 
 Without `--input`, the command looks for `pond-input-<env>.yml` or `pond-input-<env>.json` in the directory of the pond file, where `<env>` is the resolved environment, and uses it if present. If both exist, the command fails; remove one or pass `--input`. Files ending in `.yml` or `.yaml` are read as YAML, everything else as JSON.
 

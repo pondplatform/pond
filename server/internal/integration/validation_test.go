@@ -4,7 +4,6 @@ package integration
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -12,23 +11,6 @@ import (
 	"github.com/google/uuid"
 	shared "github.com/pondplatform/pond/shared/server/api"
 )
-
-// providerInputs reads the input a deployment resolved for one dependency.
-func providerInputs(t *testing.T, h *TestHarness, id uuid.UUID, dependency string) map[string]any {
-	t.Helper()
-	var raw []byte
-	if err := h.DB.QueryRow(
-		`SELECT provider_inputs FROM dependency_deployments WHERE deployment_id = $1 AND dependency_name = $2`,
-		id, dependency,
-	).Scan(&raw); err != nil {
-		t.Fatalf("query provider inputs of %s: %v", dependency, err)
-	}
-	var inputs map[string]any
-	if err := json.Unmarshal(raw, &inputs); err != nil {
-		t.Fatalf("decode provider inputs: %v", err)
-	}
-	return inputs
-}
 
 func countDeployments(t *testing.T, h *TestHarness, projectID uuid.UUID) int {
 	t.Helper()
@@ -41,33 +23,9 @@ func countDeployments(t *testing.T, h *TestHarness, projectID uuid.UUID) int {
 	return n
 }
 
-// TestSubmit_RequestInputOverridesThePreviousInput checks that input given on
-// submit replaces the previous deployment's input for that dependency.
-func TestSubmit_RequestInputOverridesThePreviousInput(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	h := NewTestHarness(t, testConnStr)
-	scenario := BuildScenario(ctx, t, h)
-	h.StartFakeAgent(ctx, t, scenario.AgentToken, TofuOutputBehavior(PostgresOutput))
-
-	first := SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.0")
-	first.Dependencies = managedPostgres
-	firstID := submitDeployment(ctx, t, h, first)
-	waitForTerminal(ctx, t, h, firstID, 5*time.Second)
-
-	second := SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.1")
-	second.Dependencies = map[string]shared.DependencyInput{"postgres": {Managed: true, Values: map[string]any{"instances": 3}}}
-	secondID := submitDeployment(ctx, t, h, second)
-
-	if got := providerInputs(t, h, secondID, "postgres")["instances"]; got != float64(3) {
-		t.Errorf("expected the requested instances=3, got %v", got)
-	}
-}
-
-// TestSubmit_NoInputAndNothingToReuseIsRejected checks that a first
-// deployment without input for its dependency is refused, and writes nothing.
-func TestSubmit_NoInputAndNothingToReuseIsRejected(t *testing.T) {
+// TestSubmit_NoInputIsRejected checks that a deployment without input for its
+// dependency is refused, and writes nothing.
+func TestSubmit_NoInputIsRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -80,6 +38,32 @@ func TestSubmit_NoInputAndNothingToReuseIsRejected(t *testing.T) {
 	}
 	if n := countDeployments(t, h, scenario.ProjectID); n != 0 {
 		t.Errorf("expected no deployment to be written, got %d", n)
+	}
+}
+
+// TestSubmit_PreviousInputIsNotReused checks that a submit without input is
+// refused even when the service's previous deployment had input.
+func TestSubmit_PreviousInputIsNotReused(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	h := NewTestHarness(t, testConnStr)
+	scenario := BuildScenario(ctx, t, h)
+	h.StartFakeAgent(ctx, t, scenario.AgentToken, TofuOutputBehavior(PostgresOutput))
+
+	first := SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.0")
+	first.Dependencies = managedPostgres
+	firstID := submitDeployment(ctx, t, h, first)
+	if got := field(waitForTerminal(ctx, t, h, firstID, 5*time.Second), "status"); got != "succeeded" {
+		t.Fatalf("first deployment: expected succeeded, got %q\n%s", got, describeDeployment(h.DB, firstID))
+	}
+
+	_, err := h.Client().SubmitDeployment(ctx, SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.1"))
+	if err == nil || !strings.Contains(err.Error(), "status 422") || !strings.Contains(err.Error(), "missing input") {
+		t.Fatalf("expected a 422 for the missing input, got %v", err)
+	}
+	if n := countDeployments(t, h, scenario.ProjectID); n != 1 {
+		t.Errorf("expected only the first deployment to be written, got %d", n)
 	}
 }
 

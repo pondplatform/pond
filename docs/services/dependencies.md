@@ -124,4 +124,4 @@ pond deploy --tag v1.2.3 --input ./deploy-input.json
 
 Or name it `pond-input-<env>.json` (or `pond-input-<env>.yml`, with the same structure in YAML) next to `pond.yml`, and `pond deploy` picks it up for that environment without `--input`.
 
-The input is saved with the deployment. Later deployments of the service reuse it for every dependency the file leaves out, so you only pass `--input` again to change something. A dependency with input from neither the file nor the previous deployment makes the server reject the request, and nothing is created.
+Every deployment needs input for every declared dependency; input from earlier deployments is not reused. A dependency the file leaves out makes the server reject the request, and nothing is created. Keeping the file as `pond-input-<env>.yml` next to `pond.yml` means each `pond deploy` sends it without extra flags.

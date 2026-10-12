@@ -152,9 +152,6 @@ func defaultInputPath(dir, env string) (string, error) {
 	}
 }
 
-// readDependencyInput never returns a nil map: on submit, nil means "reuse the
-// previous deployment's input", and a file without a dependencies key must not
-// silently mean that.
 func readDependencyInput(path string) (map[string]api.DependencyInput, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -175,9 +172,6 @@ func readDependencyInput(path string) (map[string]api.DependencyInput, error) {
 	var req api.ConfigureDeploymentRequest
 	if err := json.Unmarshal(data, &req); err != nil {
 		return nil, fmt.Errorf("parse input %q: %w", path, err)
-	}
-	if req.Dependencies == nil {
-		req.Dependencies = map[string]api.DependencyInput{}
 	}
 	return req.Dependencies, nil
 }

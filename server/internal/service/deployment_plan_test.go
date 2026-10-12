@@ -38,13 +38,12 @@ func planTestDeployment(deps map[string]string, configValues map[string]any) db.
 
 func TestResolveInputs(t *testing.T) {
 	declared := map[string]serviceconfig.DependencyDeclaration{"db": {Type: "postgres"}, "api": {Type: "http-service"}}
-	previous := map[string]db.DependencyDeployment{
-		"db":  {DependencyName: "db", DependencyType: "postgres", Managed: true, ProviderInputs: map[string]any{"instances": 2}},
-		"api": {DependencyName: "api", DependencyType: "http-service", UserConfig: map[string]any{"url": "http://old"}},
-	}
 
-	t.Run("the request wins, the rest is reused", func(t *testing.T) {
-		got, err := resolveInputs(declared, map[string]api.DependencyInput{"api": {Values: map[string]any{"url": "http://new"}}}, previous)
+	t.Run("every dependency takes the request's input", func(t *testing.T) {
+		got, err := resolveInputs(declared, map[string]api.DependencyInput{
+			"db":  {Managed: true, Values: map[string]any{"instances": 2}},
+			"api": {Values: map[string]any{"url": "http://new"}},
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -52,20 +51,19 @@ func TestResolveInputs(t *testing.T) {
 			t.Errorf("expected the requested api input, got %+v", got["api"])
 		}
 		if !got["db"].Managed || got["db"].Values["instances"] != 2 {
-			t.Errorf("expected the previous db input, got %+v", got["db"])
+			t.Errorf("expected the requested db input, got %+v", got["db"])
 		}
 	})
 
-	t.Run("a dependency whose type changed is not reused", func(t *testing.T) {
-		retyped := map[string]db.DependencyDeployment{"db": {DependencyName: "db", DependencyType: "mysql", Managed: true}}
-		_, err := resolveInputs(declared, map[string]api.DependencyInput{"api": {}}, retyped)
+	t.Run("a dependency without input is rejected", func(t *testing.T) {
+		_, err := resolveInputs(declared, map[string]api.DependencyInput{"api": {}})
 		if got := validationErrors(t, err); len(got) != 1 || got[0].Field != "db" || !strings.Contains(got[0].Message, "missing input") {
 			t.Errorf("expected db to miss input, got %+v", got)
 		}
 	})
 
-	t.Run("nothing to reuse", func(t *testing.T) {
-		_, err := resolveInputs(declared, nil, nil)
+	t.Run("no input at all", func(t *testing.T) {
+		_, err := resolveInputs(declared, nil)
 		if got := validationErrors(t, err); len(got) != 2 {
 			t.Errorf("expected both dependencies to miss input, got %+v", got)
 		}
