@@ -43,8 +43,8 @@ Options:
   --namespace <ns>           Kubernetes namespace              (default: pond)
   --context-name <name>      Pond CLI context name             (default: <kube-context>)
   --cluster-name <name>      Pond cluster registration name    (default: <kube-context>)
-  --image-tag <tag>          Docker image tag                  (default: latest)
-  --chart-version <ver>      Helm chart version                (default: latest published)
+  --image-tag <tag>          Docker image tag                  (default: ${IMAGE_TAG})
+  --chart-version <ver>      Helm chart version                (default: image tag without "v")
   --kubectl-forward-port <p> Local port for the port-forward   (default: random free port)
   --environments <list>      Comma-separated environment names (prompted if omitted)
   --default-providers        Install CloudNativePG operator    (prompted if omitted)
@@ -185,6 +185,11 @@ FORWARD_PORT="${FORWARD_PORT:-$(random_free_port)}"
 SERVER_URL="http://localhost:${FORWARD_PORT}"
 
 # ── Helm version flag (empty = latest) ───────────────────────────────────────
+# Charts are published as the release tag minus the "v"; without a pin Helm
+# skips pre-releases and would pair the image with an older chart.
+if [[ -z "$CHART_VERSION" && "$IMAGE_TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+  CHART_VERSION="${IMAGE_TAG#v}"
+fi
 HELM_VERSION_FLAG=()
 if [[ -n "$CHART_VERSION" ]]; then
   HELM_VERSION_FLAG=(--version "$CHART_VERSION")
