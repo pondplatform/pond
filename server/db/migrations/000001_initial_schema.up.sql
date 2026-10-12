@@ -1,5 +1,4 @@
 -- Pond platform database schema
--- Derived from internal/server/store/ SQL queries
 
 CREATE TABLE clusters
 (
@@ -31,6 +30,9 @@ CREATE TABLE environments
     UNIQUE (project_id, name)
 );
 
+-- current_deployment_id is the most recently submitted deployment, whose
+-- dependency input the next one reuses; running_deployment_id is the most
+-- recently succeeded one.
 CREATE TABLE services
 (
     id                    UUID PRIMARY KEY,
@@ -42,6 +44,8 @@ CREATE TABLE services
     UNIQUE (project_id, name)
 );
 
+-- status is in_progress until the deployment succeeds, fails or is cancelled.
+-- Finer progress is computed from its commands.
 CREATE TABLE deployments
 (
     id                      UUID PRIMARY KEY,
@@ -49,7 +53,7 @@ CREATE TABLE deployments
     environment_id          UUID        NOT NULL REFERENCES environments (id),
     image_tag               TEXT        NOT NULL,
     service_config_snapshot JSONB       NOT NULL,
-    status                  TEXT        NOT NULL DEFAULT 'pending',
+    status                  TEXT        NOT NULL DEFAULT 'in_progress',
     triggered_by            TEXT,
     helm_command_id         UUID,
     error                   TEXT,
@@ -57,31 +61,34 @@ CREATE TABLE deployments
     completed_at            TIMESTAMPTZ
 );
 
-
+-- A dependency as one deployment resolved it. Rows do not change after
+-- submit: a managed dependency's progress and outputs are its command's, and
+-- an unmanaged one's outputs are its user_config.
 CREATE TABLE dependency_deployments
 (
     id              UUID PRIMARY KEY,
-    deployment_id   UUID        NOT NULL REFERENCES deployments (id),
-    dependency_name TEXT        NOT NULL,
-    dependency_type TEXT        NOT NULL,
-    managed         BOOLEAN, -- NULL while awaiting_input
+    deployment_id   UUID    NOT NULL REFERENCES deployments (id),
+    dependency_name TEXT    NOT NULL,
+    dependency_type TEXT    NOT NULL,
+    managed         BOOLEAN NOT NULL,
     provider_inputs JSONB,
     user_config     JSONB,
-    status          TEXT        NOT NULL,
     command_id      UUID,
-    output          JSONB,
-    -- status: awaiting_input | pending | succeeded | failed
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    UNIQUE (deployment_id, dependency_name)
 );
 
-
+-- A deployment's commands run in phases: dependencies (0), then the rollout
+-- (1). A command waits until every command of its deployment in a lower phase
+-- has succeeded. A payload built from an earlier phase's outputs is written
+-- when its own phase starts, so it is empty until then.
 CREATE TABLE commands
 (
     id            UUID PRIMARY KEY,
     cluster_id    UUID        NOT NULL REFERENCES clusters (id),
     deployment_id UUID        NOT NULL REFERENCES deployments (id),
     type          TEXT        NOT NULL,
-    payload       JSONB       NOT NULL,
+    phase         INT         NOT NULL DEFAULT 0,
+    payload       JSONB,
     status        TEXT        NOT NULL DEFAULT 'queued',
     output        JSONB,
     error         TEXT,
@@ -89,6 +96,9 @@ CREATE TABLE commands
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX commands_deployment ON commands (deployment_id);
+-- Serves the agents' claim of the next queued command of their cluster.
+CREATE INDEX commands_cluster_status ON commands (cluster_id, status, created_at);
 
 CREATE TABLE command_logs
 (
@@ -97,4 +107,4 @@ CREATE TABLE command_logs
     logged_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX command_logs_command on command_logs (command_id, logged_at);
+CREATE INDEX command_logs_command ON command_logs (command_id, logged_at);

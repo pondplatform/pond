@@ -10,14 +10,11 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	_ "github.com/lib/pq"
 	"github.com/pondplatform/pond/cli/client"
 	server "github.com/pondplatform/pond/server/internal"
-	"github.com/pondplatform/pond/server/internal/events"
-	"github.com/pondplatform/pond/server/internal/service"
 )
 
 const testJWTSecret = "test-secret-for-integration-tests-only"
@@ -29,49 +26,12 @@ type TestHarness struct {
 	WsAddr     string // "127.0.0.1:<port>" (without ws:// prefix, for agent connection)
 	AdminToken string // JWT admin token for this harness
 
-	timing Timing
 	server *httptest.Server
-	cancel context.CancelFunc
 }
 
-// Timing holds the liveness deadlines and retry settings of the deployment
-// service's sweep. The zero value means the service defaults.
-type Timing struct {
-	QueueTimeout      time.Duration
-	AckTimeout        time.Duration
-	CommandTimeout    time.Duration
-	Grace             time.Duration
-	OrphanTimeout     time.Duration
-	SweepInterval     time.Duration
-	HeartbeatInterval time.Duration
-	MaxAttempts       int
-}
-
-// FastTiming shrinks every deadline so tests about recovery and timeouts
-// finish in seconds.
-var FastTiming = Timing{
-	QueueTimeout:      2 * time.Second,
-	AckTimeout:        1 * time.Second,
-	CommandTimeout:    1 * time.Second,
-	Grace:             500 * time.Millisecond,
-	OrphanTimeout:     3 * time.Second,
-	SweepInterval:     200 * time.Millisecond,
-	HeartbeatInterval: 300 * time.Millisecond,
-	MaxAttempts:       3,
-}
-
-// NewTestHarness creates a new test harness with a running server.
-// The server uses the database at the given connection string and the given
-// RabbitMQ AMQP URL.
-func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
-	t.Helper()
-	return NewTestHarnessWithTiming(t, connStr, amqpURL, Timing{})
-}
-
-// NewTestHarnessWithTiming is NewTestHarness with the given sweep timing.
-// The sweeper uses SweepInterval, CommandTimeout and OrphanTimeout (as its
-// stall timeout); the other fields wait for the dispatch rework.
-func NewTestHarnessWithTiming(t *testing.T, connStr string, amqpURL string, timing Timing) *TestHarness {
+// NewTestHarness creates a new test harness with a running server that uses
+// the database at the given connection string.
+func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 	t.Helper()
 
 	db, err := sql.Open("postgres", connStr)
@@ -84,48 +44,17 @@ func NewTestHarnessWithTiming(t *testing.T, connStr string, amqpURL string, timi
 		t.Fatalf("ping db: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
-	topics, rmq, err := events.NewRabbitMQTopics(amqpURL, log.WithGroup("rabbitmq"))
-	if err != nil {
-		cancel()
-		db.Close()
-		t.Fatalf("new rabbitmq topics: %v", err)
-	}
-	t.Cleanup(rmq.Close)
-
-	router, background := server.Build(db, topics, server.Config{
-		JWTSecret: testJWTSecret,
-		Sweep: service.SweepConfig{
-			Interval:       timing.SweepInterval,
-			CommandTimeout: timing.CommandTimeout,
-			StallTimeout:   timing.OrphanTimeout,
-		},
-	}, log)
-	go background(ctx)
-
-	// Start the test server
-	ts := httptest.NewServer(router)
-
-	// Extract host:port for WebSocket connections
-	wsAddr := strings.TrimPrefix(ts.URL, "http://")
-
-	adminToken := mintAdminToken(t)
+	ts := httptest.NewServer(server.Build(db, server.Config{DatabaseURL: connStr, JWTSecret: testJWTSecret}, log))
 
 	h := &TestHarness{
 		DB:         db,
 		BaseURL:    ts.URL,
-		WsAddr:     wsAddr,
-		AdminToken: adminToken,
-		timing:     timing,
+		WsAddr:     strings.TrimPrefix(ts.URL, "http://"),
+		AdminToken: mintAdminToken(t),
 		server:     ts,
-		cancel:     cancel,
 	}
-
 	t.Cleanup(h.Cleanup)
-
 	return h
 }
 
@@ -154,7 +83,6 @@ func (h *TestHarness) StartFakeAgent(ctx context.Context, t *testing.T, token st
 
 // Cleanup stops the server and closes the database connection.
 func (h *TestHarness) Cleanup() {
-	h.cancel()
 	h.server.Close()
 	h.DB.Close()
 }

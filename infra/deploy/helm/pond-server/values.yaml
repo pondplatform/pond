@@ -6,30 +6,14 @@ image:
 listenAddr: ":8080"
 managementAddr: ":9090"
 databaseUrl: "postgres://pond:pond@postgres:5432/pond?sslmode=disable"
-rabbitmqUrl: "amqp://guest:guest@rabbitmq:5672/"
 jwtSecret: ""
 adminKey: ""
-# How long an agent may run a command before the server fails it, as a Go
-# duration such as "90m". Empty means the server default, 1h.
-commandTimeout: ""
 
 postgres:
   tag: "16-alpine"
   user: pond
   password: pond
   db: pond
-  resources:
-    limits:
-      cpu: 500m
-      memory: 256Mi
-    requests:
-      cpu: 100m
-      memory: 128Mi
-
-rabbitmq:
-  tag: "3-alpine"
-  user: guest
-  password: guest
   resources:
     limits:
       cpu: 500m

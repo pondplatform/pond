@@ -78,12 +78,6 @@ func (c *connection) SendReady(ctx context.Context) error {
 	return c.send("ready", struct{}{})
 }
 
-func (c *connection) SendAck(ctx context.Context, cmd *wire.CommandPayload) error {
-	return c.send("ack", wire.AckPayload{
-		CommandID: cmd.ID,
-	})
-}
-
 func (c *connection) SendResult(ctx context.Context, result *wire.ResultPayload) error {
 	return c.send("result", result)
 }

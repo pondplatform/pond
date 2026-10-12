@@ -20,16 +20,15 @@ Services that set `gateway.http.enabled` are exposed with a Gateway API `HTTPRou
 
 TLS is terminated by the Gateway listener rather than per service, so that listener needs a certificate covering the environment's ingress base host — typically a wildcard for `*.<base host>`, since Pond derives each service's hostname as `<name>.<base host>`. If you want HTTP traffic redirected to HTTPS, configure that on the Gateway; there is no per-route equivalent.
 
-## External PostgreSQL and RabbitMQ
+## External PostgreSQL
 
-The server Helm chart bundles single-replica PostgreSQL and RabbitMQ deployments **with no persistent volumes** — they are development-grade and will lose data on pod restart.
+The server keeps all of its state in PostgreSQL, including the queue of commands waiting for an agent. The server Helm chart bundles a single-replica PostgreSQL deployment **with no persistent volume** — it is development-grade and will lose data on pod restart.
 
-For production, provision your own PostgreSQL (e.g. CloudNative PG, RDS, Cloud SQL) and RabbitMQ (e.g. CloudAMQP, Amazon MQ) and supply their connection strings:
+For production, provision your own PostgreSQL (e.g. CloudNative PG, RDS, Cloud SQL) and supply its connection string:
 
 ```sh
 helm upgrade --install pond-server ... \
-  --set databaseUrl="postgres://user:pass@db.prod.example.com:5432/pond?sslmode=require" \
-  --set rabbitmqUrl="amqps://user:pass@mq.prod.example.com:5671/"
+  --set databaseUrl="postgres://user:pass@db.prod.example.com:5432/pond?sslmode=require"
 ```
 
 ## Agent RBAC
@@ -54,20 +53,18 @@ The server exposes health endpoints on the management port (`9090` by default):
 
 | Endpoint | Description |
 |---|---|
-| `GET /health/live` | Returns `503` if PostgreSQL is unreachable or the RabbitMQ connection is closed |
+| `GET /health/live` | Returns `503` if PostgreSQL is unreachable |
 | `GET /health/ready` | Same checks as `/health/live` |
 
 Both endpoints report each check by name:
 
 ```json
-{"status":"unavailable","checks":{"postgres":"ok","rabbitmq":"connection closed"}}
+{"status":"unavailable","checks":{"postgres":"dial tcp 10.0.0.12:5432: connect: connection refused"}}
 ```
 
-These are already wired into the Helm chart's liveness and readiness probes. The
-server does not reconnect to RabbitMQ, so the liveness probe restarts the pod when
-the connection drops. Because PostgreSQL is part of the liveness check too, a
-PostgreSQL outage also restarts the server, and it crash-loops until PostgreSQL is
-reachable again.
+These are already wired into the Helm chart's liveness and readiness probes.
+Because PostgreSQL is part of the liveness check, a PostgreSQL outage restarts the
+server, and it crash-loops until PostgreSQL is reachable again.
 
 ## Prometheus metrics
 

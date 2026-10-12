@@ -102,15 +102,24 @@ func (h *DeploymentHandler) GetStatus(c *gin.Context) {
 func toDeploymentDetailResponse(detail *service.DeploymentDetail) shared.Deployment {
 	d := detail.Deployment
 
+	commandsByID := make(map[uuid.UUID]*domain.Command, len(detail.Commands))
+	for _, cmd := range detail.Commands {
+		commandsByID[cmd.ID] = cmd
+	}
+
 	deps := make([]shared.DependencyDeploymentSummary, len(detail.Dependencies))
 	for i, dep := range detail.Dependencies {
+		var cmd *domain.Command
+		if dep.CommandID != nil {
+			cmd = commandsByID[*dep.CommandID]
+		}
 		deps[i] = shared.DependencyDeploymentSummary{
 			Name:        dep.DependencyName,
 			Type:        dep.DependencyType,
-			Managed:     dep.Managed,
-			Status:      shared.DependencyDeploymentStatus(dep.Status),
+			Managed:     &dep.Managed,
+			Status:      dep.APIStatus(cmd),
 			CommandID:   dep.CommandID,
-			CompletedAt: dep.CompletedAt,
+			CompletedAt: finishedAt(cmd),
 		}
 	}
 
@@ -132,13 +141,22 @@ func toDeploymentDetailResponse(detail *service.DeploymentDetail) shared.Deploym
 		EnvironmentID: d.EnvironmentID,
 		ImageTag:      d.ImageTag,
 		TriggeredBy:   d.TriggeredBy,
-		Status:        d.Status,
+		Status:        d.APIStatus(),
 		CreatedAt:     d.CreatedAt,
 		CompletedAt:   d.CompletedAt,
 		Error:         d.Error,
 		Dependencies:  deps,
 		Commands:      cmds,
 	}
+}
+
+// finishedAt is when the command reported its result, or nil while it has
+// not.
+func finishedAt(cmd *domain.Command) *time.Time {
+	if cmd == nil || (cmd.Status != domain.CommandStatusSucceeded && cmd.Status != domain.CommandStatusFailed) {
+		return nil
+	}
+	return &cmd.UpdatedAt
 }
 
 func toDeploymentResponse(d *domain.Deployment) shared.Deployment {
@@ -148,7 +166,7 @@ func toDeploymentResponse(d *domain.Deployment) shared.Deployment {
 		EnvironmentID: d.EnvironmentID,
 		ImageTag:      d.ImageTag,
 		TriggeredBy:   d.TriggeredBy,
-		Status:        d.Status,
+		Status:        d.APIStatus(),
 		CreatedAt:     d.CreatedAt,
 		CompletedAt:   d.CompletedAt,
 		Error:         d.Error,
@@ -173,9 +191,9 @@ func (h *DeploymentHandler) ListByService(c *gin.Context) {
 		environmentID = &id
 	}
 
-	var status *domain.DeploymentStatus
+	var status *shared.DeploymentStatus
 	if statusStr := c.Query("status"); statusStr != "" {
-		s := domain.DeploymentStatus(statusStr)
+		s := shared.DeploymentStatus(statusStr)
 		if !slices.Contains(deploymentStatuses, s) {
 			writeError(c, http.StatusBadRequest, fmt.Sprintf("invalid status %q: expected one of %s", statusStr, joinStatuses(deploymentStatuses)))
 			return
@@ -198,7 +216,7 @@ func (h *DeploymentHandler) ListByService(c *gin.Context) {
 	writeList(c, items, nextCursor)
 }
 
-func (h *DeploymentHandler) listByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, p Pagination) ([]shared.DeploymentListItem, *string, error) {
+func (h *DeploymentHandler) listByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *shared.DeploymentStatus, p Pagination) ([]shared.DeploymentListItem, *string, error) {
 	if _, err := h.services.GetByID(ctx, serviceID); err != nil {
 		return nil, nil, err
 	}
@@ -222,7 +240,7 @@ func (h *DeploymentHandler) listByService(ctx context.Context, serviceID uuid.UU
 			ServiceID:     d.ServiceID,
 			EnvironmentID: d.EnvironmentID,
 			ImageTag:      d.ImageTag,
-			Status:        d.Status,
+			Status:        d.APIStatus(),
 			TriggeredBy:   d.TriggeredBy,
 			CreatedAt:     d.CreatedAt,
 			CompletedAt:   d.CompletedAt,
@@ -245,26 +263,6 @@ func (h *DeploymentHandler) Cancel(c *gin.Context) {
 
 func (h *DeploymentHandler) cancel(ctx context.Context, id uuid.UUID) error {
 	return h.svc.Cancel(ctx, id)
-}
-
-func (h *DeploymentHandler) ConfigureDeployment(c *gin.Context) {
-	id, ok := parseUUIDParam(c, "deploymentId", "deployment id")
-	if !ok {
-		return
-	}
-	var req shared.ConfigureDeploymentRequest
-	if !bindJSON(c, &req) {
-		return
-	}
-	if err := h.configureDeployment(c.Request.Context(), id, req); err != nil {
-		writeServiceError(c, err, h.log)
-		return
-	}
-	c.Status(http.StatusNoContent)
-}
-
-func (h *DeploymentHandler) configureDeployment(ctx context.Context, id uuid.UUID, req shared.ConfigureDeploymentRequest) error {
-	return h.svc.ConfigureDeployment(ctx, id, req.Dependencies)
 }
 
 func (h *DeploymentHandler) GetCommandLogs(c *gin.Context) {
@@ -292,16 +290,15 @@ func (h *DeploymentHandler) getCommandLogs(ctx context.Context, commandID uuid.U
 	return items, nil
 }
 
-var deploymentStatuses = []domain.DeploymentStatus{
+var deploymentStatuses = []shared.DeploymentStatus{
 	shared.DeploymentStatusPending,
 	shared.DeploymentStatusRunning,
 	shared.DeploymentStatusSucceeded,
-	shared.DeploymentStatusAwaitingInput,
 	shared.DeploymentStatusFailed,
 	shared.DeploymentStatusCancelled,
 }
 
-func joinStatuses(statuses []domain.DeploymentStatus) string {
+func joinStatuses(statuses []shared.DeploymentStatus) string {
 	names := make([]string, len(statuses))
 	for i, s := range statuses {
 		names[i] = string(s)

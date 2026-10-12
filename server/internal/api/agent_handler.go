@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/pondplatform/pond/server/internal/auth"
-	"github.com/pondplatform/pond/server/internal/events"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/service"
 	"github.com/pondplatform/pond/server/internal/store"
@@ -24,27 +24,25 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// AgentHandler bridges agent WebSocket connections to the event bus. It owns
-// no deployment state: every interaction with the deployment service goes
-// through a published event, and every DB mutation happens on the service
-// side in response to that event.
+// AgentHandler serves agent WebSocket connections. The agent drives the
+// conversation: it asks for work with "ready" and reports with "result" and
+// "log"; the server only ever answers.
 type AgentHandler struct {
-	clusters  store.ClusterRepository
-	agentConn service.AgentConnectionService
-	log       *slog.Logger
+	clusters store.ClusterRepository
+	agents   *service.AgentCommands
+	log      *slog.Logger
 }
 
-func NewAgentHandler(clusters store.ClusterRepository, agentConn service.AgentConnectionService, log *slog.Logger) *AgentHandler {
+func NewAgentHandler(clusters store.ClusterRepository, agents *service.AgentCommands, log *slog.Logger) *AgentHandler {
 	return &AgentHandler{
-		clusters:  clusters,
-		agentConn: agentConn,
-		log:       log,
+		clusters: clusters,
+		agents:   agents,
+		log:      log,
 	}
 }
 
 func (h *AgentHandler) ServeWS(c *gin.Context) {
 	r := c.Request
-	w := c.Writer
 
 	token := auth.BearerToken(r)
 	if token == "" {
@@ -52,8 +50,7 @@ func (h *AgentHandler) ServeWS(c *gin.Context) {
 		return
 	}
 
-	hash := auth.SHA256Hex(token)
-	cluster, err := h.clusters.GetByTokenHash(r.Context(), hash)
+	cluster, err := h.clusters.GetByTokenHash(r.Context(), auth.SHA256Hex(token))
 	if errors.Is(err, api.ErrNotFound) {
 		writeError(c, http.StatusUnauthorized, "unknown agent token: no cluster uses it. It may have been rotated; update the agent with the cluster's current token")
 		return
@@ -63,169 +60,99 @@ func (h *AgentHandler) ServeWS(c *gin.Context) {
 		return
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := upgrader.Upgrade(c.Writer, r, nil)
 	if err != nil {
 		h.log.Error("websocket upgrade failed", "cluster_id", cluster.ID, "err", err)
 		return
 	}
 	defer conn.Close()
 
+	ctx := r.Context()
 	log := h.log.With("cluster_id", cluster.ID)
 	log.Info("agent connected")
-	_ = h.clusters.UpdateLastSeen(r.Context(), cluster.ID, time.Now())
-
-	ctx := r.Context()
-
-	// Create session for event protocol handling
-	session := h.agentConn.NewSession(cluster.ID, log)
-	dispatchCh, wakeCh, err := session.Start(ctx)
-	if err != nil {
-		log.Error("start session failed", "err", err)
-		return
+	_ = h.clusters.UpdateLastSeen(ctx, cluster.ID, time.Now())
+	if err := h.serve(ctx, conn, cluster.ID, log); err != nil {
+		log.Warn("closing agent connection", "err", err)
 	}
+	log.Info("agent disconnected")
+}
 
-	// Connection state — only mutated on the main goroutine below.
-	var busy bool
-
-	// On disconnect, publish AgentDisconnected so the service can requeue
-	// whatever was in flight.
-	defer session.Close()
-
-	// Per-connection channels for WebSocket reader goroutine.
-	wsCh := make(chan wire.Envelope, 4)
-	readerDone := make(chan error, 1)
-
-	// Reader goroutine: gorilla WS requires all ReadJSON calls from one
-	// goroutine, so we park it here and push parsed envelopes onto wsCh.
-	go func() {
-		for {
-			var env wire.Envelope
-			if err := conn.ReadJSON(&env); err != nil {
-				readerDone <- err
-				close(wsCh)
-				return
-			}
-			select {
-			case wsCh <- env:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	// sendCommand maps a domain.Command to wire.CommandPayload and writes it to the WebSocket.
-	sendCommand := func(cmd *domain.Command) {
-		log.Info("sending command to agent", "command_id", cmd.ID, "type", cmd.Type)
-		wireCmd := wire.CommandPayload{
-			ID:           cmd.ID,
-			DeploymentID: cmd.DeploymentID,
-			Type:         cmd.Type,
-			Payload:      cmd.Payload,
-			CreatedAt:    cmd.CreatedAt,
-		}
-		data, err := json.Marshal(wireCmd)
-		if err != nil {
-			log.Error("marshal command", "err", err)
-			return
-		}
-		if err := conn.WriteJSON(wire.Envelope{Type: "command", Data: data}); err != nil {
-			log.Error("write command to ws", "err", err)
-		}
-	}
-
-	// requestNext asks the service for next command and sends it or idle.
-	requestNext := func() {
-		if cmd := session.RequestNext(ctx); cmd != nil {
-			busy = true
-			sendCommand(cmd)
-		} else {
-			if err := conn.WriteJSON(wire.Envelope{Type: "idle"}); err != nil {
-				log.Error("write idle to ws", "err", err)
-			}
-		}
-	}
-
-	// Main loop: single goroutine owns all connection state.
+// serve answers the agent's messages until the connection ends. When a
+// result cannot be stored it returns an error, which closes the connection:
+// the agent cannot tell, and the command stays dispatched.
+func (h *AgentHandler) serve(ctx context.Context, conn *websocket.Conn, clusterID uuid.UUID, log *slog.Logger) error {
 	for {
-		select {
-		case <-ctx.Done():
-			return
-
-		case err := <-readerDone:
-			if err != nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Error("websocket read error", "err", err)
+		var env wire.Envelope
+		if err := conn.ReadJSON(&env); err != nil {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				return nil
 			}
-			return
+			return fmt.Errorf("read: %w", err)
+		}
 
-		case env, ok := <-wsCh:
-			if !ok {
-				return
+		switch env.Type {
+		case "ready":
+			cmd, err := h.agents.Next(ctx, clusterID)
+			if err != nil {
+				log.Error("claim command", "err", err)
 			}
-			switch env.Type {
-			case "ready":
-				requestNext()
-
-			case "ack":
-				var ack wire.AckPayload
-				if err := json.Unmarshal(env.Data, &ack); err != nil {
-					log.Error("decode ack", "err", err)
-					continue
-				}
-				log.Info("command acknowledged by agent", "command_id", ack.CommandID)
-				session.OnAck(ctx, ack.CommandID)
-
-			case "result":
-				var res wire.ResultPayload
-				if err := json.Unmarshal(env.Data, &res); err != nil {
-					log.Error("decode result", "err", err)
-					continue
-				}
-				if !busy {
-					log.Warn("received result with no active command")
-					continue
-				}
-				busy = false
-				log.Info("received command result", "command_id", res.CommandID, "success", res.Success)
-				session.OnResult(ctx, events.CommandResult{
-					CommandID: res.CommandID,
-					Success:   res.Success,
-					Output:    res.Output,
-					Error:     res.Error,
-				})
-				requestNext()
-
-			case "log":
-				var msg wire.LogPayload
-				if err := json.Unmarshal(env.Data, &msg); err != nil {
-					log.Error("decode log", "err", err)
-					continue
-				}
-				if msg.CommandID == uuid.Nil {
-					continue
-				}
-				session.OnLog(ctx, msg.CommandID, msg.Line)
-
-			default:
-				log.Warn("unknown message type from agent", "type", env.Type)
+			if err := reply(conn, cmd, log); err != nil {
+				return err
 			}
 
-		case cmd := <-dispatchCh:
-			// An unsolicited dispatch arrived outside of requestNext.
-			if busy {
-				log.Warn("dispatch arrived while busy, dropping", "command_id", cmd.ID)
+		case "result":
+			var res wire.ResultPayload
+			if err := json.Unmarshal(env.Data, &res); err != nil {
+				log.Error("decode result", "err", err)
 				continue
 			}
-			busy = true
-			log.Info("sending unsolicited command to agent", "command_id", cmd.ID, "type", cmd.Type)
-			sendCommand(cmd)
-
-		case <-wakeCh:
-			// A new command was enqueued for this cluster. If we're idle,
-			// ask for it; otherwise the post-result requestNext will pick
-			// it up when the current command finishes.
-			if !busy {
-				requestNext()
+			log.Info("received command result", "command_id", res.CommandID, "success", res.Success)
+			if err := h.agents.Record(ctx, clusterID, service.CommandResult{
+				CommandID: res.CommandID,
+				Success:   res.Success,
+				Output:    res.Output,
+				Error:     res.Error,
+			}); err != nil {
+				return err
 			}
+
+		case "log":
+			var msg wire.LogPayload
+			if err := json.Unmarshal(env.Data, &msg); err != nil {
+				log.Error("decode log", "err", err)
+				continue
+			}
+			if msg.CommandID == uuid.Nil {
+				continue
+			}
+			if err := h.agents.Log(ctx, clusterID, msg.CommandID, msg.Line); err != nil {
+				log.Error("store command log", "command_id", msg.CommandID, "err", err)
+			}
+
+		default:
+			log.Warn("unknown message type from agent", "type", env.Type)
 		}
 	}
+}
+
+// reply answers a "ready": the command to run, or "idle" when there is none.
+func reply(conn *websocket.Conn, cmd *domain.Command, log *slog.Logger) error {
+	if cmd == nil {
+		return conn.WriteJSON(wire.Envelope{Type: "idle"})
+	}
+	log.Info("sending command to agent", "command_id", cmd.ID, "type", cmd.Type)
+	data, err := json.Marshal(wire.CommandPayload{
+		ID:           cmd.ID,
+		DeploymentID: cmd.DeploymentID,
+		Type:         cmd.Type,
+		Payload:      cmd.Payload,
+		CreatedAt:    cmd.CreatedAt,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal command %s: %w", cmd.ID, err)
+	}
+	if err := conn.WriteJSON(wire.Envelope{Type: "command", Data: data}); err != nil {
+		return fmt.Errorf("send command %s: %w", cmd.ID, err)
+	}
+	return nil
 }

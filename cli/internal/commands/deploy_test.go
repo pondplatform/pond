@@ -71,7 +71,7 @@ func TestDeployWithoutInputSendsNoDependencies(t *testing.T) {
 		t.Fatalf("expected one submit, got %d", len(c.submitted))
 	}
 	if c.submitted[0].Dependencies != nil {
-		t.Errorf("expected nil dependencies so the server keeps the awaiting_input flow, got %+v", c.submitted[0].Dependencies)
+		t.Errorf("expected nil dependencies so the server reuses the previous input, got %+v", c.submitted[0].Dependencies)
 	}
 }
 

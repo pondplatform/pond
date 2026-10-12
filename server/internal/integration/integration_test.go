@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -24,7 +23,6 @@ import (
 )
 
 var testConnStr string
-var testAMQPURL string
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
@@ -50,28 +48,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		log.Fatalf("get connection string: %v", err)
 	}
-
-	// Start RabbitMQ container
-	rmqContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "rabbitmq:4-alpine",
-			ExposedPorts: []string{"5672/tcp"},
-			WaitingFor:   wait.ForLog("Server startup complete").WithStartupTimeout(60 * time.Second),
-		},
-		Started: true,
-	})
-	if err != nil {
-		log.Fatalf("start rabbitmq container: %v", err)
-	}
-	rmqHost, err := rmqContainer.Host(ctx)
-	if err != nil {
-		log.Fatalf("rabbitmq host: %v", err)
-	}
-	rmqPort, err := rmqContainer.MappedPort(ctx, "5672")
-	if err != nil {
-		log.Fatalf("rabbitmq port: %v", err)
-	}
-	testAMQPURL = fmt.Sprintf("amqp://guest:guest@%s:%s/", rmqHost, rmqPort.Port())
 
 	// Apply schema with retry
 	var db *sql.DB
@@ -105,9 +81,6 @@ func TestMain(m *testing.M) {
 	if err := pgContainer.Terminate(ctx); err != nil {
 		log.Printf("terminate postgres container: %v", err)
 	}
-	if err := rmqContainer.Terminate(ctx); err != nil {
-		log.Printf("terminate rabbitmq container: %v", err)
-	}
 
 	os.Exit(code)
 }
@@ -117,7 +90,7 @@ func TestDeployment_SimpleSucceeds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr, testAMQPURL)
+	h := NewTestHarness(t, testConnStr)
 	scenario := BuildScenario(ctx, t, h)
 
 	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, DefaultBehavior)
@@ -164,7 +137,7 @@ func TestDeployment_HelmFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr, testAMQPURL)
+	h := NewTestHarness(t, testConnStr)
 	scenario := BuildScenario(ctx, t, h)
 
 	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, FailingBehavior("helm upgrade failed: release not found"))
@@ -195,7 +168,7 @@ func TestDeployment_WithTofuDep(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr, testAMQPURL)
+	h := NewTestHarness(t, testConnStr)
 	scenario := BuildScenario(ctx, t, h)
 
 	behavior := TofuOutputBehavior(map[string]any{
@@ -207,21 +180,11 @@ func TestDeployment_WithTofuDep(t *testing.T) {
 	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, behavior)
 
 	c := h.Client()
-	cfg := ServiceConfigWithDep("test-service")
-	req := SubmitRequest(scenario, cfg, "v1.0.0")
-
-	// Submit — dep created in awaiting_input
+	req := SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.0")
+	req.Dependencies = managedPostgres
 	deployment, err := c.SubmitDeployment(ctx, req)
 	if err != nil {
 		t.Fatalf("submit deployment: %v", err)
-	}
-
-	// Provide input: managed=true triggers tofu.apply
-	sc := newScenarioClient(h.BaseURL, h.AdminToken)
-	if err := sc.configureDeployment(ctx, deployment.ID, map[string]shared.DependencyInput{
-		"postgres": {Managed: true, Values: map[string]any{}},
-	}); err != nil {
-		t.Fatalf("configure deployment: %v", err)
 	}
 
 	finalStatus := pollDeploymentStatus(ctx, t, c, deployment.ID, 15*time.Second)
@@ -249,7 +212,7 @@ func TestDeployment_WithTofuDep_InputOnSubmit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr, testAMQPURL)
+	h := NewTestHarness(t, testConnStr)
 	scenario := BuildScenario(ctx, t, h)
 
 	behavior := TofuOutputBehavior(map[string]any{
@@ -270,8 +233,8 @@ func TestDeployment_WithTofuDep_InputOnSubmit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("submit deployment: %v", err)
 	}
-	if deployment.Status == shared.DeploymentStatusAwaitingInput {
-		t.Fatalf("deployment with input on submit must not await input")
+	if deployment.Status != shared.DeploymentStatusPending {
+		t.Fatalf("expected the deployment pending until an agent picks it up, got %q", deployment.Status)
 	}
 
 	finalStatus := pollDeploymentStatus(ctx, t, c, deployment.ID, 15*time.Second)
@@ -297,7 +260,7 @@ func TestDeployment_IncompleteInputOnSubmitRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr, testAMQPURL)
+	h := NewTestHarness(t, testConnStr)
 	scenario := BuildScenario(ctx, t, h)
 
 	req := SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.0")
@@ -325,7 +288,7 @@ func TestDeployment_TofuFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr, testAMQPURL)
+	h := NewTestHarness(t, testConnStr)
 	scenario := BuildScenario(ctx, t, h)
 
 	behavior := PerCommandBehavior(map[wire.CommandType]func(*wire.CommandPayload) *wire.ResultPayload{
@@ -341,21 +304,11 @@ func TestDeployment_TofuFails(t *testing.T) {
 	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, behavior)
 
 	c := h.Client()
-	cfg := ServiceConfigWithDep("test-service")
-	req := SubmitRequest(scenario, cfg, "v1.0.0")
-
-	// Submit — dep created in awaiting_input
+	req := SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.0")
+	req.Dependencies = managedPostgres
 	deployment, err := c.SubmitDeployment(ctx, req)
 	if err != nil {
 		t.Fatalf("submit deployment: %v", err)
-	}
-
-	// Provide input: managed=true triggers tofu.apply (which will fail)
-	sc := newScenarioClient(h.BaseURL, h.AdminToken)
-	if err := sc.configureDeployment(ctx, deployment.ID, map[string]shared.DependencyInput{
-		"postgres": {Managed: true, Values: map[string]any{}},
-	}); err != nil {
-		t.Fatalf("configure deployment: %v", err)
 	}
 
 	finalStatus := pollDeploymentStatus(ctx, t, c, deployment.ID, 10*time.Second)
@@ -373,17 +326,12 @@ func TestDeployment_TofuFails(t *testing.T) {
 	}
 }
 
-// TestDeployment_AgentDisconnectRequeues tests that agent disconnect causes command requeue.
-func TestDeployment_AgentDisconnectRequeues(t *testing.T) {
-	t.Skip("skipping: disconnect requeue test is inherently racy and needs more sophisticated mocking")
-}
-
 // TestDeployment_WithLogs tests that log messages are properly handled.
 func TestDeployment_WithLogs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	h := NewTestHarness(t, testConnStr, testAMQPURL)
+	h := NewTestHarness(t, testConnStr)
 	scenario := BuildScenario(ctx, t, h)
 
 	behavior := Behavior{

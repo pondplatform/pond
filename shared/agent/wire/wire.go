@@ -21,7 +21,6 @@ const (
 	CommandHelmUpgrade CommandType = "helm.upgrade"
 	CommandTofuApply   CommandType = "tofu.apply"
 	CommandTofuOutput  CommandType = "tofu.output"
-	CommandStatusQuery CommandType = "status.query"
 )
 
 // CommandPayload is the "command" message sent from server to agent.
@@ -31,12 +30,6 @@ type CommandPayload struct {
 	Type         CommandType     `json:"type"`
 	Payload      json.RawMessage `json:"payload"`
 	CreatedAt    time.Time       `json:"created_at"`
-}
-
-// AckPayload is the "ack" message sent from agent to server when it starts
-// executing a command.
-type AckPayload struct {
-	CommandID uuid.UUID `json:"command_id"`
 }
 
 // ResultPayload is the "result" message sent from agent to server after a

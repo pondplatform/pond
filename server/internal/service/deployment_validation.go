@@ -42,10 +42,7 @@ func (s *deploymentService) validateSubmission(ctx context.Context, req api.Subm
 			errs.Add("dependency", name, fmt.Sprintf("unknown dependency type %q", dependencyType))
 		}
 	}
-	if req.Dependencies != nil {
-		addMissingInputErrors(&errs, svcConfig.Dependencies, req.Dependencies)
-		addUndeclaredInputErrors(&errs, svcConfig.Dependencies, req.Dependencies)
-	}
+	addUndeclaredInputErrors(&errs, svcConfig.Dependencies, req.Dependencies)
 	addTemplateReferenceErrors(&errs, svcConfig)
 
 	if errs.HasErrors() {
@@ -79,23 +76,6 @@ func (s *deploymentService) environmentNotFound(ctx context.Context, projectID u
 	}
 	slices.Sort(names)
 	return api.NotFound("environment %q not found in project %s (available: %s)", name, projectID, strings.Join(names, ", "))
-}
-
-func validateDeclaredInputs(declared map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) error {
-	var errs api.ValidationErrors
-	addUndeclaredInputErrors(&errs, declared, inputs)
-	if errs.HasErrors() {
-		return &errs
-	}
-	return nil
-}
-
-func addMissingInputErrors(errs *api.ValidationErrors, declared map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) {
-	for _, name := range slices.Sorted(maps.Keys(declared)) {
-		if _, ok := inputs[name]; !ok {
-			errs.Add("dependency", name, "missing input")
-		}
-	}
 }
 
 func addUndeclaredInputErrors(errs *api.ValidationErrors, declared map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) {

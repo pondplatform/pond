@@ -2,10 +2,8 @@
 # End-to-end scenario: deploy the postgres-demo service with a managed postgres dependency.
 #
 # Flow:
-#   1. Submit deployment (no --wait) → get deployment ID
-#   2. Wait for awaiting_input
-#   3. Provide user input (managed=true, instances=1)
-#   4. Wait for succeeded
+#   1. Submit the deployment with its dependency input (managed=true, instances=1)
+#   2. Wait for succeeded
 #
 # Prerequisites:
 #   - local-setup.sh has been run (creates test/end-to-end/.e2e-env)
@@ -28,37 +26,12 @@ DEPLOY_OUTPUT=$(POND_SERVER_URL="$SERVER_URL" POND_TOKEN="$POND_TOKEN" \
     --pond-file "$SCRIPT_DIR/../test-data/postgres/pond.yml" \
     --project "$PROJECT_ID" \
     --env staging \
-    --tag "$IMAGE_TAG" 2>&1)
+    --tag "$IMAGE_TAG" \
+    --input "$SCRIPT_DIR/../test-data/postgres/postgres-deploy-input.json" 2>&1)
 echo "$DEPLOY_OUTPUT"
 
 DEPLOYMENT_ID=$(get_deployment_id "$DEPLOY_OUTPUT")
 info "Deployment ID: $DEPLOYMENT_ID"
-
-# ── Wait for awaiting_input ───────────────────────────────────────────────────
-step "Waiting for deployment to reach awaiting_input"
-poll_status "$DEPLOYMENT_ID" "awaiting_input" 30 2
-
-# ── Provide user input ────────────────────────────────────────────────────────
-step "Providing user input (managed=true, instances=1)"
-INPUT_FILE=$(mktemp /tmp/pond-user-input.XXXXXX.json)
-trap 'rm -f "$INPUT_FILE"' EXIT
-cat > "$INPUT_FILE" <<'EOF'
-{
-  "dependencies": {
-    "db": {
-      "managed": true,
-      "values": {
-        "instances": 1
-      }
-    }
-  }
-}
-EOF
-
-POND_SERVER_URL="$SERVER_URL" POND_TOKEN="$POND_TOKEN" \
-  "$POND" deployment configure \
-    --deployment-id "$DEPLOYMENT_ID" \
-    --input "$INPUT_FILE"
 
 # ── Wait for succeeded ────────────────────────────────────────────────────────
 step "Waiting for deployment to complete"

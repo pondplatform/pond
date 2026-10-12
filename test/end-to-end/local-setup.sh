@@ -4,7 +4,7 @@
 #
 # What it does:
 #   1. Builds pond-server and pond-agent Docker images
-#   2. Installs the pond-server Helm chart (postgres + rabbitmq included)
+#   2. Installs the pond-server Helm chart (postgres included)
 #   3. Waits for the server to be healthy, then port-forwards it
 #   4. Creates a cluster via the API using the admin key
 #   5. Installs the pond-agent Helm chart with the cluster's agent token

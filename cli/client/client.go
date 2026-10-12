@@ -13,7 +13,6 @@ type ServerClient interface {
 	SubmitDeployment(ctx context.Context, req api.SubmitRequest) (*api.Deployment, error)
 	GetDeployment(ctx context.Context, id uuid.UUID) (*api.Deployment, error)
 	GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]api.CommandLog, error)
-	ConfigureDeployment(ctx context.Context, id uuid.UUID, req api.ConfigureDeploymentRequest) error
 	ListServices(ctx context.Context, projectID uuid.UUID) ([]api.Service, error)
 	ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]api.Environment, error)
 	ListDeployments(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, limit int) ([]api.DeploymentListItem, error)

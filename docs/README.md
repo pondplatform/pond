@@ -15,7 +15,7 @@ CLI (pond)
 ┌─────────────────────────────────────────────┐
 │  pond-server                                │
 │  REST API · Deployment state machine        │
-│  PostgreSQL · RabbitMQ                      │
+│  PostgreSQL                                │
 └──────────────────┬──────────────────────────┘
                    │  WebSocket (per cluster)
                    ▼

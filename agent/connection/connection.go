@@ -11,7 +11,6 @@ import (
 type AgentConnection interface {
 	Connect(ctx context.Context) error
 	SendReady(ctx context.Context) error
-	SendAck(ctx context.Context, cmd *wire.CommandPayload) error
 	ReceiveMessage(ctx context.Context) (*wire.Envelope, error)
 	SendResult(ctx context.Context, result *wire.ResultPayload) error
 	SendLog(ctx context.Context, entry wire.LogPayload) error

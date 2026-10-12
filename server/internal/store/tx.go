@@ -12,6 +12,7 @@ type Repos struct {
 	Deployments DeploymentInfoStore
 	Services    ServiceRepository
 	Envs        EnvironmentRepository
+	Clusters    ClusterRepository
 }
 
 func NewRepos(db DBTX) Repos {
@@ -19,6 +20,7 @@ func NewRepos(db DBTX) Repos {
 		Deployments: NewDeploymentInfoStore(db),
 		Services:    NewServiceStore(db),
 		Envs:        NewEnvironmentStore(db),
+		Clusters:    NewClusterStore(db),
 	}
 }
 

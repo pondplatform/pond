@@ -179,7 +179,7 @@ func TestRouter_ErrorResponses(t *testing.T) {
 		{"empty body", http.MethodPost, "/api/v1/projects", "admin", "", http.StatusBadRequest, api.CodeInvalidInput, "request body is empty; expected a JSON object"},
 		{"bad path id", http.MethodGet, "/api/v1/projects/abc", "admin", "", http.StatusBadRequest, api.CodeInvalidInput, `invalid project id "abc": expected a UUID`},
 		{"bad token role", http.MethodPost, "/api/v1/tokens", "admin", `{"role":"owner"}`, http.StatusUnprocessableEntity, api.CodeValidationFailed, `validation failed: Token.role: must be one of admin, member or viewer, got "owner"`},
-		{"bad status filter", http.MethodGet, "/api/v1/services/" + uuid.NewString() + "/deployments?status=done", "admin", "", http.StatusBadRequest, api.CodeInvalidInput, `invalid status "done": expected one of pending, running, succeeded, awaiting_input, failed, cancelled`},
+		{"bad status filter", http.MethodGet, "/api/v1/services/" + uuid.NewString() + "/deployments?status=done", "admin", "", http.StatusBadRequest, api.CodeInvalidInput, `invalid status "done": expected one of pending, running, succeeded, failed, cancelled`},
 		{"bad cursor", http.MethodGet, "/api/v1/services/" + uuid.NewString() + "/deployments?cursor=yesterday", "admin", "", http.StatusBadRequest, api.CodeInvalidInput, `invalid cursor "yesterday": pass the nextCursor value from a previous response`},
 	}
 	for _, tt := range tests {

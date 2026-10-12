@@ -28,7 +28,7 @@ func getHealth(t *testing.T, h http.Handler, path string) (int, healthBody) {
 func passing(context.Context) error { return nil }
 
 func TestManagementHealth_AllChecksPass(t *testing.T) {
-	h := NewManagementRouter(map[string]HealthCheck{"postgres": passing, "rabbitmq": passing})
+	h := NewManagementRouter(map[string]HealthCheck{"postgres": passing, "other": passing})
 
 	for _, path := range []string{"/health/live", "/health/ready"} {
 		code, body := getHealth(t, h, path)
@@ -38,7 +38,7 @@ func TestManagementHealth_AllChecksPass(t *testing.T) {
 		if body.Status != "ok" {
 			t.Errorf("%s: body status = %q, want ok", path, body.Status)
 		}
-		for _, name := range []string{"postgres", "rabbitmq"} {
+		for _, name := range []string{"postgres", "other"} {
 			if body.Checks[name] != "ok" {
 				t.Errorf("%s: checks[%s] = %q, want ok", path, name, body.Checks[name])
 			}
@@ -49,8 +49,8 @@ func TestManagementHealth_AllChecksPass(t *testing.T) {
 func TestManagementHealth_FailingCheckReturns503(t *testing.T) {
 	failing := func(context.Context) error { return errors.New("connection refused") }
 
-	for _, failed := range []string{"postgres", "rabbitmq"} {
-		checks := map[string]HealthCheck{"postgres": passing, "rabbitmq": passing}
+	for _, failed := range []string{"postgres", "other"} {
+		checks := map[string]HealthCheck{"postgres": passing, "other": passing}
 		checks[failed] = failing
 		h := NewManagementRouter(checks)
 

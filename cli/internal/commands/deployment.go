@@ -10,7 +10,6 @@ func NewDeploymentCmd() *cobra.Command {
 		Short: "Manage deployments",
 	}
 
-	cmd.AddCommand(NewConfigureCmd())
 	cmd.AddCommand(NewDeploymentListCmd())
 	cmd.AddCommand(NewStatusCmd())
 

@@ -9,10 +9,8 @@ Both the server and the agent are configured entirely via environment variables.
 | `POND_JWT_SECRET` | `jwtSecret` | — | **yes** | HMAC secret for signing and verifying JWT API tokens. The server refuses to start if this is absent. |
 | `POND_ADMIN_KEY` | `adminKey` | — | no | Static bearer token with unconditional admin access. Useful for bootstrapping. |
 | `DATABASE_URL` | `databaseUrl` | `postgres://pond:pond@postgres:5432/pond?sslmode=disable` | no | PostgreSQL connection string. |
-| `RABBITMQ_URL` | `rabbitmqUrl` | `amqp://guest:guest@rabbitmq:5672/` | no | RabbitMQ connection string. |
 | `LISTEN_ADDR` | `listenAddr` | `:8080` | no | Address for the main API HTTP server. |
 | `MANAGEMENT_ADDR` | `managementAddr` | `:9090` | no | Address for the management server (health endpoints + Prometheus metrics). |
-| `POND_COMMAND_TIMEOUT` | `commandTimeout` | `1h` | no | How long an agent may run one helm or tofu command before the server fails it with "the agent did not report a result". Raise it if provisioning a dependency takes longer. Go duration syntax, such as `90m`. |
 | `LOG_LEVEL` | — | `info` | no | Log verbosity: `debug`, `info`, `warn`, or `error`. |
 
 Database migrations run automatically on startup — the process is idempotent.
@@ -25,14 +23,13 @@ Database migrations run automatically on startup — the process is idempotent.
 | `POND_SERVER_ADDR` | `serverAddr` | `localhost:8080` | no | `host:port` of the server. No scheme — plain TCP. |
 | `LOG_LEVEL` | — | `info` | no | Log verbosity: `debug`, `info`, `warn`, or `error`. |
 
-## Example: external PostgreSQL and RabbitMQ
+## Example: external PostgreSQL
 
-Override the bundled instances with your own by passing the connection strings at install time:
+Override the bundled instance with your own by passing the connection string at install time:
 
 ```sh
 helm upgrade --install pond-server oci://ghcr.io/pondplatform/charts/pond-server \
   --set jwtSecret="$JWT_SECRET" \
   --set adminKey="$ADMIN_KEY" \
-  --set databaseUrl="postgres://myuser:mypass@db.example.com:5432/pond?sslmode=require" \
-  --set rabbitmqUrl="amqp://myuser:mypass@mq.example.com:5672/"
+  --set databaseUrl="postgres://myuser:mypass@db.example.com:5432/pond?sslmode=require"
 ```

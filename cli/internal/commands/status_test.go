@@ -42,10 +42,6 @@ func (f *fakeClient) GetCommandLogs(context.Context, uuid.UUID) ([]api.CommandLo
 	return nil, nil
 }
 
-func (f *fakeClient) ConfigureDeployment(context.Context, uuid.UUID, api.ConfigureDeploymentRequest) error {
-	return fmt.Errorf("not implemented")
-}
-
 func (f *fakeClient) ListServices(context.Context, uuid.UUID) ([]api.Service, error) {
 	return f.services, nil
 }

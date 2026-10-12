@@ -11,7 +11,6 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	shared "github.com/pondplatform/pond/shared/server/api"
 )
 
 type scenarioClient struct {
@@ -119,17 +118,4 @@ func (c *scenarioClient) createEnvironment(ctx context.Context, projectID uuid.U
 		return envSetupResult{}, fmt.Errorf("decode environment: %w", err)
 	}
 	return result, nil
-}
-
-func (c *scenarioClient) configureDeployment(ctx context.Context, deploymentID uuid.UUID, deps map[string]shared.DependencyInput) error {
-	body := shared.ConfigureDeploymentRequest{Dependencies: deps}
-	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/deployments/%s/user-input", deploymentID), body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		return readBodyError(resp)
-	}
-	return nil
 }

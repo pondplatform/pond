@@ -20,7 +20,7 @@ Keep these values — you will need them in subsequent steps and to reinstall.
 
 ## 2. Install the server
 
-The `pond-server` Helm chart bundles PostgreSQL and RabbitMQ for development use. For production, provide external instances instead (see [Production Considerations](production.md)).
+The `pond-server` Helm chart bundles PostgreSQL for development use. For production, provide an external instance instead (see [Production Considerations](production.md)).
 
 Add the Helm repo and install:
 

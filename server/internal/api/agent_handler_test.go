@@ -8,74 +8,12 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/pondplatform/pond/server/internal/auth"
-	"github.com/pondplatform/pond/server/internal/events"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
-	"github.com/pondplatform/pond/server/internal/service"
 	"github.com/pondplatform/pond/server/internal/testutil"
 	"github.com/pondplatform/pond/shared/server/api"
 )
 
-type mockAgentConnectionService struct {
-	newSessionFn func(clusterID uuid.UUID, log *slog.Logger) service.AgentSession
-}
-
-func (m *mockAgentConnectionService) NewSession(clusterID uuid.UUID, log *slog.Logger) service.AgentSession {
-	if m.newSessionFn != nil {
-		return m.newSessionFn(clusterID, log)
-	}
-	return &mockAgentSession{}
-}
-
-type mockAgentSession struct {
-	startFn       func(ctx context.Context) (<-chan *domain.Command, <-chan struct{}, error)
-	requestNextFn func(ctx context.Context) *domain.Command
-	onAckFn       func(ctx context.Context, commandID uuid.UUID)
-	onResultFn    func(ctx context.Context, result events.CommandResult)
-	onLogFn       func(ctx context.Context, commandID uuid.UUID, line string)
-	closeFn       func()
-}
-
-func (m *mockAgentSession) Start(ctx context.Context) (<-chan *domain.Command, <-chan struct{}, error) {
-	if m.startFn != nil {
-		return m.startFn(ctx)
-	}
-	return make(chan *domain.Command), make(chan struct{}), nil
-}
-
-func (m *mockAgentSession) RequestNext(ctx context.Context) *domain.Command {
-	if m.requestNextFn != nil {
-		return m.requestNextFn(ctx)
-	}
-	return nil
-}
-
-func (m *mockAgentSession) OnAck(ctx context.Context, commandID uuid.UUID) {
-	if m.onAckFn != nil {
-		m.onAckFn(ctx, commandID)
-	}
-}
-
-func (m *mockAgentSession) OnResult(ctx context.Context, result events.CommandResult) {
-	if m.onResultFn != nil {
-		m.onResultFn(ctx, result)
-	}
-}
-
-func (m *mockAgentSession) OnLog(ctx context.Context, commandID uuid.UUID, line string) {
-	if m.onLogFn != nil {
-		m.onLogFn(ctx, commandID, line)
-	}
-}
-
-func (m *mockAgentSession) Close() {
-	if m.closeFn != nil {
-		m.closeFn()
-	}
-}
-
-// serveWS runs the handler via a gin router (matches the registered signature).
 func serveWS(handler *AgentHandler, req *http.Request) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	r := gin.New()
@@ -86,7 +24,7 @@ func serveWS(handler *AgentHandler, req *http.Request) *httptest.ResponseRecorde
 
 func TestAgentHandler_ServeWS_Auth(t *testing.T) {
 	clusterRepo := &testutil.MockClusterRepository{}
-	handler := NewAgentHandler(clusterRepo, &mockAgentConnectionService{}, slog.Default())
+	handler := NewAgentHandler(clusterRepo, nil, slog.Default())
 
 	t.Run("Unauthorized - no token", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/ws", nil)

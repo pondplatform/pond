@@ -56,7 +56,6 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// Deployments
 	v1.POST("/deployments", az(auth.ResourceDeployment, auth.VerbWrite), deployHandler.Submit)
 	v1.GET("/deployments/:deploymentId", az(auth.ResourceDeployment, auth.VerbRead), deployHandler.GetStatus)
-	v1.POST("/deployments/:deploymentId/user-input", az(auth.ResourceDeployment, auth.VerbWrite), deployHandler.ConfigureDeployment)
 	v1.POST("/deployments/:deploymentId/cancel", az(auth.ResourceDeployment, auth.VerbWrite), deployHandler.Cancel)
 	v1.GET("/commands/:commandId/logs", az(auth.ResourceCommand, auth.VerbRead), deployHandler.GetCommandLogs)
 

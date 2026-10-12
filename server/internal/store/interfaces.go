@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
+	"github.com/pondplatform/pond/shared/server/api"
 )
 
 // DeploymentInfoStore manages all deployment, command, and dependency config persistence.
@@ -15,37 +16,36 @@ type DeploymentInfoStore interface {
 	// LockDeployment is GetByID with SELECT … FOR UPDATE; call it inside a
 	// transaction to serialise every change to one deployment.
 	LockDeployment(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
-	ListByServiceFiltered(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
+	ListByServiceFiltered(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *api.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
 	Create(ctx context.Context, d *domain.Deployment) error
-	// SaveDeployment writes status, error, completed_at and helm_command_id.
+	// SaveDeployment writes status, error and completed_at.
 	SaveDeployment(ctx context.Context, d *domain.Deployment) error
-	// ListStalledDeployments returns up to limit stalled deployments, oldest first.
-	ListStalledDeployments(ctx context.Context, limit int) ([]StalledDeployment, error)
 
 	// Command operations
 	CreateCommand(ctx context.Context, cmd *domain.Command) error
 	GetCommand(ctx context.Context, id uuid.UUID) (*domain.Command, error)
+	// UpdateCommand writes payload, status, output, error and updated_at.
 	UpdateCommand(ctx context.Context, cmd *domain.Command) error
+	// ListCommandsByDeployment returns the deployment's commands by phase.
 	ListCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error)
-	ListQueuedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
-	ListDispatchedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
-	// ListDispatchedCommandsBefore returns up to limit commands dispatched
-	// before the given time and still without a result, oldest first.
-	ListDispatchedCommandsBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Command, error)
+	// ClaimNextCommand dispatches the cluster's oldest command that is ready
+	// to run: queued, of a deployment in progress, and with every lower phase
+	// of its deployment succeeded. It returns nil when there is none.
+	ClaimNextCommand(ctx context.Context, clusterID uuid.UUID, at time.Time) (*domain.Command, error)
 	// UpdateCommandsByDeployment moves the deployment's commands in any of the
 	// from statuses to the to status.
 	UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error
 
 	// Command log operations
-	AppendLog(ctx context.Context, commandID uuid.UUID, line string) error
+	// AppendLog stores a log line of a command that runs on the cluster; a
+	// line for another cluster's command is dropped.
+	AppendLog(ctx context.Context, clusterID, commandID uuid.UUID, line string) error
 	GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error)
 
 	// Dependency config operations (dependency_deployments table)
 	CreateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error
 	// ListDepConfigs returns all dependency configs for the given deployment, sorted by name.
 	ListDepConfigs(ctx context.Context, deploymentID uuid.UUID) ([]domain.DependencyDeployment, error)
-	// UpdateDepConfig persists all mutable fields of a dependency deployment row.
-	UpdateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error
 }
 
 // ServiceRepository manages service persistence.

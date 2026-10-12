@@ -62,12 +62,6 @@ func submitDeployment(ctx context.Context, t *testing.T, h *TestHarness, req sha
 	return d.ID
 }
 
-// configure POSTs dependency input for a deployment.
-func configure(ctx context.Context, t *testing.T, h *TestHarness, id uuid.UUID, body any) (int, string) {
-	t.Helper()
-	return postJSON(ctx, t, h, fmt.Sprintf("/api/v1/deployments/%s/user-input", id), body)
-}
-
 // cancelDeployment POSTs a cancel for a deployment.
 func cancelDeployment(ctx context.Context, t *testing.T, h *TestHarness, id uuid.UUID) (int, string) {
 	t.Helper()
@@ -201,16 +195,20 @@ func describeDeployment(db *sql.DB, id uuid.UUID) string {
 	}
 	fmt.Fprintf(&b, "  deployment %s: status=%s error=%q\n", id, status, errMsg.String)
 
-	if rows, err := db.Query(`SELECT dependency_name, status, managed, command_id FROM dependency_deployments WHERE deployment_id = $1 ORDER BY dependency_name`, id); err == nil {
+	if rows, err := db.Query(`SELECT d.dependency_name, d.managed, d.command_id, COALESCE(c.status, '-')
+	                            FROM dependency_deployments d LEFT JOIN commands c ON c.id = d.command_id
+	                           WHERE d.deployment_id = $1 ORDER BY d.dependency_name`, id); err == nil {
 		for rows.Next() {
-			var name, depStatus string
-			var managed sql.NullBool
+			var name, cmdStatus string
+			var managed bool
 			var cmdID uuid.NullUUID
-			if rows.Scan(&name, &depStatus, &managed, &cmdID) == nil {
-				fmt.Fprintf(&b, "  dependency %s: status=%s managed=%v command_id=%v\n", name, depStatus, nullBool(managed), nullUUID(cmdID))
+			if rows.Scan(&name, &managed, &cmdID, &cmdStatus) == nil {
+				fmt.Fprintf(&b, "  dependency %s: managed=%v command_id=%v command_status=%s\n", name, managed, nullUUID(cmdID), cmdStatus)
 			}
 		}
 		rows.Close()
+	} else {
+		fmt.Fprintf(&b, "  dependencies: %v\n", err)
 	}
 
 	if rows, err := db.Query(`SELECT type, status, count(*) FROM commands WHERE deployment_id = $1 GROUP BY type, status ORDER BY type, status`, id); err == nil {
@@ -231,13 +229,6 @@ func describeDeployment(db *sql.DB, id uuid.UUID) string {
 		b.WriteString("\n")
 	}
 	return b.String()
-}
-
-func nullBool(v sql.NullBool) any {
-	if !v.Valid {
-		return "NULL"
-	}
-	return v.Bool
 }
 
 func nullUUID(v uuid.NullUUID) any {

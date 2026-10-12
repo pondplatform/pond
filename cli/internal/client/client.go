@@ -19,7 +19,6 @@ type ServerClient interface {
 	SubmitDeployment(ctx context.Context, req api.SubmitRequest) (*api.Deployment, error)
 	GetDeployment(ctx context.Context, id uuid.UUID) (*api.Deployment, error)
 	GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]api.CommandLog, error)
-	ConfigureDeployment(ctx context.Context, id uuid.UUID, req api.ConfigureDeploymentRequest) error
 	ListServices(ctx context.Context, projectID uuid.UUID) ([]api.Service, error)
 	ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]api.Environment, error)
 	// ListDeployments returns deployments for a service, newest first. A nil
@@ -115,24 +114,6 @@ func (c *httpClient) ListDeployments(ctx context.Context, serviceID uuid.UUID, e
 		path += "?" + q.Encode()
 	}
 	return getList[api.DeploymentListItem](ctx, c, path)
-}
-
-func (c *httpClient) ConfigureDeployment(ctx context.Context, id uuid.UUID, req api.ConfigureDeploymentRequest) error {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
-	}
-
-	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/deployments/%s/user-input", id), bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		return readError(resp)
-	}
-	return nil
 }
 
 func (c *httpClient) do(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {

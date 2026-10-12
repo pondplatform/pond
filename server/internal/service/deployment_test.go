@@ -44,22 +44,14 @@ func newTestService(deployments *testutil.MockDeploymentInfoStore) *deploymentSe
 			},
 		},
 	}
-	log := slog.New(slog.DiscardHandler)
 	return &deploymentService{
 		repos:    repos,
 		tx:       inlineTx{repos},
 		specs:    dependency.NewSpecRegistry(),
 		resolver: config.NewResolver(),
-		orchestrator: &orchestrator{
-			repos:   repos,
-			tx:      inlineTx{repos},
-			helmGen: helmgen.NewGenerator(),
-			topics:  &testutil.MockTopics{},
-			log:     log,
-			now:     time.Now,
-		},
-		log: log,
-		now: time.Now,
+		helmGen:  helmgen.NewGenerator(),
+		log:      slog.New(slog.DiscardHandler),
+		now:      time.Now,
 	}
 }
 
@@ -118,10 +110,6 @@ func TestValidateSubmission_Rejects(t *testing.T) {
 		req  api.SubmitRequest
 		want []api.ValidationError
 	}{
-		"missing input": {
-			req:  submitRequest(postgresDep, map[string]api.DependencyInput{}),
-			want: []api.ValidationError{{Component: "dependency", Field: "db", Message: "missing input"}},
-		},
 		"undeclared input": {
 			req:  submitRequest(postgresDep, map[string]api.DependencyInput{"db": {Managed: true}, "cache": {Managed: true}}),
 			want: []api.ValidationError{{Component: "dependency", Field: "cache", Message: "not declared in service config"}},
@@ -204,12 +192,13 @@ func TestSubmit_WritesNothingWhenValidationFails(t *testing.T) {
 		},
 	}
 	s := newTestService(deployments)
-	if _, err := s.Submit(context.Background(), submitRequest(postgresDep, map[string]api.DependencyInput{})); err == nil {
+	undeclared := map[string]api.DependencyInput{"db": {Managed: true}, "cache": {Managed: true}}
+	if _, err := s.Submit(context.Background(), submitRequest(postgresDep, undeclared)); err == nil {
 		t.Fatal("expected a validation error")
 	}
 }
 
-func lockedDeployment(status db.DeploymentStatus) *testutil.MockDeploymentInfoStore {
+func lockedDeployment(status db.DeploymentState) *testutil.MockDeploymentInfoStore {
 	return &testutil.MockDeploymentInfoStore{
 		LockDeploymentFn: func(_ context.Context, id uuid.UUID) (*db.Deployment, error) {
 			return &db.Deployment{
@@ -223,58 +212,10 @@ func lockedDeployment(status db.DeploymentStatus) *testutil.MockDeploymentInfoSt
 	}
 }
 
-func TestConfigureDeployment_RejectsUndeclaredInputsBeforeWriting(t *testing.T) {
-	deployments := lockedDeployment(api.DeploymentStatusAwaitingInput)
-	deployments.UpdateDepConfigFn = func(context.Context, *db.DependencyDeployment) error {
-		t.Error("no dependency should be written when inputs are rejected")
-		return nil
-	}
-	inputs := map[string]api.DependencyInput{"db": {Managed: true}, "nope": {Managed: true}}
-	err := newTestService(deployments).ConfigureDeployment(context.Background(), uuid.New(), inputs)
-	validationErrors(t, err)
-}
-
-func TestConfigureDeployment_UnknownDeploymentIsNotFound(t *testing.T) {
-	deployments := &testutil.MockDeploymentInfoStore{
-		LockDeploymentFn: func(context.Context, uuid.UUID) (*db.Deployment, error) {
-			return nil, api.NotFound("deployment not found")
-		},
-	}
-	err := newTestService(deployments).ConfigureDeployment(context.Background(), uuid.New(), nil)
-	if !errors.Is(err, api.ErrNotFound) {
-		t.Fatalf("expected not found, got %v", err)
-	}
-}
-
-func TestConfigureDeployment_ConflictsOnceFinishedOrRollingOut(t *testing.T) {
-	for _, status := range []db.DeploymentStatus{api.DeploymentStatusSucceeded, api.DeploymentStatusFailed, api.DeploymentStatusCancelled} {
-		t.Run(string(status), func(t *testing.T) {
-			err := newTestService(lockedDeployment(status)).ConfigureDeployment(context.Background(), uuid.New(), nil)
-			if !errors.Is(err, api.ErrConflict) {
-				t.Fatalf("expected conflict, got %v", err)
-			}
-		})
-	}
-	t.Run("helm started", func(t *testing.T) {
-		deployments := lockedDeployment(api.DeploymentStatusPending)
-		lock := deployments.LockDeploymentFn
-		deployments.LockDeploymentFn = func(ctx context.Context, id uuid.UUID) (*db.Deployment, error) {
-			d, err := lock(ctx, id)
-			helm := uuid.New()
-			d.HelmCommandID = &helm
-			return d, err
-		}
-		err := newTestService(deployments).ConfigureDeployment(context.Background(), uuid.New(), nil)
-		if !errors.Is(err, api.ErrConflict) {
-			t.Fatalf("expected conflict, got %v", err)
-		}
-	})
-}
-
 func TestCancel_CancelsTheDeploymentAndItsLiveCommands(t *testing.T) {
-	for _, status := range []db.DeploymentStatus{api.DeploymentStatusPending, api.DeploymentStatusAwaitingInput} {
-		t.Run(string(status), func(t *testing.T) {
-			deployments := lockedDeployment(status)
+	{
+		{
+			deployments := lockedDeployment(db.DeploymentInProgress)
 			var saved *db.Deployment
 			deployments.SaveDeploymentFn = func(_ context.Context, d *db.Deployment) error {
 				saved = d
@@ -290,18 +231,18 @@ func TestCancel_CancelsTheDeploymentAndItsLiveCommands(t *testing.T) {
 			if err := newTestService(deployments).Cancel(context.Background(), uuid.New()); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if saved == nil || saved.Status != api.DeploymentStatusCancelled || saved.CompletedAt == nil {
+			if saved == nil || saved.Status != db.DeploymentCancelled || saved.CompletedAt == nil {
 				t.Errorf("expected the deployment saved as cancelled with completedAt, got %+v", saved)
 			}
 			if to != db.CommandStatusCancelled || len(from) != 2 || from[0] != db.CommandStatusQueued || from[1] != db.CommandStatusDispatched {
 				t.Errorf("expected queued and dispatched commands cancelled, got %v -> %v", from, to)
 			}
-		})
+		}
 	}
 }
 
 func TestCancel_ConflictsOnceFinished(t *testing.T) {
-	for _, status := range []db.DeploymentStatus{api.DeploymentStatusSucceeded, api.DeploymentStatusFailed, api.DeploymentStatusCancelled} {
+	for _, status := range []db.DeploymentState{db.DeploymentSucceeded, db.DeploymentFailed, db.DeploymentCancelled} {
 		t.Run(string(status), func(t *testing.T) {
 			deployments := lockedDeployment(status)
 			deployments.SaveDeploymentFn = func(context.Context, *db.Deployment) error {

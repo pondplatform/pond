@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/pondplatform/pond/agent/internal/agent"
 	"github.com/pondplatform/pond/agent/internal/agent/helm"
@@ -23,8 +24,9 @@ func main() {
 	defer cancel()
 
 	cfg := agent.Config{
-		ServerAddr: envOrDefault("POND_SERVER_ADDR", "localhost:8080"),
-		AgentToken: os.Getenv("POND_AGENT_TOKEN"),
+		ServerAddr:   envOrDefault("POND_SERVER_ADDR", "localhost:8080"),
+		AgentToken:   os.Getenv("POND_AGENT_TOKEN"),
+		PollInterval: 5 * time.Second,
 	}
 
 	exec := agent.NewExecutor(helm.NewRunner(), tofu.NewRunner())

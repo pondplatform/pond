@@ -78,12 +78,7 @@ dependencies:
 
 ## Managed vs. manual dependencies
 
-When you deploy a service with a `postgres` dependency, Pond checks whether it needs input from you to proceed. The deployment enters the `awaiting_input` state and the CLI will print:
-
-```
-Deployment is awaiting input. Run:
-  pond deployment configure --deployment-id <id> --input <path>
-```
+Every dependency needs input that tells Pond whether to manage it for you or to connect to something that already exists. You give it with the deployment.
 
 Create an input file that tells Pond whether to manage the database for you, or connect to an existing one:
 
@@ -121,20 +116,10 @@ Create an input file that tells Pond whether to manage the database for you, or 
 }
 ```
 
-Then submit the input:
-
-```sh
-pond deployment configure \
-  --deployment-id <id> \
-  --input ./deploy-input.json
-```
-
-The deployment resumes automatically after receiving the input.
-
-To skip the `awaiting_input` step, pass the same file to `pond deploy`:
+Then pass it to `pond deploy`:
 
 ```sh
 pond deploy --tag v1.2.3 --input ./deploy-input.json
 ```
 
-The input is then sent with the deployment request and saved atomically with the deployment. The file must contain an entry for every dependency in `pond.yml`; otherwise the request is rejected and nothing is created.
+The input is saved with the deployment. Later deployments of the service reuse it for every dependency the file leaves out, so you only pass `--input` again to change something. A dependency with input from neither the file nor the previous deployment makes the server reject the request, and nothing is created.

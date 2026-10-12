@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/server/internal/dependency"
-	"github.com/pondplatform/pond/server/internal/events"
 	"github.com/pondplatform/pond/server/internal/helmgen"
 	"github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
@@ -18,59 +17,45 @@ import (
 	"github.com/pondplatform/pond/shared/serviceconfig/config"
 )
 
-// deploymentService handles requests: it validates them, records what they
-// change in one transaction, and leaves deciding what happens next to the
-// orchestrator.
+// deploymentService handles requests. A submit plans the whole deployment up
+// front; from then on only command results move it, through AgentCommands.
 type deploymentService struct {
-	repos        store.Repos
-	tx           store.Transactor
-	specs        dependency.SpecRegistry
-	resolver     config.ConfigResolver
-	orchestrator *orchestrator
-	log          *slog.Logger
-	now          func() time.Time
+	repos    store.Repos
+	tx       store.Transactor
+	specs    dependency.SpecRegistry
+	resolver config.ConfigResolver
+	helmGen  helmgen.HelmValuesGenerator
+	log      *slog.Logger
+	now      func() time.Time
 }
 
+// NewDeploymentService wires the deployment service and the agent-facing
+// side that hands out its commands.
 func NewDeploymentService(
 	repos store.Repos,
 	tx store.Transactor,
 	specs dependency.SpecRegistry,
 	resolver config.ConfigResolver,
-	topics events.Topics,
-	sweep SweepConfig,
 	log *slog.Logger,
-) (DeploymentService, *EventRouter, *Sweeper) {
-	machine := &orchestrator{
+) (DeploymentService, *AgentCommands) {
+	helmGen := helmgen.NewGenerator()
+	service := &deploymentService{
+		repos:    repos,
+		tx:       tx,
+		specs:    specs,
+		resolver: resolver,
+		helmGen:  helmGen,
+		log:      log,
+		now:      time.Now,
+	}
+	agents := &AgentCommands{
 		repos:   repos,
 		tx:      tx,
-		helmGen: helmgen.NewGenerator(),
-		topics:  topics,
-		log:     log,
+		helmGen: helmGen,
+		log:     log.With("component", "agent_commands"),
 		now:     time.Now,
 	}
-	service := &deploymentService{
-		repos:        repos,
-		tx:           tx,
-		specs:        specs,
-		resolver:     resolver,
-		orchestrator: machine,
-		log:          log,
-		now:          time.Now,
-	}
-	router := &EventRouter{
-		deploymentInfo: repos.Deployments,
-		results:        machine,
-		topics:         topics,
-		log:            log,
-	}
-	sweeper := &Sweeper{
-		repos:        repos,
-		orchestrator: machine,
-		cfg:          sweep.withDefaults(),
-		log:          log.With("component", "sweeper"),
-		now:          time.Now,
-	}
-	return service, router, sweeper
+	return service, agents
 }
 
 func (s *deploymentService) GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]db.CommandLog, error) {
@@ -80,6 +65,9 @@ func (s *deploymentService) GetCommandLogs(ctx context.Context, commandID uuid.U
 	return s.repos.Deployments.GetCommandLogs(ctx, commandID)
 }
 
+// Submit verifies the request, resolves every dependency's input and plans
+// the deployment's commands, all in one transaction: either the whole
+// deployment is created, or nothing is.
 func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (*db.Deployment, error) {
 	env, svcConfig, err := s.validateSubmission(ctx, req)
 	if err != nil {
@@ -96,30 +84,48 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		if err != nil {
 			return err
 		}
-		deployment = newDeployment(req, svc.ID, env.ID, *svcConfig, s.now())
-		dependencies := newDependencyDeployments(deployment, req.Dependencies, previous)
-		deployment.Status = initialStatus(dependencies)
-		if err := createDeployment(ctx, tx.Deployments, deployment, dependencies); err != nil {
+		inputs, err := resolveInputs(svcConfig.Dependencies, req.Dependencies, previous)
+		if err != nil {
 			return err
+		}
+
+		deployment = newDeployment(req, svc.ID, env.ID, *svcConfig, s.now())
+		dependencies, commands, err := plan(deployment, *env, inputs)
+		if err != nil {
+			return err
+		}
+		if _, err := activate(deployment, *env, dependencies, commands, firstPhase(commands), s.helmGen); err != nil {
+			// Nothing has run, so a config that cannot render is the request's
+			// fault.
+			var errs api.ValidationErrors
+			errs.Add("config", "configs", err.Error())
+			return &errs
+		}
+		for _, cmd := range commands {
+			if cmd.Type == db.CommandTypeHelmUpgrade {
+				deployment.HelmCommandID = &cmd.ID
+			}
+		}
+
+		if err := tx.Deployments.Create(ctx, &deployment); err != nil {
+			return fmt.Errorf("create deployment: %w", err)
+		}
+		for i := range dependencies {
+			if err := tx.Deployments.CreateDepConfig(ctx, &dependencies[i]); err != nil {
+				return fmt.Errorf("create dependency %q: %w", dependencies[i].DependencyName, err)
+			}
+		}
+		for _, cmd := range commands {
+			if err := tx.Deployments.CreateCommand(ctx, cmd); err != nil {
+				return fmt.Errorf("create %s command: %w", cmd.Type, err)
+			}
 		}
 		return tx.Services.SetCurrentDeployment(ctx, svc.ID, deployment.ID)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.reconcileAfterRequest(ctx, deployment), nil
-}
-
-// reconcileAfterRequest reconciles a deployment the request has already
-// committed. A failure does not fail the request: the deployment exists, and
-// a later reconcile picks it up.
-func (s *deploymentService) reconcileAfterRequest(ctx context.Context, deployment db.Deployment) *db.Deployment {
-	reconciled, err := s.orchestrator.Reconcile(ctx, deployment.ID)
-	if err != nil {
-		s.log.Error("reconcile after request", "deployment_id", deployment.ID, "err", err)
-		return &deployment
-	}
-	return reconciled
+	return &deployment, nil
 }
 
 func getOrCreateService(ctx context.Context, services store.ServiceRepository, req api.SubmitRequest, name string, now time.Time) (*db.Service, error) {
@@ -142,6 +148,8 @@ func getOrCreateService(ctx context.Context, services store.ServiceRepository, r
 	return svc, nil
 }
 
+// previousDependencies returns the dependencies of the service's most recent
+// deployment, by name, so their input can be reused.
 func previousDependencies(ctx context.Context, deployments store.DeploymentInfoStore, svc *db.Service) (map[string]db.DependencyDeployment, error) {
 	if svc.CurrentDeploymentID == nil {
 		return nil, nil
@@ -164,56 +172,10 @@ func newDeployment(req api.SubmitRequest, serviceID, environmentID uuid.UUID, sv
 		EnvironmentID:         environmentID,
 		ImageTag:              req.ImageTag,
 		ServiceConfigSnapshot: svcConfig,
+		Status:                db.DeploymentInProgress,
 		TriggeredBy:           req.TriggeredBy,
 		CreatedAt:             now,
 	}
-}
-
-func createDeployment(ctx context.Context, deployments store.DeploymentInfoStore, deployment db.Deployment, dependencies []db.DependencyDeployment) error {
-	if err := deployments.Create(ctx, &deployment); err != nil {
-		return fmt.Errorf("create deployment: %w", err)
-	}
-	for i := range dependencies {
-		if err := deployments.CreateDepConfig(ctx, &dependencies[i]); err != nil {
-			return fmt.Errorf("create dependency %q: %w", dependencies[i].DependencyName, err)
-		}
-	}
-	return nil
-}
-
-func (s *deploymentService) ConfigureDeployment(ctx context.Context, deploymentID uuid.UUID, inputs map[string]api.DependencyInput) error {
-	var deployment *db.Deployment
-	err := s.tx.RunInTx(ctx, func(ctx context.Context, tx store.Repos) error {
-		var err error
-		deployment, err = tx.Deployments.LockDeployment(ctx, deploymentID)
-		if err != nil {
-			return err
-		}
-		if isTerminal(deployment.Status) {
-			return api.Conflict("deployment %s is already %s; submit a new deployment to change its dependencies", deploymentID, deployment.Status)
-		}
-		if deployment.HelmCommandID != nil {
-			return api.Conflict("deployment %s is already rolling out; submit a new deployment to change its dependencies", deploymentID)
-		}
-		if err := validateDeclaredInputs(deployment.ServiceConfigSnapshot.Dependencies, inputs); err != nil {
-			return err
-		}
-		current, err := tx.Deployments.ListDepConfigs(ctx, deploymentID)
-		if err != nil {
-			return fmt.Errorf("list dependencies: %w", err)
-		}
-		for _, configured := range applyInputs(current, inputs) {
-			if err := tx.Deployments.UpdateDepConfig(ctx, &configured); err != nil {
-				return fmt.Errorf("update dependency %q: %w", configured.DependencyName, err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	s.reconcileAfterRequest(ctx, *deployment)
-	return nil
 }
 
 func (s *deploymentService) GetStatus(ctx context.Context, deploymentID uuid.UUID) (*DeploymentDetail, error) {
@@ -236,7 +198,7 @@ func (s *deploymentService) GetStatus(ctx context.Context, deploymentID uuid.UUI
 	}, nil
 }
 
-func (s *deploymentService) ListByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *db.DeploymentStatus, limit int, cursor string) ([]db.Deployment, error) {
+func (s *deploymentService) ListByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *api.DeploymentStatus, limit int, cursor string) ([]db.Deployment, error) {
 	return s.repos.Deployments.ListByServiceFiltered(ctx, serviceID, environmentID, status, limit, cursor)
 }
 
@@ -248,19 +210,9 @@ func (s *deploymentService) Cancel(ctx context.Context, deploymentID uuid.UUID) 
 		if err != nil {
 			return err
 		}
-		if isTerminal(d.Status) {
-			return api.Conflict("deployment %s is already %s and can no longer be cancelled", deploymentID, d.Status)
+		if d.Status != db.DeploymentInProgress {
+			return api.Conflict("deployment %s has already %s and can no longer be cancelled", deploymentID, d.APIStatus())
 		}
-		now := s.now()
-		d.Status = api.DeploymentStatusCancelled
-		d.CompletedAt = &now
-		if err := tx.Deployments.SaveDeployment(ctx, d); err != nil {
-			return err
-		}
-		if err := tx.Deployments.UpdateCommandsByDeployment(ctx, deploymentID,
-			db.CommandStatusCancelled, db.CommandStatusQueued, db.CommandStatusDispatched); err != nil {
-			return fmt.Errorf("cancel commands: %w", err)
-		}
-		return nil
+		return finish(ctx, tx, d, db.DeploymentCancelled, "", s.now())
 	})
 }

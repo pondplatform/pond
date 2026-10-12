@@ -2,8 +2,10 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -104,10 +106,8 @@ func waitForDeployment(ctx context.Context, out io.Writer, c client.ServerClient
 		case "failed":
 			printDeploymentStatus(ctx, out, c, d)
 			return fmt.Errorf("deployment failed")
-		case "awaiting_input":
-			fmt.Fprintf(out, "Deployment is awaiting user input. To provide it, run:\n")
-			fmt.Fprintf(out, "  pond deployment configure --deployment-id %s --input <config.json>\n", id)
-			return nil
+		case "cancelled":
+			return fmt.Errorf("deployment cancelled")
 		default:
 			fmt.Fprintf(out, "Status: %s, waiting...\n", d.Status)
 			select {
@@ -117,4 +117,23 @@ func waitForDeployment(ctx context.Context, out io.Writer, c client.ServerClient
 			}
 		}
 	}
+}
+
+// readDependencyInput never returns a nil map: on submit, nil means "reuse the
+// previous deployment's input", and a file without a dependencies key must not
+// silently mean that.
+func readDependencyInput(path string) (map[string]api.DependencyInput, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read input %q: %w", path, err)
+	}
+
+	var req api.ConfigureDeploymentRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return nil, fmt.Errorf("parse input %q: %w", path, err)
+	}
+	if req.Dependencies == nil {
+		req.Dependencies = map[string]api.DependencyInput{}
+	}
+	return req.Dependencies, nil
 }

@@ -150,12 +150,12 @@ pond deploy [flags]
 |---|---|---|
 | `-f, --pond-file` | `./pond.yml` | Path to the service definition file |
 | `-t, --tag` | _(required)_ | Image tag to deploy |
-| `-i, --input` | | Path to a JSON file with input for every dependency (same format as `pond deployment configure`) |
+| `-i, --input` | | Path to a JSON file with input for dependencies; see [Dependencies](../services/dependencies.md) for the format |
 | `--wait` | `false` | Block until the deployment reaches a terminal state |
 
-Without `--wait`, the command prints the deployment ID and exits. With `--wait`, it polls every 2 seconds and exits when the deployment succeeds or fails. If the server is waiting for dependency input (`awaiting_input` state), it prints a hint to run `pond deployment configure` and exits.
+Without `--wait`, the command prints the deployment ID and exits. With `--wait`, it polls every 2 seconds and exits when the deployment succeeds, fails or is cancelled.
 
-With `--input`, the dependency input is sent as part of the deployment request and stored atomically with the deployment, so it never enters `awaiting_input`. The file must cover every dependency declared in `pond.yml`. If an entry is missing, or names a dependency that is not declared, the server rejects the request and creates nothing.
+Every dependency declared in `pond.yml` needs input. A dependency missing from `--input` reuses the input of the service's previous deployment, as long as its type is unchanged. If a dependency has input from neither, or the file names a dependency that is not declared, the server rejects the request and creates nothing. The first deployment of a service with dependencies therefore needs `--input`.
 
 **Examples:**
 
@@ -247,30 +247,3 @@ A `-` in the completed column means the deployment has not finished yet. Use `po
 | `-f, --pond-file` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
 | `--limit` | no | Maximum number of deployments to list (default 20) |
 
-### pond deployment configure
-
-```sh
-pond deployment configure --deployment-id <id> --input <path>
-```
-
-Provides dependency input for a deployment that is in the `awaiting_input` state. The `--input` argument points to a JSON file that specifies how each dependency should be resolved.
-
-| Flag | Required | Description |
-|---|---|---|
-| `--deployment-id` | yes | Deployment UUID |
-| `-i, --input` | yes | Path to a JSON file with dependency configuration |
-
-**Example input file:**
-
-```json
-{
-  "dependencies": {
-    "db": {
-      "managed": true,
-      "values": { "instances": 1 }
-    }
-  }
-}
-```
-
-See [Dependencies](../services/dependencies.md) for the full format.

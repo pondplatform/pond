@@ -27,10 +27,10 @@ type Behavior struct {
 	// PreResultDelay introduces a pause before sending the result.
 	PreResultDelay time.Duration
 
-	// Gate, if set, holds every command after its ack until the channel is
+	// Gate, if set, holds every command after it arrives until the channel is
 	// closed, so a test can act while the command is in flight and then let
-	// the result arrive late. A gate that is never closed means "acked, never
-	// replies".
+	// the result arrive late. A gate that is never closed means the agent
+	// never replies.
 	Gate <-chan struct{}
 }
 
@@ -56,6 +56,9 @@ func FailingBehavior(errMsg string) Behavior {
 		},
 	}
 }
+
+// fakeAgentPollInterval is how soon an idle fake agent asks for work again.
+const fakeAgentPollInterval = 50 * time.Millisecond
 
 // FakeAgent is a test WebSocket client that mimics the real agent protocol.
 type FakeAgent struct {
@@ -123,11 +126,6 @@ func (a *FakeAgent) Run(ctx context.Context) error {
 			a.Commands = append(a.Commands, &cmd)
 			a.mu.Unlock()
 
-			// Send ack
-			if err := a.conn.SendAck(ctx, &cmd); err != nil {
-				return fmt.Errorf("send ack: %w", err)
-			}
-
 			// Send logs if configured
 			for _, line := range a.behavior.Logs {
 				entry := wire.LogPayload{
@@ -164,9 +162,19 @@ func (a *FakeAgent) Run(ctx context.Context) error {
 			if err := a.conn.SendResult(ctx, result); err != nil {
 				return fmt.Errorf("send result: %w", err)
 			}
+			if err := a.conn.SendReady(ctx); err != nil {
+				return fmt.Errorf("send ready: %w", err)
+			}
 
 		case "idle":
-			// Server has no commands; continue waiting
+			select {
+			case <-time.After(fakeAgentPollInterval):
+			case <-ctx.Done():
+				return nil
+			}
+			if err := a.conn.SendReady(ctx); err != nil {
+				return fmt.Errorf("send ready: %w", err)
+			}
 
 		default:
 			// Ignore unknown message types
@@ -266,4 +274,3 @@ func PerCommandBehavior(handlers map[wire.CommandType]func(cmd *wire.CommandPayl
 		},
 	}
 }
-

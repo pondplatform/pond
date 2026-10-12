@@ -10,12 +10,11 @@ import (
 type DeploymentStatus string
 
 const (
-	DeploymentStatusPending       DeploymentStatus = "pending"
-	DeploymentStatusRunning       DeploymentStatus = "running"
-	DeploymentStatusSucceeded     DeploymentStatus = "succeeded"
-	DeploymentStatusAwaitingInput DeploymentStatus = "awaiting_input"
-	DeploymentStatusFailed        DeploymentStatus = "failed"
-	DeploymentStatusCancelled     DeploymentStatus = "cancelled"
+	DeploymentStatusPending   DeploymentStatus = "pending"
+	DeploymentStatusRunning   DeploymentStatus = "running"
+	DeploymentStatusSucceeded DeploymentStatus = "succeeded"
+	DeploymentStatusFailed    DeploymentStatus = "failed"
+	DeploymentStatusCancelled DeploymentStatus = "cancelled"
 )
 
 type CommandStatus string
@@ -31,10 +30,10 @@ const (
 type DependencyDeploymentStatus string
 
 const (
-	DependencyDeploymentStatusAwaitingInput DependencyDeploymentStatus = "awaiting_input"
-	DependencyDeploymentStatusPending       DependencyDeploymentStatus = "pending"
-	DependencyDeploymentStatusSucceeded     DependencyDeploymentStatus = "succeeded"
-	DependencyDeploymentStatusFailed        DependencyDeploymentStatus = "failed"
+	DependencyDeploymentStatusPending   DependencyDeploymentStatus = "pending"
+	DependencyDeploymentStatusSucceeded DependencyDeploymentStatus = "succeeded"
+	DependencyDeploymentStatusFailed    DependencyDeploymentStatus = "failed"
+	DependencyDeploymentStatusCancelled DependencyDeploymentStatus = "cancelled"
 )
 
 type CommandSummary struct {
@@ -87,7 +86,7 @@ type SubmitRequest struct {
 	ImageTag          string                          `json:"imageTag"`
 	TriggeredBy       string                          `json:"triggeredBy"`
 	CreateIfNotExists bool                            `json:"createIfNotExists"`
-	Dependencies map[string]DependencyInput `json:"dependencies"`
+	Dependencies      map[string]DependencyInput      `json:"dependencies"`
 }
 
 type DependencyInput struct {
@@ -95,6 +94,8 @@ type DependencyInput struct {
 	Values  map[string]any `json:"values"`
 }
 
+// ConfigureDeploymentRequest is the format of a dependency input file, as
+// passed to `pond deploy --input`.
 type ConfigureDeploymentRequest struct {
 	Dependencies map[string]DependencyInput `json:"dependencies"`
 }
