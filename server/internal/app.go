@@ -27,6 +27,7 @@ type Config struct {
 	// Configured via the POND_ADMIN_KEY environment variable.
 	AdminKey  string
 	JWTSecret string
+	Sweep     service.SweepConfig
 }
 
 func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
@@ -62,11 +63,16 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	defer rmq.Close()
 	log.Info("rabbitmq connected")
 
-	handler, eventRouter := Build(db, topics, cfg, log)
+	handler, background := Build(db, topics, cfg, log)
 
-	log.Info("starting deployment event router")
-	svcErr := make(chan error, 1)
-	go func() { svcErr <- eventRouter.Start(ctx) }()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	log.Info("starting background work")
+	backgroundErr := make(chan error, 1)
+	go func() {
+		backgroundErr <- background(ctx)
+		cancel()
+	}()
 
 	apiServer := &http.Server{
 		Addr:    cfg.ListenAddr,
@@ -81,16 +87,10 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		}),
 	}
 
-	// Shutdown both servers when context is cancelled or deployment service exits.
+	// Shut both servers down on a signal, or when background work stops.
 	go func() {
-		select {
-		case <-ctx.Done():
-			log.Info("shutdown signal received")
-		case err := <-svcErr:
-			if err != nil {
-				log.Error("deployment service stopped", "err", err)
-			}
-		}
+		<-ctx.Done()
+		log.Info("shutting down")
 		apiServer.Shutdown(context.Background())
 		mgmtServer.Shutdown(context.Background())
 	}()
@@ -106,22 +106,23 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("listen: %w", err)
 	}
-	if err := <-svcErr; err != nil {
-		return fmt.Errorf("deployment service: %w", err)
+	cancel()
+	if err := <-backgroundErr; err != nil {
+		return fmt.Errorf("background work: %w", err)
 	}
 	return nil
 }
 
-// Build wires the API handler and the event router that must run alongside
-// it.
-func Build(db *sql.DB, topics events.Topics, cfg Config, log *slog.Logger) (http.Handler, *service.EventRouter) {
+// Build wires the API handler and the background work that must run
+// alongside it until its context is cancelled.
+func Build(db *sql.DB, topics events.Topics, cfg Config, log *slog.Logger) (http.Handler, func(context.Context) error) {
 	repos := store.NewRepos(db)
 	clusterStore := store.NewClusterStore(db)
 	specRegistry := dependency.NewSpecRegistry()
 
-	deploySvc, eventRouter := service.NewDeploymentService(
+	deploySvc, eventRouter, sweeper := service.NewDeploymentService(
 		repos, store.NewTransactor(db), specRegistry, config.NewResolver(),
-		topics, log.WithGroup("deployment"),
+		topics, cfg.Sweep, log.WithGroup("deployment"),
 	)
 	agentHandler := api.NewAgentHandler(clusterStore, service.NewAgentConnectionService(topics), log.WithGroup("agent_handler"))
 
@@ -139,5 +140,18 @@ func Build(db *sql.DB, topics events.Topics, cfg Config, log *slog.Logger) (http
 		Authorizer:    auth.NewRoleAuthorizer(),
 		Log:           log.WithGroup("http"),
 	})
-	return handler, eventRouter
+	background := func(ctx context.Context) error {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		swept := make(chan struct{})
+		go func() {
+			defer close(swept)
+			sweeper.Run(ctx)
+		}()
+		err := eventRouter.Start(ctx)
+		cancel()
+		<-swept
+		return err
+	}
+	return handler, background
 }

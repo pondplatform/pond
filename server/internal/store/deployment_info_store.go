@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -140,6 +141,48 @@ func (s *deploymentInfoStore) SaveDeployment(ctx context.Context, d *domain.Depl
 	return nil
 }
 
+// StalledDeployment is a deployment that is not finished, has no command
+// queued or running, and is not waiting for input: nothing will move it
+// forward unless it is reconciled.
+type StalledDeployment struct {
+	ID             uuid.UUID
+	LastProgressAt time.Time
+}
+
+func (s *deploymentInfoStore) ListStalledDeployments(ctx context.Context, limit int) ([]StalledDeployment, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT d.id,
+		        GREATEST(d.created_at,
+		                 COALESCE((SELECT max(c.updated_at) FROM commands c WHERE c.deployment_id = d.id), d.created_at),
+		                 COALESCE((SELECT max(dd.updated_at) FROM dependency_deployments dd WHERE dd.deployment_id = d.id), d.created_at))
+		   FROM deployments d
+		  WHERE d.status = ANY($1)
+		    AND NOT EXISTS (SELECT 1 FROM commands c WHERE c.deployment_id = d.id AND c.status = ANY($2))
+		    AND NOT (d.status = $3 AND EXISTS (
+		        SELECT 1 FROM dependency_deployments dd WHERE dd.deployment_id = d.id AND dd.status = $4))
+		  ORDER BY d.created_at
+		  LIMIT $5`,
+		pq.Array([]string{string(api.DeploymentStatusPending), string(api.DeploymentStatusRunning), string(api.DeploymentStatusAwaitingInput)}),
+		pq.Array([]string{string(domain.CommandStatusQueued), string(domain.CommandStatusDispatched)}),
+		api.DeploymentStatusAwaitingInput, domain.DependencyDeploymentStatusAwaitingInput,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list stalled deployments: %w", err)
+	}
+	defer rows.Close()
+
+	var stalled []StalledDeployment
+	for rows.Next() {
+		var d StalledDeployment
+		if err := rows.Scan(&d.ID, &d.LastProgressAt); err != nil {
+			return nil, fmt.Errorf("scan stalled deployment: %w", err)
+		}
+		stalled = append(stalled, d)
+	}
+	return stalled, rows.Err()
+}
+
 // ── Command operations ───────────────────────────────────────────────────────
 
 const commandColumns = `id, cluster_id, deployment_id, type, payload, status, output, error, created_at, updated_at`
@@ -235,6 +278,13 @@ func (s *deploymentInfoStore) ListDispatchedCommandsByCluster(ctx context.Contex
 	return s.listCommands(ctx,
 		`SELECT `+commandColumns+` FROM commands WHERE cluster_id = $1 AND status = $2 ORDER BY created_at, id`,
 		clusterID, domain.CommandStatusDispatched,
+	)
+}
+
+func (s *deploymentInfoStore) ListDispatchedCommandsBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Command, error) {
+	return s.listCommands(ctx,
+		`SELECT `+commandColumns+` FROM commands WHERE status = $1 AND updated_at < $2 ORDER BY updated_at, id LIMIT $3`,
+		domain.CommandStatusDispatched, before, limit,
 	)
 }
 

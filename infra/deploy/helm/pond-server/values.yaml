@@ -9,6 +9,9 @@ databaseUrl: "postgres://pond:pond@postgres:5432/pond?sslmode=disable"
 rabbitmqUrl: "amqp://guest:guest@rabbitmq:5672/"
 jwtSecret: ""
 adminKey: ""
+# How long an agent may run a command before the server fails it, as a Go
+# duration such as "90m". Empty means the server default, 1h.
+commandTimeout: ""
 
 postgres:
   tag: "16-alpine"

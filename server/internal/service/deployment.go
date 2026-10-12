@@ -37,8 +37,9 @@ func NewDeploymentService(
 	specs dependency.SpecRegistry,
 	resolver config.ConfigResolver,
 	topics events.Topics,
+	sweep SweepConfig,
 	log *slog.Logger,
-) (DeploymentService, *EventRouter) {
+) (DeploymentService, *EventRouter, *Sweeper) {
 	machine := &orchestrator{
 		repos:   repos,
 		tx:      tx,
@@ -62,7 +63,14 @@ func NewDeploymentService(
 		topics:         topics,
 		log:            log,
 	}
-	return service, router
+	sweeper := &Sweeper{
+		repos:        repos,
+		orchestrator: machine,
+		cfg:          sweep.withDefaults(),
+		log:          log.With("component", "sweeper"),
+		now:          time.Now,
+	}
+	return service, router, sweeper
 }
 
 func (s *deploymentService) GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]db.CommandLog, error) {

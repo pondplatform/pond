@@ -19,12 +19,14 @@ type MockDeploymentInfoStore struct {
 	ListByServiceFilteredFn           func(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
 	CreateFn                          func(ctx context.Context, d *domain.Deployment) error
 	SaveDeploymentFn                  func(ctx context.Context, d *domain.Deployment) error
+	ListStalledDeploymentsFn          func(ctx context.Context, limit int) ([]store.StalledDeployment, error)
 	CreateCommandFn                   func(ctx context.Context, cmd *domain.Command) error
 	GetCommandFn                      func(ctx context.Context, id uuid.UUID) (*domain.Command, error)
 	UpdateCommandFn                   func(ctx context.Context, cmd *domain.Command) error
 	ListCommandsByDeploymentFn        func(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error)
 	ListQueuedCommandsByClusterFn     func(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
 	ListDispatchedCommandsByClusterFn func(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
+	ListDispatchedCommandsBeforeFn    func(ctx context.Context, before time.Time, limit int) ([]*domain.Command, error)
 	UpdateCommandsByDeploymentFn      func(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error
 	AppendLogFn                       func(ctx context.Context, commandID uuid.UUID, line string) error
 	GetCommandLogsFn                  func(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error)
@@ -63,6 +65,12 @@ func (m *MockDeploymentInfoStore) SaveDeployment(ctx context.Context, d *domain.
 	}
 	return nil
 }
+func (m *MockDeploymentInfoStore) ListStalledDeployments(ctx context.Context, limit int) ([]store.StalledDeployment, error) {
+	if m.ListStalledDeploymentsFn != nil {
+		return m.ListStalledDeploymentsFn(ctx, limit)
+	}
+	return nil, nil
+}
 func (m *MockDeploymentInfoStore) CreateCommand(ctx context.Context, cmd *domain.Command) error {
 	if m.CreateCommandFn != nil {
 		return m.CreateCommandFn(ctx, cmd)
@@ -96,6 +104,12 @@ func (m *MockDeploymentInfoStore) ListQueuedCommandsByCluster(ctx context.Contex
 func (m *MockDeploymentInfoStore) ListDispatchedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error) {
 	if m.ListDispatchedCommandsByClusterFn != nil {
 		return m.ListDispatchedCommandsByClusterFn(ctx, clusterID)
+	}
+	return nil, nil
+}
+func (m *MockDeploymentInfoStore) ListDispatchedCommandsBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Command, error) {
+	if m.ListDispatchedCommandsBeforeFn != nil {
+		return m.ListDispatchedCommandsBeforeFn(ctx, before, limit)
 	}
 	return nil, nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/pondplatform/pond/cli/client"
 	server "github.com/pondplatform/pond/server/internal"
 	"github.com/pondplatform/pond/server/internal/events"
+	"github.com/pondplatform/pond/server/internal/service"
 )
 
 const testJWTSecret = "test-secret-for-integration-tests-only"
@@ -68,8 +69,8 @@ func NewTestHarness(t *testing.T, connStr string, amqpURL string) *TestHarness {
 }
 
 // NewTestHarnessWithTiming is NewTestHarness with the given sweep timing.
-// The deployment service has no sweep yet, so the timing is only stored; the
-// PR that adds the sweep passes it to service.NewDeploymentService.
+// The sweeper uses SweepInterval, CommandTimeout and OrphanTimeout (as its
+// stall timeout); the other fields wait for the dispatch rework.
 func NewTestHarnessWithTiming(t *testing.T, connStr string, amqpURL string, timing Timing) *TestHarness {
 	t.Helper()
 
@@ -95,8 +96,15 @@ func NewTestHarnessWithTiming(t *testing.T, connStr string, amqpURL string, timi
 	}
 	t.Cleanup(rmq.Close)
 
-	router, eventRouter := server.Build(db, topics, server.Config{JWTSecret: testJWTSecret}, log)
-	go eventRouter.Start(ctx)
+	router, background := server.Build(db, topics, server.Config{
+		JWTSecret: testJWTSecret,
+		Sweep: service.SweepConfig{
+			Interval:       timing.SweepInterval,
+			CommandTimeout: timing.CommandTimeout,
+			StallTimeout:   timing.OrphanTimeout,
+		},
+	}, log)
+	go background(ctx)
 
 	// Start the test server
 	ts := httptest.NewServer(router)

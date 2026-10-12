@@ -89,6 +89,56 @@ func (o *orchestrator) RecordResult(ctx context.Context, result events.CommandRe
 	return err
 }
 
+// TimeOutCommand fails a command that is still dispatched, unchanged since it
+// was listed, then reconciles its deployment. A result that arrived in the
+// meantime wins.
+func (o *orchestrator) TimeOutCommand(ctx context.Context, cmd *db.Command, reason string) error {
+	timedOut := false
+	err := o.tx.RunInTx(ctx, func(ctx context.Context, tx store.Repos) error {
+		if _, err := tx.Deployments.LockDeployment(ctx, cmd.DeploymentID); err != nil {
+			return err
+		}
+		locked, err := tx.Deployments.GetCommand(ctx, cmd.ID)
+		if err != nil {
+			return err
+		}
+		if locked.Status != db.CommandStatusDispatched || !locked.UpdatedAt.Equal(cmd.UpdatedAt) {
+			return nil
+		}
+		applyResult(locked, events.CommandResult{CommandID: cmd.ID, Error: reason}, o.now())
+		timedOut = true
+		return tx.Deployments.UpdateCommand(ctx, locked)
+	})
+	if err != nil {
+		return fmt.Errorf("time out command %s: %w", cmd.ID, err)
+	}
+	if !timedOut {
+		return nil
+	}
+	_, err = o.Reconcile(ctx, cmd.DeploymentID)
+	return err
+}
+
+// Fail ends a deployment that is not finished yet, with reason.
+func (o *orchestrator) Fail(ctx context.Context, deploymentID uuid.UUID, reason string) error {
+	err := o.tx.RunInTx(ctx, func(ctx context.Context, tx store.Repos) error {
+		deployment, err := tx.Deployments.LockDeployment(ctx, deploymentID)
+		if err != nil {
+			return err
+		}
+		if isTerminal(deployment.Status) {
+			return nil
+		}
+		d := decision{Deployment: *deployment}
+		d.fail(reason, o.now())
+		return persist(ctx, tx, d)
+	})
+	if err != nil {
+		return fmt.Errorf("fail deployment %s: %w", deploymentID, err)
+	}
+	return nil
+}
+
 // applyResult copies a result onto its command. A cancelled command stays
 // cancelled, but keeps what the agent reported.
 func applyResult(cmd *db.Command, result events.CommandResult, now time.Time) {

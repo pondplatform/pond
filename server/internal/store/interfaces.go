@@ -19,6 +19,8 @@ type DeploymentInfoStore interface {
 	Create(ctx context.Context, d *domain.Deployment) error
 	// SaveDeployment writes status, error, completed_at and helm_command_id.
 	SaveDeployment(ctx context.Context, d *domain.Deployment) error
+	// ListStalledDeployments returns up to limit stalled deployments, oldest first.
+	ListStalledDeployments(ctx context.Context, limit int) ([]StalledDeployment, error)
 
 	// Command operations
 	CreateCommand(ctx context.Context, cmd *domain.Command) error
@@ -27,6 +29,9 @@ type DeploymentInfoStore interface {
 	ListCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error)
 	ListQueuedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
 	ListDispatchedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
+	// ListDispatchedCommandsBefore returns up to limit commands dispatched
+	// before the given time and still without a result, oldest first.
+	ListDispatchedCommandsBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Command, error)
 	// UpdateCommandsByDeployment moves the deployment's commands in any of the
 	// from statuses to the to status.
 	UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error

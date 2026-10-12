@@ -12,6 +12,7 @@ Both the server and the agent are configured entirely via environment variables.
 | `RABBITMQ_URL` | `rabbitmqUrl` | `amqp://guest:guest@rabbitmq:5672/` | no | RabbitMQ connection string. |
 | `LISTEN_ADDR` | `listenAddr` | `:8080` | no | Address for the main API HTTP server. |
 | `MANAGEMENT_ADDR` | `managementAddr` | `:9090` | no | Address for the management server (health endpoints + Prometheus metrics). |
+| `POND_COMMAND_TIMEOUT` | `commandTimeout` | `1h` | no | How long an agent may run one helm or tofu command before the server fails it with "the agent did not report a result". Raise it if provisioning a dependency takes longer. Go duration syntax, such as `90m`. |
 | `LOG_LEVEL` | — | `info` | no | Log verbosity: `debug`, `info`, `warn`, or `error`. |
 
 Database migrations run automatically on startup — the process is idempotent.

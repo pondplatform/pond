@@ -45,6 +45,10 @@ spec:
             - name: POND_ADMIN_KEY
               value: {{ .Values.adminKey | quote }}
             {{- end }}
+            {{- if .Values.commandTimeout }}
+            - name: POND_COMMAND_TIMEOUT
+              value: {{ .Values.commandTimeout | quote }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health/live
