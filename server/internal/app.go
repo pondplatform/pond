@@ -9,14 +9,13 @@ import (
 
 	_ "github.com/lib/pq"
 	dbmigrate "github.com/pondplatform/pond/server/db"
-	"github.com/pondplatform/pond/shared/serviceconfig/config"
 	"github.com/pondplatform/pond/server/internal/api"
 	"github.com/pondplatform/pond/server/internal/auth"
 	"github.com/pondplatform/pond/server/internal/dependency"
 	"github.com/pondplatform/pond/server/internal/events"
-	"github.com/pondplatform/pond/server/internal/helmgen"
 	"github.com/pondplatform/pond/server/internal/service"
 	"github.com/pondplatform/pond/server/internal/store"
+	"github.com/pondplatform/pond/shared/serviceconfig/config"
 )
 
 type Config struct {
@@ -55,19 +54,6 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 	log.Info("database migrations complete")
 
-	// Repositories
-	deploymentInfoStore := store.NewDeploymentInfoStore(db)
-	projectStore := store.NewProjectStore(db)
-	envStore := store.NewEnvironmentStore(db)
-	serviceStore := store.NewServiceStore(db)
-	clusterStore := store.NewClusterStore(db)
-
-	// Transactor for multi-step atomic writes in services
-	tx := newTransactor(db)
-
-	// Spec registry for dependency type validation
-	specRegistry := dependency.NewSpecRegistry()
-
 	log.Info("connecting to rabbitmq", "url", cfg.RabbitMQURL)
 	topics, rmq, err := events.NewRabbitMQTopics(cfg.RabbitMQURL, log.WithGroup("rabbitmq"))
 	if err != nil {
@@ -76,45 +62,15 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	defer rmq.Close()
 	log.Info("rabbitmq connected")
 
-	// Services
-	helmGenerator := helmgen.NewGenerator()
-	tmplRenderer := service.NewTemplateRenderer()
-	resolver := config.NewResolver()
-	deploySvc, eventRouter := service.NewDeploymentService(
-		deploymentInfoStore, serviceStore, envStore,
-		specRegistry, helmGenerator, tmplRenderer, resolver,
-		tx, topics, log.WithGroup("deployment"),
-	)
+	handler, eventRouter := Build(db, topics, cfg, log)
 
 	log.Info("starting deployment event router")
 	svcErr := make(chan error, 1)
 	go func() { svcErr <- eventRouter.Start(ctx) }()
 
-	// Agent handler
-	agentConnSvc := service.NewAgentConnectionService(topics)
-	agentHandler := api.NewAgentHandler(clusterStore, agentConnSvc, log.WithGroup("agent_handler"))
-
-	// Auth components
-	jwtSecret := []byte(cfg.JWTSecret)
-	authenticator := auth.NewAdminKeyAuthenticator(cfg.AdminKey, auth.NewJWTAuthenticator(jwtSecret))
-	authorizer := auth.NewRoleAuthorizer()
-
-	// HTTP servers
 	apiServer := &http.Server{
-		Addr: cfg.ListenAddr,
-		Handler: api.NewRouter(api.RouterDeps{
-			DeploySvc:     deploySvc,
-			Projects:      projectStore,
-			Envs:          envStore,
-			Services:      serviceStore,
-			Clusters:      clusterStore,
-			JWTSecret:     jwtSecret,
-			SpecRegistry:  specRegistry,
-			AgentHandler:  agentHandler,
-			Authenticator: authenticator,
-			Authorizer:    authorizer,
-			Log:           log.WithGroup("http"),
-		}),
+		Addr:    cfg.ListenAddr,
+		Handler: handler,
 	}
 
 	mgmtServer := &http.Server{
@@ -154,4 +110,34 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		return fmt.Errorf("deployment service: %w", err)
 	}
 	return nil
+}
+
+// Build wires the API handler and the event router that must run alongside
+// it.
+func Build(db *sql.DB, topics events.Topics, cfg Config, log *slog.Logger) (http.Handler, *service.EventRouter) {
+	repos := store.NewRepos(db)
+	clusterStore := store.NewClusterStore(db)
+	specRegistry := dependency.NewSpecRegistry()
+
+	deploySvc, eventRouter := service.NewDeploymentService(
+		repos, store.NewTransactor(db), specRegistry, config.NewResolver(),
+		topics, log.WithGroup("deployment"),
+	)
+	agentHandler := api.NewAgentHandler(clusterStore, service.NewAgentConnectionService(topics), log.WithGroup("agent_handler"))
+
+	jwtSecret := []byte(cfg.JWTSecret)
+	handler := api.NewRouter(api.RouterDeps{
+		DeploySvc:     deploySvc,
+		Projects:      store.NewProjectStore(db),
+		Envs:          repos.Envs,
+		Services:      repos.Services,
+		Clusters:      clusterStore,
+		JWTSecret:     jwtSecret,
+		SpecRegistry:  specRegistry,
+		AgentHandler:  agentHandler,
+		Authenticator: auth.NewAdminKeyAuthenticator(cfg.AdminKey, auth.NewJWTAuthenticator(jwtSecret)),
+		Authorizer:    auth.NewRoleAuthorizer(),
+		Log:           log.WithGroup("http"),
+	})
+	return handler, eventRouter
 }

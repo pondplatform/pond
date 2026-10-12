@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -18,38 +19,46 @@ func NewServiceStore(db DBTX) *ServiceStore {
 	return &ServiceStore{db: db}
 }
 
-func (s *ServiceStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Service, error) {
+const serviceColumns = "id, project_id, name, current_deployment_id, running_deployment_id, created_at"
+
+func scanService(row rowScanner) (*domain.Service, error) {
 	var svc domain.Service
-	err := s.db.QueryRowContext(ctx,
-		"SELECT id, project_id, name, created_at FROM services WHERE id = $1", id,
-	).Scan(&svc.ID, &svc.ProjectID, &svc.Name, &svc.CreatedAt)
-	if err == sql.ErrNoRows {
+	if err := row.Scan(&svc.ID, &svc.ProjectID, &svc.Name, &svc.CurrentDeploymentID, &svc.RunningDeploymentID, &svc.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &svc, nil
+}
+
+func (s *ServiceStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Service, error) {
+	svc, err := scanService(s.db.QueryRowContext(ctx,
+		"SELECT "+serviceColumns+" FROM services WHERE id = $1", id,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, api.NotFound("service %s not found", id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get service: %w", err)
 	}
-	return &svc, nil
+	return svc, nil
 }
 
 func (s *ServiceStore) GetByName(ctx context.Context, projectID uuid.UUID, name string) (*domain.Service, error) {
-	var svc domain.Service
-	err := s.db.QueryRowContext(ctx,
-		"SELECT id, project_id, name, created_at FROM services WHERE project_id = $1 AND name = $2",
+	svc, err := scanService(s.db.QueryRowContext(ctx,
+		"SELECT "+serviceColumns+" FROM services WHERE project_id = $1 AND name = $2",
 		projectID, name,
-	).Scan(&svc.ID, &svc.ProjectID, &svc.Name, &svc.CreatedAt)
-	if err == sql.ErrNoRows {
+	))
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, api.NotFound("service %q not found in project %s", name, projectID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get service: %w", err)
 	}
-	return &svc, nil
+	return svc, nil
 }
 
 func (s *ServiceStore) ListByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Service, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, project_id, name, created_at FROM services WHERE project_id = $1", projectID,
+		"SELECT "+serviceColumns+" FROM services WHERE project_id = $1", projectID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
@@ -58,11 +67,11 @@ func (s *ServiceStore) ListByProject(ctx context.Context, projectID uuid.UUID) (
 
 	var services []domain.Service
 	for rows.Next() {
-		var svc domain.Service
-		if err := rows.Scan(&svc.ID, &svc.ProjectID, &svc.Name, &svc.CreatedAt); err != nil {
+		svc, err := scanService(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan service: %w", err)
 		}
-		services = append(services, svc)
+		services = append(services, *svc)
 	}
 	return services, rows.Err()
 }
@@ -77,6 +86,24 @@ func (s *ServiceStore) Create(ctx context.Context, svc *domain.Service) error {
 	}
 	if err != nil {
 		return fmt.Errorf("create service: %w", err)
+	}
+	return nil
+}
+
+func (s *ServiceStore) SetCurrentDeployment(ctx context.Context, serviceID, deploymentID uuid.UUID) error {
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE services SET current_deployment_id = $2 WHERE id = $1", serviceID, deploymentID,
+	); err != nil {
+		return fmt.Errorf("set current deployment of service %s: %w", serviceID, err)
+	}
+	return nil
+}
+
+func (s *ServiceStore) SetRunningDeployment(ctx context.Context, serviceID, deploymentID uuid.UUID) error {
+	if _, err := s.db.ExecContext(ctx,
+		"UPDATE services SET running_deployment_id = $2 WHERE id = $1", serviceID, deploymentID,
+	); err != nil {
+		return fmt.Errorf("set running deployment of service %s: %w", serviceID, err)
 	}
 	return nil
 }

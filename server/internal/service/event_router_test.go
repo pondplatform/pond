@@ -212,17 +212,21 @@ func TestHandleCommandLog_AppendsLineToStore(t *testing.T) {
 
 // --- handleCommandResult ---
 
-func TestHandleCommandResult_DelegatesToStateMachine(t *testing.T) {
+type resultRecorderFunc func(ctx context.Context, result events.CommandResult) error
+
+func (f resultRecorderFunc) RecordResult(ctx context.Context, result events.CommandResult) error {
+	return f(ctx, result)
+}
+
+func TestHandleCommandResult_RecordsTheResult(t *testing.T) {
 	result := events.CommandResult{CommandID: uuid.New(), Success: true}
 	var got *events.CommandResult
-	machine := &mockStateMachine{
-		advanceOnCommandResultFn: func(_ context.Context, r events.CommandResult) error {
-			got = &r
-			return errors.New("logged, not returned")
-		},
-	}
+	recorder := resultRecorderFunc(func(_ context.Context, r events.CommandResult) error {
+		got = &r
+		return errors.New("logged, not returned")
+	})
 
-	router := makeEventRouter(&testutil.MockDeploymentInfoStore{}, machine, nil)
+	router := makeEventRouter(&testutil.MockDeploymentInfoStore{}, recorder, nil)
 	router.handleCommandResult(context.Background(), result)
 
 	if got == nil || got.CommandID != result.CommandID {
@@ -230,12 +234,12 @@ func TestHandleCommandResult_DelegatesToStateMachine(t *testing.T) {
 	}
 }
 
-func makeEventRouter(store *testutil.MockDeploymentInfoStore, machine *mockStateMachine, topics *testutil.MockTopics) *EventRouter {
-	if machine == nil {
-		machine = &mockStateMachine{}
+func makeEventRouter(store *testutil.MockDeploymentInfoStore, recorder commandResultRecorder, topics *testutil.MockTopics) *EventRouter {
+	if recorder == nil {
+		recorder = resultRecorderFunc(func(context.Context, events.CommandResult) error { return nil })
 	}
 	if topics == nil {
 		topics = &testutil.MockTopics{}
 	}
-	return &EventRouter{deploymentInfo: store, stateMachine: machine, topics: topics, log: slog.Default()}
+	return &EventRouter{deploymentInfo: store, results: recorder, topics: topics, log: slog.Default()}
 }

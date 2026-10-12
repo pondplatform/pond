@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	"github.com/pondplatform/pond/server/internal/service"
+	shared "github.com/pondplatform/pond/shared/server/api"
 )
 
 // postJSON POSTs body to the harness and returns the status code and response
@@ -53,7 +53,7 @@ func postJSON(ctx context.Context, t *testing.T, h *TestHarness, path string, bo
 }
 
 // submitDeployment submits req and returns the new deployment's ID.
-func submitDeployment(ctx context.Context, t *testing.T, h *TestHarness, req service.SubmitRequest) uuid.UUID {
+func submitDeployment(ctx context.Context, t *testing.T, h *TestHarness, req shared.SubmitRequest) uuid.UUID {
 	t.Helper()
 	d, err := h.Client().SubmitDeployment(ctx, req)
 	if err != nil {

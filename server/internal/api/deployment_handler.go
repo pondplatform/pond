@@ -69,15 +69,7 @@ func (h *DeploymentHandler) submit(ctx context.Context, req shared.SubmitRequest
 	encoded, _ := json.Marshal(logged)
 	h.log.Info("Deploying service: " + string(encoded))
 
-	return h.svc.Submit(ctx, service.SubmitRequest{
-		ProjectID:         req.ProjectID,
-		EnvironmentName:   req.EnvironmentName,
-		OverridableConfig: req.OverridableConfig,
-		ImageTag:          req.ImageTag,
-		TriggeredBy:       req.TriggeredBy,
-		CreateIfNotExists: req.CreateIfNotExists,
-		Dependencies:      req.Dependencies,
-	})
+	return h.svc.Submit(ctx, req)
 }
 
 func defaultSubmitRequest() shared.SubmitRequest {

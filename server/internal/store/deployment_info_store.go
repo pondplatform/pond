@@ -4,10 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/shared/server/api"
 )
@@ -20,70 +21,54 @@ func NewDeploymentInfoStore(db DBTX) DeploymentInfoStore {
 	return &deploymentInfoStore{db: db}
 }
 
+// rowScanner is satisfied by both *sql.Row and *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
 // ── Deployment operations ────────────────────────────────────────────────────
 
-func (s *deploymentInfoStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Deployment, error) {
-	return s.scanOneDeployment(ctx,
-		`SELECT id, service_id, environment_id, image_tag, service_config_snapshot,
-		        status, triggered_by, helm_command_id, created_at, completed_at, error
-		   FROM deployments WHERE id = $1`,
-		id, fmt.Sprintf("deployment %s", id),
-	)
-}
+const deploymentColumns = `id, service_id, environment_id, image_tag, service_config_snapshot,
+	status, triggered_by, helm_command_id, created_at, completed_at, error`
 
-func (s *deploymentInfoStore) GetByHelmCommandID(ctx context.Context, cmdID uuid.UUID) (*domain.Deployment, error) {
-	return s.scanOneDeployment(ctx,
-		`SELECT id, service_id, environment_id, image_tag, service_config_snapshot,
-		        status, triggered_by, helm_command_id, created_at, completed_at, error
-		   FROM deployments WHERE helm_command_id = $1`,
-		cmdID, fmt.Sprintf("deployment for helm command %s", cmdID),
-	)
-}
-
-func (s *deploymentInfoStore) scanOneDeployment(ctx context.Context, query string, arg uuid.UUID, what string) (*domain.Deployment, error) {
+func scanDeployment(row rowScanner) (*domain.Deployment, error) {
 	var d domain.Deployment
 	var configJSON []byte
-	var helmCmdID sql.NullString
 	var triggeredBy sql.NullString
-	var completedAt sql.NullTime
-	var errStr sql.NullString
-	err := s.db.QueryRowContext(ctx, query, arg).Scan(
+	if err := row.Scan(
 		&d.ID, &d.ServiceID, &d.EnvironmentID, &d.ImageTag, &configJSON,
-		&d.Status, &triggeredBy, &helmCmdID, &d.CreatedAt, &completedAt, &errStr,
-	)
-	if err == sql.ErrNoRows {
-		return nil, api.NotFound("%s not found", what)
+		&d.Status, &triggeredBy, &d.HelmCommandID, &d.CreatedAt, &d.CompletedAt, &d.Error,
+	); err != nil {
+		return nil, err
 	}
-	if err != nil {
-		return nil, fmt.Errorf("get deployment: %w", err)
-	}
-	if triggeredBy.Valid {
-		d.TriggeredBy = triggeredBy.String
-	}
-	if helmCmdID.Valid {
-		id, _ := uuid.Parse(helmCmdID.String)
-		d.HelmCommandID = &id
-	}
-	if completedAt.Valid {
-		d.CompletedAt = &completedAt.Time
-	}
-	if errStr.Valid {
-		d.Error = &errStr.String
-	}
+	d.TriggeredBy = triggeredBy.String
 	if err := json.Unmarshal(configJSON, &d.ServiceConfigSnapshot); err != nil {
 		return nil, fmt.Errorf("unmarshal config snapshot: %w", err)
 	}
 	return &d, nil
 }
 
-func (s *deploymentInfoStore) ListByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error) {
-	return s.ListByServiceFiltered(ctx, serviceID, nil, nil, 100, "")
+func (s *deploymentInfoStore) getDeployment(ctx context.Context, query string, id uuid.UUID) (*domain.Deployment, error) {
+	d, err := scanDeployment(s.db.QueryRowContext(ctx, query, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, api.NotFound("deployment %s not found", id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get deployment: %w", err)
+	}
+	return d, nil
+}
+
+func (s *deploymentInfoStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Deployment, error) {
+	return s.getDeployment(ctx, `SELECT `+deploymentColumns+` FROM deployments WHERE id = $1`, id)
+}
+
+func (s *deploymentInfoStore) LockDeployment(ctx context.Context, id uuid.UUID) (*domain.Deployment, error) {
+	return s.getDeployment(ctx, `SELECT `+deploymentColumns+` FROM deployments WHERE id = $1 FOR UPDATE`, id)
 }
 
 func (s *deploymentInfoStore) ListByServiceFiltered(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error) {
-	query := `SELECT id, service_id, environment_id, image_tag, service_config_snapshot,
-	                 status, triggered_by, helm_command_id, created_at, completed_at, error
-	            FROM deployments WHERE service_id = $1`
+	query := `SELECT ` + deploymentColumns + ` FROM deployments WHERE service_id = $1`
 	args := []any{serviceID}
 	argIdx := 2
 
@@ -116,33 +101,11 @@ func (s *deploymentInfoStore) ListByServiceFiltered(ctx context.Context, service
 
 	var deployments []domain.Deployment
 	for rows.Next() {
-		var d domain.Deployment
-		var configJSON []byte
-		var helmCmdID sql.NullString
-		var triggeredBy sql.NullString
-		var completedAt sql.NullTime
-		var errStr sql.NullString
-		if err := rows.Scan(&d.ID, &d.ServiceID, &d.EnvironmentID, &d.ImageTag, &configJSON,
-			&d.Status, &triggeredBy, &helmCmdID, &d.CreatedAt, &completedAt, &errStr); err != nil {
+		d, err := scanDeployment(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan deployment: %w", err)
 		}
-		if triggeredBy.Valid {
-			d.TriggeredBy = triggeredBy.String
-		}
-		if helmCmdID.Valid {
-			id, _ := uuid.Parse(helmCmdID.String)
-			d.HelmCommandID = &id
-		}
-		if completedAt.Valid {
-			d.CompletedAt = &completedAt.Time
-		}
-		if errStr.Valid {
-			d.Error = &errStr.String
-		}
-		if err := json.Unmarshal(configJSON, &d.ServiceConfigSnapshot); err != nil {
-			return nil, fmt.Errorf("unmarshal config snapshot: %w", err)
-		}
-		deployments = append(deployments, d)
+		deployments = append(deployments, *d)
 	}
 	return deployments, rows.Err()
 }
@@ -166,40 +129,54 @@ func (s *deploymentInfoStore) Create(ctx context.Context, d *domain.Deployment) 
 	return nil
 }
 
-func (s *deploymentInfoStore) SetHelmCommandID(ctx context.Context, id uuid.UUID, cmdID uuid.UUID) error {
+func (s *deploymentInfoStore) SaveDeployment(ctx context.Context, d *domain.Deployment) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE deployments SET helm_command_id = $1 WHERE id = $2`,
-		cmdID, id,
+		`UPDATE deployments SET status = $2, error = $3, completed_at = $4, helm_command_id = $5 WHERE id = $1`,
+		d.ID, d.Status, d.Error, d.CompletedAt, d.HelmCommandID,
 	)
 	if err != nil {
-		return fmt.Errorf("set helm command id: %w", err)
+		return fmt.Errorf("save deployment: %w", err)
 	}
 	return nil
 }
 
-func (s *deploymentInfoStore) UpdateStatus(ctx context.Context, id uuid.UUID, status domain.DeploymentStatus, completedAt *time.Time) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE deployments SET status = $1, completed_at = $2 WHERE id = $3`,
-		status, completedAt, id,
-	)
-	if err != nil {
-		return fmt.Errorf("update deployment status: %w", err)
+// ── Command operations ───────────────────────────────────────────────────────
+
+const commandColumns = `id, cluster_id, deployment_id, type, payload, status, output, error, created_at, updated_at`
+
+func scanCommand(row rowScanner) (*domain.Command, error) {
+	var cmd domain.Command
+	var payload, output []byte
+	var errStr sql.NullString
+	if err := row.Scan(&cmd.ID, &cmd.ClusterID, &cmd.DeploymentID, &cmd.Type, &payload, &cmd.Status,
+		&output, &errStr, &cmd.CreatedAt, &cmd.UpdatedAt); err != nil {
+		return nil, err
 	}
-	return nil
+	cmd.Payload = payload
+	if output != nil {
+		cmd.Output = output
+	}
+	cmd.Error = errStr.String
+	return &cmd, nil
 }
 
-func (s *deploymentInfoStore) SetFailed(ctx context.Context, id uuid.UUID, errorMessage string, completedAt *time.Time) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE deployments SET status = 'failed', error = $1, completed_at = $2 WHERE id = $3`,
-		errorMessage, completedAt, id,
-	)
+func (s *deploymentInfoStore) listCommands(ctx context.Context, query string, args ...any) ([]*domain.Command, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return fmt.Errorf("set deployment failed: %w", err)
+		return nil, fmt.Errorf("list commands: %w", err)
 	}
-	return nil
-}
+	defer rows.Close()
 
-// ── Command operations (pure CRUD) ───────────────────────────────────────────
+	var cmds []*domain.Command
+	for rows.Next() {
+		cmd, err := scanCommand(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan command: %w", err)
+		}
+		cmds = append(cmds, cmd)
+	}
+	return cmds, rows.Err()
+}
 
 func (s *deploymentInfoStore) CreateCommand(ctx context.Context, cmd *domain.Command) error {
 	payload, err := json.Marshal(cmd.Payload)
@@ -219,29 +196,14 @@ func (s *deploymentInfoStore) CreateCommand(ctx context.Context, cmd *domain.Com
 }
 
 func (s *deploymentInfoStore) GetCommand(ctx context.Context, id uuid.UUID) (*domain.Command, error) {
-	var cmd domain.Command
-	var payload, output []byte
-	var errStr sql.NullString
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, cluster_id, deployment_id, type, payload, status, output, error, created_at, updated_at
-		   FROM commands WHERE id = $1`,
-		id,
-	).Scan(&cmd.ID, &cmd.ClusterID, &cmd.DeploymentID, &cmd.Type, &payload, &cmd.Status,
-		&output, &errStr, &cmd.CreatedAt, &cmd.UpdatedAt)
-	if err == sql.ErrNoRows {
+	cmd, err := scanCommand(s.db.QueryRowContext(ctx, `SELECT `+commandColumns+` FROM commands WHERE id = $1`, id))
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, api.NotFound("command %s not found", id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get command: %w", err)
 	}
-	cmd.Payload = payload
-	if output != nil {
-		cmd.Output = output
-	}
-	if errStr.Valid {
-		cmd.Error = errStr.String
-	}
-	return &cmd, nil
+	return cmd, nil
 }
 
 func (s *deploymentInfoStore) UpdateCommand(ctx context.Context, cmd *domain.Command) error {
@@ -255,79 +217,36 @@ func (s *deploymentInfoStore) UpdateCommand(ctx context.Context, cmd *domain.Com
 	return nil
 }
 
+func (s *deploymentInfoStore) ListCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error) {
+	return s.listCommands(ctx,
+		`SELECT `+commandColumns+` FROM commands WHERE deployment_id = $1 ORDER BY created_at, id`,
+		deploymentID,
+	)
+}
+
 func (s *deploymentInfoStore) ListQueuedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, cluster_id, deployment_id, type, payload, status, output, error, created_at, updated_at
-		   FROM commands
-		  WHERE cluster_id = $1 AND status = $2
-		  ORDER BY created_at ASC`,
+	return s.listCommands(ctx,
+		`SELECT `+commandColumns+` FROM commands WHERE cluster_id = $1 AND status = $2 ORDER BY created_at, id`,
 		clusterID, domain.CommandStatusQueued,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("list queued commands: %w", err)
-	}
-	defer rows.Close()
-
-	var cmds []*domain.Command
-	for rows.Next() {
-		var cmd domain.Command
-		var payload, output []byte
-		var errStr sql.NullString
-		if err := rows.Scan(&cmd.ID, &cmd.ClusterID, &cmd.DeploymentID, &cmd.Type, &payload, &cmd.Status,
-			&output, &errStr, &cmd.CreatedAt, &cmd.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan command: %w", err)
-		}
-		cmd.Payload = payload
-		if output != nil {
-			cmd.Output = output
-		}
-		if errStr.Valid {
-			cmd.Error = errStr.String
-		}
-		cmds = append(cmds, &cmd)
-	}
-	return cmds, rows.Err()
 }
 
 func (s *deploymentInfoStore) ListDispatchedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, cluster_id, deployment_id, type, payload, status, output, error, created_at, updated_at
-		   FROM commands
-		  WHERE cluster_id = $1 AND status = $2
-		  ORDER BY created_at ASC`,
+	return s.listCommands(ctx,
+		`SELECT `+commandColumns+` FROM commands WHERE cluster_id = $1 AND status = $2 ORDER BY created_at, id`,
 		clusterID, domain.CommandStatusDispatched,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("list dispatched commands: %w", err)
-	}
-	defer rows.Close()
-
-	var cmds []*domain.Command
-	for rows.Next() {
-		var cmd domain.Command
-		var payload, output []byte
-		var errStr sql.NullString
-		if err := rows.Scan(&cmd.ID, &cmd.ClusterID, &cmd.DeploymentID, &cmd.Type, &payload, &cmd.Status,
-			&output, &errStr, &cmd.CreatedAt, &cmd.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan command: %w", err)
-		}
-		cmd.Payload = payload
-		if output != nil {
-			cmd.Output = output
-		}
-		if errStr.Valid {
-			cmd.Error = errStr.String
-		}
-		cmds = append(cmds, &cmd)
-	}
-	return cmds, rows.Err()
 }
 
-func (s *deploymentInfoStore) UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error {
+func (s *deploymentInfoStore) UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error {
+	fromStatuses := make([]string, len(from))
+	for i, status := range from {
+		fromStatuses[i] = string(status)
+	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET status = $3, updated_at = NOW()
-		  WHERE deployment_id = $1 AND status = $2`,
-		deploymentID, fromStatus, toStatus,
+		`UPDATE commands SET status = $2, updated_at = NOW()
+		  WHERE deployment_id = $1 AND status = ANY($3)`,
+		deploymentID, to, pq.Array(fromStatuses),
 	)
 	if err != nil {
 		return fmt.Errorf("update commands by deployment: %w", err)
@@ -374,48 +293,17 @@ func (s *deploymentInfoStore) GetCommandLogs(ctx context.Context, commandID uuid
 
 // ── Dependency config operations ─────────────────────────────────────────────
 
-func (s *deploymentInfoStore) CreateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error {
-	providerInputs, err := json.Marshal(cfg.ProviderInputs)
-	if err != nil {
-		return fmt.Errorf("marshal provider inputs: %w", err)
-	}
-	userConfig, err := json.Marshal(cfg.UserConfig)
-	if err != nil {
-		return fmt.Errorf("marshal user config: %w", err)
-	}
-	var output []byte
-	if cfg.Output != nil {
-		output = []byte(cfg.Output)
-	}
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO dependency_deployments
-		        (id, deployment_id, dependency_name, dependency_type, managed, provider_inputs, user_config, status, command_id, output)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		cfg.ID, cfg.DeploymentId, cfg.DependencyName, cfg.DependencyType, cfg.Managed, providerInputs, userConfig, cfg.Status, cfg.CommandID, output,
-	)
-	if err != nil {
-		return fmt.Errorf("create dep config: %w", err)
-	}
-	return nil
-}
+const depConfigColumns = `id, deployment_id, dependency_name, dependency_type, managed,
+	provider_inputs, user_config, status, command_id, output, completed_at`
 
-func (s *deploymentInfoStore) GetDepConfig(ctx context.Context, deploymentID uuid.UUID, depName string) (*domain.DependencyDeployment, error) {
+func scanDepConfig(row rowScanner) (*domain.DependencyDeployment, error) {
 	var cfg domain.DependencyDeployment
-	var providerInputs []byte
-	var userConfig []byte
-	var output []byte
-	var completedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, deployment_id, dependency_name, dependency_type, managed, provider_inputs, user_config, status, command_id, output, updated_at
-		   FROM dependency_deployments WHERE deployment_id = $1 AND dependency_name = $2`,
-		deploymentID, depName,
-	).Scan(&cfg.ID, &cfg.DeploymentId, &cfg.DependencyName, &cfg.DependencyType, &cfg.Managed,
-		&providerInputs, &userConfig, &cfg.Status, &cfg.CommandID, &output, &completedAt)
-	if err == sql.ErrNoRows {
-		return nil, api.NotFound("deployment %s has no dependency named %q", deploymentID, depName)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get dep config: %w", err)
+	var providerInputs, userConfig, output []byte
+	if err := row.Scan(
+		&cfg.ID, &cfg.DeploymentId, &cfg.DependencyName, &cfg.DependencyType, &cfg.Managed,
+		&providerInputs, &userConfig, &cfg.Status, &cfg.CommandID, &output, &cfg.CompletedAt,
+	); err != nil {
+		return nil, err
 	}
 	if providerInputs != nil {
 		if err := json.Unmarshal(providerInputs, &cfg.ProviderInputs); err != nil {
@@ -428,101 +316,36 @@ func (s *deploymentInfoStore) GetDepConfig(ctx context.Context, deploymentID uui
 		}
 	}
 	if output != nil {
-		cfg.Output = json.RawMessage(output)
-	}
-	if completedAt.Valid {
-		cfg.CompletedAt = &completedAt.Time
+		cfg.Output = output
 	}
 	return &cfg, nil
 }
 
-func (s *deploymentInfoStore) GetDepConfigByCommandID(ctx context.Context, commandID uuid.UUID) (uuid.UUID, *domain.DependencyDeployment, error) {
-	var cfg domain.DependencyDeployment
-	var deploymentID uuid.UUID
-	var output []byte
-	var completedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, deployment_id, dependency_name, dependency_type, managed, status, command_id, output, updated_at
-		   FROM dependency_deployments WHERE command_id = $1`,
-		commandID,
-	).Scan(&cfg.ID, &deploymentID, &cfg.DependencyName, &cfg.DependencyType, &cfg.Managed,
-		&cfg.Status, &cfg.CommandID, &output, &completedAt)
-	if err == sql.ErrNoRows {
-		return uuid.Nil, nil, nil
-	}
+func (s *deploymentInfoStore) CreateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error {
+	providerInputs, err := json.Marshal(cfg.ProviderInputs)
 	if err != nil {
-		return uuid.Nil, nil, fmt.Errorf("get dep config by command id: %w", err)
+		return fmt.Errorf("marshal provider inputs: %w", err)
 	}
-	if output != nil {
-		cfg.Output = json.RawMessage(output)
+	userConfig, err := json.Marshal(cfg.UserConfig)
+	if err != nil {
+		return fmt.Errorf("marshal user config: %w", err)
 	}
-	if completedAt.Valid {
-		cfg.CompletedAt = &completedAt.Time
-	}
-	return deploymentID, &cfg, nil
-}
-
-func (s *deploymentInfoStore) MarkDepConfigSucceeded(ctx context.Context, deploymentID uuid.UUID, depName string, output json.RawMessage) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE dependency_deployments SET status = $1, output = $2, updated_at = NOW()
-		  WHERE deployment_id = $3 AND dependency_name = $4`,
-		domain.DependencyDeploymentStatusSucceeded, []byte(output), deploymentID, depName,
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO dependency_deployments
+		        (id, deployment_id, dependency_name, dependency_type, managed, provider_inputs, user_config, status, command_id, output, completed_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		cfg.ID, cfg.DeploymentId, cfg.DependencyName, cfg.DependencyType, cfg.Managed, providerInputs, userConfig,
+		cfg.Status, cfg.CommandID, nullableJSON(cfg.Output), cfg.CompletedAt,
 	)
 	if err != nil {
-		return fmt.Errorf("mark dep config succeeded: %w", err)
+		return fmt.Errorf("create dep config: %w", err)
 	}
 	return nil
-}
-
-func (s *deploymentInfoStore) MarkDepConfigFailed(ctx context.Context, deploymentID uuid.UUID, depName string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE dependency_deployments SET status = $1, updated_at = NOW()
-		  WHERE deployment_id = $2 AND dependency_name = $3`,
-		domain.DependencyDeploymentStatusFailed, deploymentID, depName,
-	)
-	if err != nil {
-		return fmt.Errorf("mark dep config failed: %w", err)
-	}
-	return nil
-}
-
-func (s *deploymentInfoStore) AllDepConfigsComplete(ctx context.Context, deploymentID uuid.UUID) (bool, bool, error) {
-	var total, succeeded, failed int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT
-		     COUNT(*),
-		     COUNT(*) FILTER (WHERE status = $2),
-		     COUNT(*) FILTER (WHERE status = $3)
-		   FROM dependency_deployments
-		  WHERE deployment_id = $1 AND managed = true`,
-		deploymentID,
-		domain.DependencyDeploymentStatusSucceeded,
-		domain.DependencyDeploymentStatusFailed,
-	).Scan(&total, &succeeded, &failed)
-	if err != nil {
-		return false, false, fmt.Errorf("count dep config statuses: %w", err)
-	}
-	return total > 0 && succeeded == total, failed > 0, nil
-}
-
-func (s *deploymentInfoStore) AnyDepConfigAwaitingInput(ctx context.Context, deploymentID uuid.UUID) (bool, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM dependency_deployments
-		  WHERE deployment_id = $1 AND status = $2`,
-		deploymentID, domain.DependencyDeploymentStatusAwaitingInput,
-	).Scan(&count)
-	if err != nil {
-		return false, fmt.Errorf("count awaiting input: %w", err)
-	}
-	return count > 0, nil
 }
 
 func (s *deploymentInfoStore) ListDepConfigs(ctx context.Context, deploymentID uuid.UUID) ([]domain.DependencyDeployment, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, deployment_id, dependency_name, dependency_type, managed, provider_inputs, user_config, output, status, command_id
-		   FROM dependency_deployments
-		  WHERE deployment_id = $1`,
+		`SELECT `+depConfigColumns+` FROM dependency_deployments WHERE deployment_id = $1 ORDER BY dependency_name`,
 		deploymentID,
 	)
 	if err != nil {
@@ -532,57 +355,16 @@ func (s *deploymentInfoStore) ListDepConfigs(ctx context.Context, deploymentID u
 
 	var configs []domain.DependencyDeployment
 	for rows.Next() {
-		var cfg domain.DependencyDeployment
-		var providerInputs, userConfig, output []byte
-		if err := rows.Scan(
-			&cfg.ID, &cfg.DeploymentId, &cfg.DependencyName, &cfg.DependencyType,
-			&cfg.Managed, &providerInputs, &userConfig, &output, &cfg.Status, &cfg.CommandID,
-		); err != nil {
+		cfg, err := scanDepConfig(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan dep config: %w", err)
 		}
-		if providerInputs != nil {
-			if err := json.Unmarshal(providerInputs, &cfg.ProviderInputs); err != nil {
-				return nil, fmt.Errorf("unmarshal provider inputs: %w", err)
-			}
-		}
-		if userConfig != nil {
-			if err := json.Unmarshal(userConfig, &cfg.UserConfig); err != nil {
-				return nil, fmt.Errorf("unmarshal user config: %w", err)
-			}
-		}
-		if output != nil {
-			cfg.Output = output
-		}
-		configs = append(configs, cfg)
+		configs = append(configs, *cfg)
 	}
 	return configs, rows.Err()
 }
 
-func (s *deploymentInfoStore) GetDepOutputsByDeployment(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT dependency_name, output FROM dependency_deployments
-		  WHERE deployment_id = $1 AND status = $2`,
-		deploymentID, domain.DependencyDeploymentStatusSucceeded,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("get dep outputs: %w", err)
-	}
-	defer rows.Close()
-
-	outputs := make(map[string]json.RawMessage)
-	for rows.Next() {
-		var name string
-		var output []byte
-		if err := rows.Scan(&name, &output); err != nil {
-			return nil, fmt.Errorf("scan dep output: %w", err)
-		}
-		if output != nil {
-			outputs[name] = json.RawMessage(output)
-		}
-	}
-	return outputs, rows.Err()
-}
-
+// UpdateDepConfig writes every mutable field of the row.
 func (s *deploymentInfoStore) UpdateDepConfig(ctx context.Context, cfg *domain.DependencyDeployment) error {
 	providerInputsJSON, err := json.Marshal(cfg.ProviderInputs)
 	if err != nil {
@@ -594,9 +376,11 @@ func (s *deploymentInfoStore) UpdateDepConfig(ctx context.Context, cfg *domain.D
 	}
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE dependency_deployments
-		    SET managed = $1, provider_inputs = $2, user_config = $3, status = $4, updated_at = NOW()
-		  WHERE deployment_id = $5 AND dependency_name = $6`,
-		cfg.Managed, providerInputsJSON, userConfigJSON, cfg.Status, cfg.DeploymentId, cfg.DependencyName,
+		    SET managed = $1, provider_inputs = $2, user_config = $3, status = $4,
+		        command_id = $5, output = $6, completed_at = $7, updated_at = NOW()
+		  WHERE deployment_id = $8 AND dependency_name = $9`,
+		cfg.Managed, providerInputsJSON, userConfigJSON, cfg.Status,
+		cfg.CommandID, nullableJSON(cfg.Output), cfg.CompletedAt, cfg.DeploymentId, cfg.DependencyName,
 	)
 	if err != nil {
 		return fmt.Errorf("update dep config: %w", err)
@@ -604,15 +388,10 @@ func (s *deploymentInfoStore) UpdateDepConfig(ctx context.Context, cfg *domain.D
 	return nil
 }
 
-func (s *deploymentInfoStore) SetDepConfigCommand(ctx context.Context, deploymentID uuid.UUID, depName string, commandID uuid.UUID) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE dependency_deployments
-		    SET command_id = $1, status = $2, updated_at = NOW()
-		  WHERE deployment_id = $3 AND dependency_name = $4`,
-		commandID, domain.DependencyDeploymentStatusPending, deploymentID, depName,
-	)
-	if err != nil {
-		return fmt.Errorf("set dep config command: %w", err)
+// nullableJSON stores an empty message as SQL NULL rather than invalid JSONB.
+func nullableJSON(msg json.RawMessage) any {
+	if len(msg) == 0 {
+		return nil
 	}
-	return nil
+	return []byte(msg)
 }

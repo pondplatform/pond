@@ -11,12 +11,16 @@ import (
 )
 
 // EventRouter subscribes to the agent-facing topics: it dispatches commands to
-// agents, persists their logs and feeds command results to the state machine.
+// agents, persists their logs and records command results.
 type EventRouter struct {
 	deploymentInfo store.DeploymentInfoStore
-	stateMachine   deploymentStateMachine
+	results        commandResultRecorder
 	topics         events.Topics
 	log            *slog.Logger
+}
+
+type commandResultRecorder interface {
+	RecordResult(ctx context.Context, result events.CommandResult) error
 }
 
 // Start subscribes to every topic and blocks until ctx is cancelled. It returns
@@ -87,10 +91,10 @@ func (r *EventRouter) handleAgentReady(ctx context.Context, e events.AgentReady)
 	}
 }
 
-// handleCommandResult advances the state machine for a finished command.
+// handleCommandResult records a finished command's result.
 func (r *EventRouter) handleCommandResult(ctx context.Context, res events.CommandResult) {
-	if err := r.stateMachine.AdvanceOnCommandResult(ctx, res); err != nil {
-		r.log.Error("advance on command result", "command_id", res.CommandID, "err", err)
+	if err := r.results.RecordResult(ctx, res); err != nil {
+		r.log.Error("record command result", "command_id", res.CommandID, "err", err)
 	}
 }
 

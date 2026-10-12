@@ -389,3 +389,28 @@ func waitForCommandStatus(t *testing.T, h *TestHarness, deploymentID, cmdID uuid
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+// TestDeployment_SecondSubmitReusesDependencyConfig checks that a submit
+// without input reuses the configuration of the service's previous deployment
+// instead of waiting for input again.
+func TestDeployment_SecondSubmitReusesDependencyConfig(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	h := NewTestHarness(t, testConnStr, testAMQPURL)
+	scenario := BuildScenario(ctx, t, h)
+	h.StartFakeAgent(ctx, t, scenario.AgentToken, TofuOutputBehavior(PostgresOutput))
+
+	first := SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.0")
+	first.Dependencies = managedPostgres
+	firstID := submitDeployment(ctx, t, h, first)
+	if got := field(waitForTerminal(ctx, t, h, firstID, 5*time.Second), "status"); got != "succeeded" {
+		t.Fatalf("first deployment: expected succeeded, got %q\n%s", got, describeDeployment(h.DB, firstID))
+	}
+
+	secondID := submitDeployment(ctx, t, h, SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.1"))
+	if got := field(waitForTerminal(ctx, t, h, secondID, 5*time.Second), "status"); got != "succeeded" {
+		t.Fatalf("second deployment: expected succeeded, got %q\n%s", got, describeDeployment(h.DB, secondID))
+	}
+	assertCommandCounts(t, h, secondID, 1, 1)
+}

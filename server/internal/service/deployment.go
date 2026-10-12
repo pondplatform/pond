@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,57 +18,47 @@ import (
 	"github.com/pondplatform/pond/shared/serviceconfig/config"
 )
 
+// deploymentService handles requests: it validates them, records what they
+// change in one transaction, and leaves deciding what happens next to the
+// orchestrator.
 type deploymentService struct {
-	deploymentInfo store.DeploymentInfoStore
-	services       store.ServiceRepository
-	envs           store.EnvironmentRepository
-	dependencies   dependencyService
-	stateMachine   deploymentStateMachine
-	resolver       config.ConfigResolver
-	tx             Transactor
+	repos        store.Repos
+	tx           store.Transactor
+	specs        dependency.SpecRegistry
+	resolver     config.ConfigResolver
+	orchestrator *orchestrator
+	log          *slog.Logger
+	now          func() time.Time
 }
 
 func NewDeploymentService(
-	deploymentInfo store.DeploymentInfoStore,
-	services store.ServiceRepository,
-	envs store.EnvironmentRepository,
+	repos store.Repos,
+	tx store.Transactor,
 	specs dependency.SpecRegistry,
-	helmGen helmgen.HelmValuesGenerator,
-	tmplRenderer TemplateRenderer,
 	resolver config.ConfigResolver,
-	tx Transactor,
 	topics events.Topics,
 	log *slog.Logger,
 ) (DeploymentService, *EventRouter) {
-	dependencies := &internalDependencyService{
-		specs:          specs,
-		envs:           envs,
-		deploymentInfo: deploymentInfo,
-		tx:             tx,
-		topics:         topics,
-	}
-	machine := &stateMachine{
-		deploymentInfo: deploymentInfo,
-		envs:           envs,
-		dependencies:   dependencies,
-		helmGen:        helmGen,
-		tmplRenderer:   tmplRenderer,
-		tx:             tx,
-		topics:         topics,
-		log:            log,
+	machine := &orchestrator{
+		repos:   repos,
+		tx:      tx,
+		helmGen: helmgen.NewGenerator(),
+		topics:  topics,
+		log:     log,
+		now:     time.Now,
 	}
 	service := &deploymentService{
-		deploymentInfo: deploymentInfo,
-		services:       services,
-		envs:           envs,
-		dependencies:   dependencies,
-		stateMachine:   machine,
-		resolver:       resolver,
-		tx:             tx,
+		repos:        repos,
+		tx:           tx,
+		specs:        specs,
+		resolver:     resolver,
+		orchestrator: machine,
+		log:          log,
+		now:          time.Now,
 	}
 	router := &EventRouter{
-		deploymentInfo: deploymentInfo,
-		stateMachine:   machine,
+		deploymentInfo: repos.Deployments,
+		results:        machine,
 		topics:         topics,
 		log:            log,
 	}
@@ -79,74 +66,56 @@ func NewDeploymentService(
 }
 
 func (s *deploymentService) GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]db.CommandLog, error) {
-	if _, err := s.deploymentInfo.GetCommand(ctx, commandID); err != nil {
+	if _, err := s.repos.Deployments.GetCommand(ctx, commandID); err != nil {
 		return nil, err
 	}
-	return s.deploymentInfo.GetCommandLogs(ctx, commandID)
+	return s.repos.Deployments.GetCommandLogs(ctx, commandID)
 }
 
 func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (*db.Deployment, error) {
-	env, err := s.lookupEnvironment(ctx, req.ProjectID, req.EnvironmentName)
-	if err != nil {
-		return nil, err
-	}
-	svcConfig, err := s.resolveServiceConfig(req, env.Name)
-	if err != nil {
-		return nil, err
-	}
-	svc, err := s.getOrCreateService(ctx, req, svcConfig.Name)
-	if err != nil {
-		return nil, err
-	}
-	previous, err := s.previousDependencies(ctx, svc)
+	env, svcConfig, err := s.validateSubmission(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
-	deployment := newDeployment(req, svc.ID, env.ID, *svcConfig)
-	dependencies := newDependencyDeployments(deployment, req.Dependencies, previous)
-	deployment.Status = initialStatus(dependencies)
-
-	if err := s.createDeployment(ctx, deployment, dependencies); err != nil {
-		return nil, err
-	}
-	if err := s.stateMachine.InitializeDeployment(ctx, deployment, dependencies); err != nil {
-		return nil, err
-	}
-	return &deployment, nil
-}
-
-func (s *deploymentService) lookupEnvironment(ctx context.Context, projectID uuid.UUID, name string) (*db.Environment, error) {
-	env, err := s.envs.GetByName(ctx, projectID, name)
-	if errors.Is(err, api.ErrNotFound) {
-		return nil, s.environmentNotFound(ctx, projectID, name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("lookup environment %q: %w", name, err)
-	}
-	return env, nil
-}
-
-func (s *deploymentService) resolveServiceConfig(req api.SubmitRequest, envName string) (*serviceconfig.ServiceConfig, error) {
-	svcConfig, err := s.resolver.Resolve(&req.OverridableConfig, envName)
-	if err != nil {
-		return nil, fmt.Errorf("resolve config for environment %q: %w", envName, err)
-	}
-	// Reject a malformed config here rather than letting it reach the cluster as
-	// a failed rollout the user has to read helm output to understand.
-	if err := config.Validate(svcConfig); err != nil {
-		return nil, err
-	}
-	if req.Dependencies != nil {
-		if err := validateDependencyInputs(svcConfig.Dependencies, req.Dependencies); err != nil {
-			return nil, err
+	var deployment db.Deployment
+	err = s.tx.RunInTx(ctx, func(ctx context.Context, tx store.Repos) error {
+		svc, err := getOrCreateService(ctx, tx.Services, req, svcConfig.Name, s.now())
+		if err != nil {
+			return err
 		}
+		previous, err := previousDependencies(ctx, tx.Deployments, svc)
+		if err != nil {
+			return err
+		}
+		deployment = newDeployment(req, svc.ID, env.ID, *svcConfig, s.now())
+		dependencies := newDependencyDeployments(deployment, req.Dependencies, previous)
+		deployment.Status = initialStatus(dependencies)
+		if err := createDeployment(ctx, tx.Deployments, deployment, dependencies); err != nil {
+			return err
+		}
+		return tx.Services.SetCurrentDeployment(ctx, svc.ID, deployment.ID)
+	})
+	if err != nil {
+		return nil, err
 	}
-	return svcConfig, nil
+	return s.reconcileAfterRequest(ctx, deployment), nil
 }
 
-func (s *deploymentService) getOrCreateService(ctx context.Context, req api.SubmitRequest, name string) (*db.Service, error) {
-	svc, err := s.services.GetByName(ctx, req.ProjectID, name)
+// reconcileAfterRequest reconciles a deployment the request has already
+// committed. A failure does not fail the request: the deployment exists, and
+// a later reconcile picks it up.
+func (s *deploymentService) reconcileAfterRequest(ctx context.Context, deployment db.Deployment) *db.Deployment {
+	reconciled, err := s.orchestrator.Reconcile(ctx, deployment.ID)
+	if err != nil {
+		s.log.Error("reconcile after request", "deployment_id", deployment.ID, "err", err)
+		return &deployment
+	}
+	return reconciled
+}
+
+func getOrCreateService(ctx context.Context, services store.ServiceRepository, req api.SubmitRequest, name string, now time.Time) (*db.Service, error) {
+	svc, err := services.GetByName(ctx, req.ProjectID, name)
 	if err == nil {
 		return svc, nil
 	}
@@ -157,19 +126,19 @@ func (s *deploymentService) getOrCreateService(ctx context.Context, req api.Subm
 		ID:        uuid.New(),
 		ProjectID: req.ProjectID,
 		Name:      name,
-		CreatedAt: time.Now(),
+		CreatedAt: now,
 	}
-	if err := s.services.Create(ctx, svc); err != nil {
+	if err := services.Create(ctx, svc); err != nil {
 		return nil, fmt.Errorf("create service %q: %w", name, err)
 	}
 	return svc, nil
 }
 
-func (s *deploymentService) previousDependencies(ctx context.Context, svc *db.Service) (map[string]db.DependencyDeployment, error) {
+func previousDependencies(ctx context.Context, deployments store.DeploymentInfoStore, svc *db.Service) (map[string]db.DependencyDeployment, error) {
 	if svc.CurrentDeploymentID == nil {
 		return nil, nil
 	}
-	dependencies, err := s.deploymentInfo.ListDepConfigs(ctx, *svc.CurrentDeploymentID)
+	dependencies, err := deployments.ListDepConfigs(ctx, *svc.CurrentDeploymentID)
 	if err != nil {
 		return nil, fmt.Errorf("list dependencies of the current deployment: %w", err)
 	}
@@ -180,7 +149,7 @@ func (s *deploymentService) previousDependencies(ctx context.Context, svc *db.Se
 	return byName, nil
 }
 
-func newDeployment(req api.SubmitRequest, serviceID, environmentID uuid.UUID, svcConfig serviceconfig.ServiceConfig) db.Deployment {
+func newDeployment(req api.SubmitRequest, serviceID, environmentID uuid.UUID, svcConfig serviceconfig.ServiceConfig, now time.Time) db.Deployment {
 	return db.Deployment{
 		ID:                    uuid.New(),
 		ServiceID:             serviceID,
@@ -188,120 +157,70 @@ func newDeployment(req api.SubmitRequest, serviceID, environmentID uuid.UUID, sv
 		ImageTag:              req.ImageTag,
 		ServiceConfigSnapshot: svcConfig,
 		TriggeredBy:           req.TriggeredBy,
-		CreatedAt:             time.Now(),
+		CreatedAt:             now,
 	}
 }
 
-func (s *deploymentService) createDeployment(ctx context.Context, deployment db.Deployment, dependencies []db.DependencyDeployment) error {
-	return s.tx.RunInTx(ctx, func(ctx context.Context, tx TxRepos) error {
-		if err := tx.DeploymentInfo.Create(ctx, &deployment); err != nil {
-			return fmt.Errorf("create deployment: %w", err)
+func createDeployment(ctx context.Context, deployments store.DeploymentInfoStore, deployment db.Deployment, dependencies []db.DependencyDeployment) error {
+	if err := deployments.Create(ctx, &deployment); err != nil {
+		return fmt.Errorf("create deployment: %w", err)
+	}
+	for i := range dependencies {
+		if err := deployments.CreateDepConfig(ctx, &dependencies[i]); err != nil {
+			return fmt.Errorf("create dependency %q: %w", dependencies[i].DependencyName, err)
 		}
-		for i := range dependencies {
-			if err := tx.DeploymentInfo.CreateDepConfig(ctx, &dependencies[i]); err != nil {
-				return fmt.Errorf("create dependency %q: %w", dependencies[i].DependencyName, err)
+	}
+	return nil
+}
+
+func (s *deploymentService) ConfigureDeployment(ctx context.Context, deploymentID uuid.UUID, inputs map[string]api.DependencyInput) error {
+	var deployment *db.Deployment
+	err := s.tx.RunInTx(ctx, func(ctx context.Context, tx store.Repos) error {
+		var err error
+		deployment, err = tx.Deployments.LockDeployment(ctx, deploymentID)
+		if err != nil {
+			return err
+		}
+		if isTerminal(deployment.Status) {
+			return api.Conflict("deployment %s is already %s; submit a new deployment to change its dependencies", deploymentID, deployment.Status)
+		}
+		if deployment.HelmCommandID != nil {
+			return api.Conflict("deployment %s is already rolling out; submit a new deployment to change its dependencies", deploymentID)
+		}
+		if err := validateDeclaredInputs(deployment.ServiceConfigSnapshot.Dependencies, inputs); err != nil {
+			return err
+		}
+		current, err := tx.Deployments.ListDepConfigs(ctx, deploymentID)
+		if err != nil {
+			return fmt.Errorf("list dependencies: %w", err)
+		}
+		for _, configured := range applyInputs(current, inputs) {
+			if err := tx.Deployments.UpdateDepConfig(ctx, &configured); err != nil {
+				return fmt.Errorf("update dependency %q: %w", configured.DependencyName, err)
 			}
 		}
 		return nil
 	})
-}
-
-func validateDependencyInputs(declared map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) error {
-	var errs api.ValidationErrors
-	for _, name := range slices.Sorted(maps.Keys(declared)) {
-		if _, ok := inputs[name]; !ok {
-			errs.Add("dependency", name, "missing input")
-		}
-	}
-	addUndeclaredInputErrors(&errs, declared, inputs)
-	if errs.HasErrors() {
-		return &errs
-	}
-	return nil
-}
-
-func validateDeclaredInputs(declared map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) error {
-	var errs api.ValidationErrors
-	addUndeclaredInputErrors(&errs, declared, inputs)
-	if errs.HasErrors() {
-		return &errs
-	}
-	return nil
-}
-
-func addUndeclaredInputErrors(errs *api.ValidationErrors, declared map[string]serviceconfig.DependencyDeclaration, inputs map[string]api.DependencyInput) {
-	for _, name := range slices.Sorted(maps.Keys(inputs)) {
-		if _, ok := declared[name]; !ok {
-			errs.Add("dependency", name, "not declared in service config")
-		}
-	}
-}
-
-func (s *deploymentService) ConfigureDeployment(ctx context.Context, deploymentID uuid.UUID, inputs map[string]api.DependencyInput) error {
-	deployment, err := s.deploymentInfo.GetByID(ctx, deploymentID)
 	if err != nil {
-		return fmt.Errorf("get deployment: %w", err)
-	}
-	if err := validateDeclaredInputs(deployment.ServiceConfigSnapshot.Dependencies, inputs); err != nil {
 		return err
 	}
-	current, err := s.deploymentInfo.ListDepConfigs(ctx, deploymentID)
-	if err != nil {
-		return fmt.Errorf("list dependencies: %w", err)
-	}
-
-	dependencies := applyInputs(current, inputs)
-	if err := s.saveConfiguredDependencies(ctx, dependencies, inputs); err != nil {
-		return err
-	}
-	return s.stateMachine.InitializeDeployment(ctx, *deployment, dependencies)
-}
-
-// saveConfiguredDependencies writes only the rows named in inputs: rewriting
-// the others could overwrite a status a command result has just recorded.
-func (s *deploymentService) saveConfiguredDependencies(ctx context.Context, dependencies []db.DependencyDeployment, inputs map[string]api.DependencyInput) error {
-	for i := range dependencies {
-		if _, ok := inputs[dependencies[i].DependencyName]; !ok {
-			continue
-		}
-		if err := s.deploymentInfo.UpdateDepConfig(ctx, &dependencies[i]); err != nil {
-			return fmt.Errorf("update dependency %q: %w", dependencies[i].DependencyName, err)
-		}
-	}
+	s.reconcileAfterRequest(ctx, *deployment)
 	return nil
 }
 
 func (s *deploymentService) GetStatus(ctx context.Context, deploymentID uuid.UUID) (*DeploymentDetail, error) {
-	d, err := s.deploymentInfo.GetByID(ctx, deploymentID)
+	d, err := s.repos.Deployments.GetByID(ctx, deploymentID)
 	if err != nil {
 		return nil, fmt.Errorf("get deployment: %w", err)
 	}
-
-	deps, err := s.deploymentInfo.ListDepConfigs(ctx, deploymentID)
+	deps, err := s.repos.Deployments.ListDepConfigs(ctx, deploymentID)
 	if err != nil {
 		return nil, fmt.Errorf("list dep configs: %w", err)
 	}
-
-	// Collect the unique command IDs referenced by deps plus the helm command.
-	commandIDs := make(map[uuid.UUID]struct{})
-	for _, dep := range deps {
-		if dep.CommandID != nil {
-			commandIDs[*dep.CommandID] = struct{}{}
-		}
+	commands, err := s.repos.Deployments.ListCommandsByDeployment(ctx, deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("list commands: %w", err)
 	}
-	if d.HelmCommandID != nil {
-		commandIDs[*d.HelmCommandID] = struct{}{}
-	}
-
-	commands := make([]*db.Command, 0, len(commandIDs))
-	for id := range commandIDs {
-		cmd, err := s.deploymentInfo.GetCommand(ctx, id)
-		if err != nil {
-			return nil, fmt.Errorf("get command %s: %w", id, err)
-		}
-		commands = append(commands, cmd)
-	}
-
 	return &DeploymentDetail{
 		Deployment:   d,
 		Dependencies: deps,
@@ -309,104 +228,31 @@ func (s *deploymentService) GetStatus(ctx context.Context, deploymentID uuid.UUI
 	}, nil
 }
 
-func (s *deploymentService) Validate(ctx context.Context, req api.SubmitRequest) (*ValidationResult, error) {
-	result := &ValidationResult{Valid: true}
-
-	env, err := s.envs.GetByName(ctx, req.ProjectID, req.EnvironmentName)
-	if err != nil {
-		result.Valid = false
-		result.Errors = append(result.Errors, api.ValidationError{
-			Component: "environment",
-			Field:     "name",
-			Message:   fmt.Sprintf("environment %q not found", req.EnvironmentName),
-		})
-		// Can't continue without environment - needed to resolve config
-		return result, nil
-	}
-
-	svcConfig, err := s.resolver.Resolve(&req.OverridableConfig, env.Name)
-	if err != nil {
-		result.Valid = false
-		result.Errors = append(result.Errors, api.ValidationError{
-			Component: "config",
-			Message:   fmt.Sprintf("resolve config: %s", err),
-		})
-		return result, nil
-	}
-
-	if err := config.Validate(svcConfig); err != nil {
-		result.Valid = false
-		var ve *api.ValidationErrors
-		if errors.As(err, &ve) {
-			result.Errors = append(result.Errors, ve.Errors...)
-		}
-	}
-
-	_, err = s.services.GetByName(ctx, req.ProjectID, svcConfig.Name)
-	if err != nil {
-		if errors.Is(err, api.ErrNotFound) && req.CreateIfNotExists {
-			result.Warnings = append(result.Warnings, api.ValidationWarning{
-				Component: "service",
-				Message:   fmt.Sprintf("service %q will be created", svcConfig.Name),
-			})
-		} else {
-			result.Valid = false
-			result.Errors = append(result.Errors, api.ValidationError{
-				Component: "service",
-				Field:     "name",
-				Message:   fmt.Sprintf("service %q not found", svcConfig.Name),
-			})
-		}
-	}
-
-	if err := s.dependencies.Validate(ctx, svcConfig.Dependencies); err != nil {
-		result.Valid = false
-		if ve, ok := err.(*api.ValidationErrors); ok {
-			result.Errors = append(result.Errors, ve.Errors...)
-		}
-	}
-
-	return result, nil
-}
-
 func (s *deploymentService) ListByService(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *db.DeploymentStatus, limit int, cursor string) ([]db.Deployment, error) {
-	return s.deploymentInfo.ListByServiceFiltered(ctx, serviceID, environmentID, status, limit, cursor)
+	return s.repos.Deployments.ListByServiceFiltered(ctx, serviceID, environmentID, status, limit, cursor)
 }
 
+// Cancel ends the deployment and cancels its commands, including one an agent
+// is running: its late result is then recorded but changes nothing.
 func (s *deploymentService) Cancel(ctx context.Context, deploymentID uuid.UUID) error {
-	d, err := s.deploymentInfo.GetByID(ctx, deploymentID)
-	if err != nil {
-		return fmt.Errorf("get deployment: %w", err)
-	}
-
-	if d.Status == api.DeploymentStatusSucceeded || d.Status == api.DeploymentStatusFailed {
-		return api.Conflict("deployment %s has already %s and can no longer be cancelled", deploymentID, d.Status)
-	}
-
-	now := time.Now()
-	if err := s.deploymentInfo.UpdateStatus(ctx, deploymentID, api.DeploymentStatusCancelled, &now); err != nil {
-		return fmt.Errorf("update deployment status: %w", err)
-	}
-
-	if err := s.deploymentInfo.UpdateCommandsByDeployment(ctx, deploymentID, db.CommandStatusQueued, db.CommandStatusCancelled); err != nil {
-		return fmt.Errorf("cancel queued commands: %w", err)
-	}
-
-	return nil
-}
-
-// environmentNotFound lists the project's environments, since a typo in the
-// environment name is the usual cause. Listing is best effort: the not-found
-// error stands on its own.
-func (s *deploymentService) environmentNotFound(ctx context.Context, projectID uuid.UUID, name string) error {
-	envs, err := s.envs.ListByProject(ctx, projectID)
-	if err != nil || len(envs) == 0 {
-		return api.NotFound("environment %q not found in project %s", name, projectID)
-	}
-	names := make([]string, len(envs))
-	for i, e := range envs {
-		names[i] = e.Name
-	}
-	slices.Sort(names)
-	return api.NotFound("environment %q not found in project %s (available: %s)", name, projectID, strings.Join(names, ", "))
+	return s.tx.RunInTx(ctx, func(ctx context.Context, tx store.Repos) error {
+		d, err := tx.Deployments.LockDeployment(ctx, deploymentID)
+		if err != nil {
+			return err
+		}
+		if isTerminal(d.Status) {
+			return api.Conflict("deployment %s is already %s and can no longer be cancelled", deploymentID, d.Status)
+		}
+		now := s.now()
+		d.Status = api.DeploymentStatusCancelled
+		d.CompletedAt = &now
+		if err := tx.Deployments.SaveDeployment(ctx, d); err != nil {
+			return err
+		}
+		if err := tx.Deployments.UpdateCommandsByDeployment(ctx, deploymentID,
+			db.CommandStatusCancelled, db.CommandStatusQueued, db.CommandStatusDispatched); err != nil {
+			return fmt.Errorf("cancel commands: %w", err)
+		}
+		return nil
+	})
 }

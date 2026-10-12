@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pondplatform/pond/shared/serviceconfig"
-	"github.com/pondplatform/pond/server/internal/service"
+	shared "github.com/pondplatform/pond/shared/server/api"
 )
 
 // ScenarioResult contains the IDs and credentials created by BuildScenario.
@@ -78,8 +78,8 @@ func ServiceConfigWithDep(name string) serviceconfig.ServiceConfig {
 }
 
 // SubmitRequest builds a SubmitRequest from scenario data and a service config.
-func SubmitRequest(scenario ScenarioResult, cfg serviceconfig.ServiceConfig, imageTag string) service.SubmitRequest {
-	return service.SubmitRequest{
+func SubmitRequest(scenario ScenarioResult, cfg serviceconfig.ServiceConfig, imageTag string) shared.SubmitRequest {
+	return shared.SubmitRequest{
 		ProjectID:       scenario.ProjectID,
 		EnvironmentName: "test-env",
 		OverridableConfig: serviceconfig.OverridableConfig{

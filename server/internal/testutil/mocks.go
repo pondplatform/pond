@@ -4,50 +4,33 @@ package testutil
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pondplatform/pond/server/internal/helmgen"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/server/internal/store"
-	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
 // --- store.DeploymentInfoStore ---
 
 type MockDeploymentInfoStore struct {
-	// Deployment operations
-	GetByIDFn               func(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
-	ListByServiceFn         func(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error)
-	ListByServiceFilteredFn func(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
-	CreateFn                func(ctx context.Context, d *domain.Deployment) error
-	UpdateStatusFn          func(ctx context.Context, id uuid.UUID, status domain.DeploymentStatus, completedAt *time.Time) error
-	SetFailedFn             func(ctx context.Context, id uuid.UUID, errorMessage string, completedAt *time.Time) error
-	SetHelmCommandIDFn      func(ctx context.Context, id uuid.UUID, cmdID uuid.UUID) error
-	GetByHelmCommandIDFn    func(ctx context.Context, cmdID uuid.UUID) (*domain.Deployment, error)
-	// Command operations (pure CRUD)
+	GetByIDFn                         func(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
+	LockDeploymentFn                  func(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
+	ListByServiceFilteredFn           func(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *domain.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
+	CreateFn                          func(ctx context.Context, d *domain.Deployment) error
+	SaveDeploymentFn                  func(ctx context.Context, d *domain.Deployment) error
 	CreateCommandFn                   func(ctx context.Context, cmd *domain.Command) error
 	GetCommandFn                      func(ctx context.Context, id uuid.UUID) (*domain.Command, error)
 	UpdateCommandFn                   func(ctx context.Context, cmd *domain.Command) error
+	ListCommandsByDeploymentFn        func(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error)
 	ListQueuedCommandsByClusterFn     func(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
 	ListDispatchedCommandsByClusterFn func(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
-	UpdateCommandsByDeploymentFn      func(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error
-	// Command log operations
-	AppendLogFn      func(ctx context.Context, commandID uuid.UUID, line string) error
-	GetCommandLogsFn func(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error)
-	// Dependency config operations
-	CreateDepConfigFn           func(ctx context.Context, cfg *domain.DependencyDeployment) error
-	GetDepConfigFn              func(ctx context.Context, deploymentID uuid.UUID, depName string) (*domain.DependencyDeployment, error)
-	GetDepConfigByCommandIDFn   func(ctx context.Context, commandID uuid.UUID) (uuid.UUID, *domain.DependencyDeployment, error)
-	MarkDepConfigSucceededFn    func(ctx context.Context, deploymentID uuid.UUID, depName string, output json.RawMessage) error
-	MarkDepConfigFailedFn       func(ctx context.Context, deploymentID uuid.UUID, depName string) error
-	AllDepConfigsCompleteFn     func(ctx context.Context, deploymentID uuid.UUID) (bool, bool, error)
-	GetDepOutputsByDeploymentFn func(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error)
-	UpdateDepConfigFn           func(ctx context.Context, cfg *domain.DependencyDeployment) error
-	SetDepConfigCommandFn       func(ctx context.Context, deploymentID uuid.UUID, depName string, commandID uuid.UUID) error
-	AnyDepConfigAwaitingInputFn func(ctx context.Context, deploymentID uuid.UUID) (bool, error)
-	ListDepConfigsFn            func(ctx context.Context, deploymentID uuid.UUID) ([]domain.DependencyDeployment, error)
+	UpdateCommandsByDeploymentFn      func(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error
+	AppendLogFn                       func(ctx context.Context, commandID uuid.UUID, line string) error
+	GetCommandLogsFn                  func(ctx context.Context, commandID uuid.UUID) ([]domain.CommandLog, error)
+	CreateDepConfigFn                 func(ctx context.Context, cfg *domain.DependencyDeployment) error
+	ListDepConfigsFn                  func(ctx context.Context, deploymentID uuid.UUID) ([]domain.DependencyDeployment, error)
+	UpdateDepConfigFn                 func(ctx context.Context, cfg *domain.DependencyDeployment) error
 }
 
 func (m *MockDeploymentInfoStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Deployment, error) {
@@ -56,9 +39,9 @@ func (m *MockDeploymentInfoStore) GetByID(ctx context.Context, id uuid.UUID) (*d
 	}
 	return nil, nil
 }
-func (m *MockDeploymentInfoStore) ListByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error) {
-	if m.ListByServiceFn != nil {
-		return m.ListByServiceFn(ctx, serviceID)
+func (m *MockDeploymentInfoStore) LockDeployment(ctx context.Context, id uuid.UUID) (*domain.Deployment, error) {
+	if m.LockDeploymentFn != nil {
+		return m.LockDeploymentFn(ctx, id)
 	}
 	return nil, nil
 }
@@ -74,29 +57,11 @@ func (m *MockDeploymentInfoStore) Create(ctx context.Context, d *domain.Deployme
 	}
 	return nil
 }
-func (m *MockDeploymentInfoStore) UpdateStatus(ctx context.Context, id uuid.UUID, status domain.DeploymentStatus, completedAt *time.Time) error {
-	if m.UpdateStatusFn != nil {
-		return m.UpdateStatusFn(ctx, id, status, completedAt)
+func (m *MockDeploymentInfoStore) SaveDeployment(ctx context.Context, d *domain.Deployment) error {
+	if m.SaveDeploymentFn != nil {
+		return m.SaveDeploymentFn(ctx, d)
 	}
 	return nil
-}
-func (m *MockDeploymentInfoStore) SetFailed(ctx context.Context, id uuid.UUID, errorMessage string, completedAt *time.Time) error {
-	if m.SetFailedFn != nil {
-		return m.SetFailedFn(ctx, id, errorMessage, completedAt)
-	}
-	return nil
-}
-func (m *MockDeploymentInfoStore) SetHelmCommandID(ctx context.Context, id uuid.UUID, cmdID uuid.UUID) error {
-	if m.SetHelmCommandIDFn != nil {
-		return m.SetHelmCommandIDFn(ctx, id, cmdID)
-	}
-	return nil
-}
-func (m *MockDeploymentInfoStore) GetByHelmCommandID(ctx context.Context, cmdID uuid.UUID) (*domain.Deployment, error) {
-	if m.GetByHelmCommandIDFn != nil {
-		return m.GetByHelmCommandIDFn(ctx, cmdID)
-	}
-	return nil, nil
 }
 func (m *MockDeploymentInfoStore) CreateCommand(ctx context.Context, cmd *domain.Command) error {
 	if m.CreateCommandFn != nil {
@@ -116,6 +81,12 @@ func (m *MockDeploymentInfoStore) UpdateCommand(ctx context.Context, cmd *domain
 	}
 	return nil
 }
+func (m *MockDeploymentInfoStore) ListCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error) {
+	if m.ListCommandsByDeploymentFn != nil {
+		return m.ListCommandsByDeploymentFn(ctx, deploymentID)
+	}
+	return nil, nil
+}
 func (m *MockDeploymentInfoStore) ListQueuedCommandsByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error) {
 	if m.ListQueuedCommandsByClusterFn != nil {
 		return m.ListQueuedCommandsByClusterFn(ctx, clusterID)
@@ -128,9 +99,9 @@ func (m *MockDeploymentInfoStore) ListDispatchedCommandsByCluster(ctx context.Co
 	}
 	return nil, nil
 }
-func (m *MockDeploymentInfoStore) UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, fromStatus, toStatus domain.CommandStatus) error {
+func (m *MockDeploymentInfoStore) UpdateCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error {
 	if m.UpdateCommandsByDeploymentFn != nil {
-		return m.UpdateCommandsByDeploymentFn(ctx, deploymentID, fromStatus, toStatus)
+		return m.UpdateCommandsByDeploymentFn(ctx, deploymentID, to, from...)
 	}
 	return nil
 }
@@ -152,39 +123,9 @@ func (m *MockDeploymentInfoStore) CreateDepConfig(ctx context.Context, cfg *doma
 	}
 	return nil
 }
-func (m *MockDeploymentInfoStore) GetDepConfig(ctx context.Context, deploymentID uuid.UUID, depName string) (*domain.DependencyDeployment, error) {
-	if m.GetDepConfigFn != nil {
-		return m.GetDepConfigFn(ctx, deploymentID, depName)
-	}
-	return nil, nil
-}
-func (m *MockDeploymentInfoStore) GetDepConfigByCommandID(ctx context.Context, commandID uuid.UUID) (uuid.UUID, *domain.DependencyDeployment, error) {
-	if m.GetDepConfigByCommandIDFn != nil {
-		return m.GetDepConfigByCommandIDFn(ctx, commandID)
-	}
-	return uuid.Nil, nil, nil
-}
-func (m *MockDeploymentInfoStore) MarkDepConfigSucceeded(ctx context.Context, deploymentID uuid.UUID, depName string, output json.RawMessage) error {
-	if m.MarkDepConfigSucceededFn != nil {
-		return m.MarkDepConfigSucceededFn(ctx, deploymentID, depName, output)
-	}
-	return nil
-}
-func (m *MockDeploymentInfoStore) MarkDepConfigFailed(ctx context.Context, deploymentID uuid.UUID, depName string) error {
-	if m.MarkDepConfigFailedFn != nil {
-		return m.MarkDepConfigFailedFn(ctx, deploymentID, depName)
-	}
-	return nil
-}
-func (m *MockDeploymentInfoStore) AllDepConfigsComplete(ctx context.Context, deploymentID uuid.UUID) (bool, bool, error) {
-	if m.AllDepConfigsCompleteFn != nil {
-		return m.AllDepConfigsCompleteFn(ctx, deploymentID)
-	}
-	return false, false, nil
-}
-func (m *MockDeploymentInfoStore) GetDepOutputsByDeployment(ctx context.Context, deploymentID uuid.UUID) (map[string]json.RawMessage, error) {
-	if m.GetDepOutputsByDeploymentFn != nil {
-		return m.GetDepOutputsByDeploymentFn(ctx, deploymentID)
+func (m *MockDeploymentInfoStore) ListDepConfigs(ctx context.Context, deploymentID uuid.UUID) ([]domain.DependencyDeployment, error) {
+	if m.ListDepConfigsFn != nil {
+		return m.ListDepConfigsFn(ctx, deploymentID)
 	}
 	return nil, nil
 }
@@ -194,24 +135,6 @@ func (m *MockDeploymentInfoStore) UpdateDepConfig(ctx context.Context, cfg *doma
 	}
 	return nil
 }
-func (m *MockDeploymentInfoStore) SetDepConfigCommand(ctx context.Context, deploymentID uuid.UUID, depName string, commandID uuid.UUID) error {
-	if m.SetDepConfigCommandFn != nil {
-		return m.SetDepConfigCommandFn(ctx, deploymentID, depName, commandID)
-	}
-	return nil
-}
-func (m *MockDeploymentInfoStore) AnyDepConfigAwaitingInput(ctx context.Context, deploymentID uuid.UUID) (bool, error) {
-	if m.AnyDepConfigAwaitingInputFn != nil {
-		return m.AnyDepConfigAwaitingInputFn(ctx, deploymentID)
-	}
-	return false, nil
-}
-func (m *MockDeploymentInfoStore) ListDepConfigs(ctx context.Context, deploymentID uuid.UUID) ([]domain.DependencyDeployment, error) {
-	if m.ListDepConfigsFn != nil {
-		return m.ListDepConfigsFn(ctx, deploymentID)
-	}
-	return nil, nil
-}
 
 // --- store.ServiceRepository ---
 
@@ -220,6 +143,9 @@ type MockServiceRepository struct {
 	GetByNameFn     func(ctx context.Context, projectID uuid.UUID, name string) (*domain.Service, error)
 	ListByProjectFn func(ctx context.Context, projectID uuid.UUID) ([]domain.Service, error)
 	CreateFn        func(ctx context.Context, svc *domain.Service) error
+
+	SetCurrentDeploymentFn func(ctx context.Context, serviceID, deploymentID uuid.UUID) error
+	SetRunningDeploymentFn func(ctx context.Context, serviceID, deploymentID uuid.UUID) error
 }
 
 func (m *MockServiceRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Service, error) {
@@ -243,6 +169,18 @@ func (m *MockServiceRepository) ListByProject(ctx context.Context, projectID uui
 func (m *MockServiceRepository) Create(ctx context.Context, svc *domain.Service) error {
 	if m.CreateFn != nil {
 		return m.CreateFn(ctx, svc)
+	}
+	return nil
+}
+func (m *MockServiceRepository) SetCurrentDeployment(ctx context.Context, serviceID, deploymentID uuid.UUID) error {
+	if m.SetCurrentDeploymentFn != nil {
+		return m.SetCurrentDeploymentFn(ctx, serviceID, deploymentID)
+	}
+	return nil
+}
+func (m *MockServiceRepository) SetRunningDeployment(ctx context.Context, serviceID, deploymentID uuid.UUID) error {
+	if m.SetRunningDeploymentFn != nil {
+		return m.SetRunningDeploymentFn(ctx, serviceID, deploymentID)
 	}
 	return nil
 }
@@ -291,12 +229,12 @@ func (m *MockEnvironmentRepository) Update(ctx context.Context, env *domain.Envi
 // --- store.ClusterRepository ---
 
 type MockClusterRepository struct {
-	GetByIDFn        func(ctx context.Context, id uuid.UUID) (*domain.Cluster, error)
-	GetByNameFn      func(ctx context.Context, name string) (*domain.Cluster, error)
-	GetByTokenHashFn func(ctx context.Context, hash string) (*domain.Cluster, error)
-	ListFn           func(ctx context.Context) ([]domain.Cluster, error)
-	CreateFn         func(ctx context.Context, cluster *domain.Cluster) error
-	UpdateLastSeenFn func(ctx context.Context, id uuid.UUID, lastSeen time.Time) error
+	GetByIDFn         func(ctx context.Context, id uuid.UUID) (*domain.Cluster, error)
+	GetByNameFn       func(ctx context.Context, name string) (*domain.Cluster, error)
+	GetByTokenHashFn  func(ctx context.Context, hash string) (*domain.Cluster, error)
+	ListFn            func(ctx context.Context) ([]domain.Cluster, error)
+	CreateFn          func(ctx context.Context, cluster *domain.Cluster) error
+	UpdateLastSeenFn  func(ctx context.Context, id uuid.UUID, lastSeen time.Time) error
 	UpdateTokenHashFn func(ctx context.Context, id uuid.UUID, tokenHash string) error
 }
 
@@ -343,35 +281,10 @@ func (m *MockClusterRepository) UpdateTokenHash(ctx context.Context, id uuid.UUI
 	return nil
 }
 
-// --- helmgen.HelmValuesGenerator ---
-
-type MockHelmValuesGenerator struct {
-	GenerateFn func(cfg *serviceconfig.ServiceConfig, env *domain.Environment, imageTag string) (*helmgen.HelmValues, error)
-}
-
-func (m *MockHelmValuesGenerator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment, imageTag string) (*helmgen.HelmValues, error) {
-	if m.GenerateFn != nil {
-		return m.GenerateFn(cfg, env, imageTag)
-	}
-	return &helmgen.HelmValues{}, nil
-}
-
-// --- service.TemplateRenderer ---
-
-type MockTemplateRenderer struct {
-	RenderFn func(values map[string]any, contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) (map[string]any, error)
-}
-
-func (m *MockTemplateRenderer) Render(values map[string]any, contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) (map[string]any, error) {
-	if m.RenderFn != nil {
-		return m.RenderFn(values, contexts, svcConfig)
-	}
-	return values, nil
-}
-
 // Compile-time interface checks.
 var (
 	_ store.DeploymentInfoStore   = (*MockDeploymentInfoStore)(nil)
+	_ store.ServiceRepository     = (*MockServiceRepository)(nil)
+	_ store.EnvironmentRepository = (*MockEnvironmentRepository)(nil)
 	_ store.ClusterRepository     = (*MockClusterRepository)(nil)
-	_ helmgen.HelmValuesGenerator = (*MockHelmValuesGenerator)(nil)
 )

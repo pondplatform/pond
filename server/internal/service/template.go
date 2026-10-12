@@ -2,7 +2,9 @@ package service
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/pondplatform/pond/shared/serviceconfig"
@@ -10,25 +12,11 @@ import (
 
 var templateVarRegex = regexp.MustCompile(`\{\{(\w+(?:\.\w+)*)\}\}`)
 
-// TemplateRenderer interpolates {{var}} placeholders in config file values
-// using resolved dependency contexts (dependency name → output values).
-type TemplateRenderer interface {
-	Render(values map[string]any, contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) (map[string]any, error)
-}
-
-type templateRenderer struct{}
-
-func NewTemplateRenderer() TemplateRenderer {
-	return &templateRenderer{}
-}
-
-func (t *templateRenderer) Render(values map[string]any, contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) (map[string]any, error) {
-	lookupTable := buildLookupTable(contexts, svcConfig)
-	result, err := renderMap(values, lookupTable)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+// renderTemplate interpolates {{var}} placeholders in config file values using
+// the dependency contexts (dependency name → output values) and the service
+// config's own values.
+func renderTemplate(values map[string]any, contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) (map[string]any, error) {
+	return renderMap(values, buildLookupTable(contexts, svcConfig))
 }
 
 func buildLookupTable(contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) map[string]string {
@@ -93,4 +81,25 @@ func renderString(s string, lookup map[string]string) (string, error) {
 		return "", fmt.Errorf("unresolved template variables: %s", strings.Join(missingVars, ", "))
 	}
 	return result, nil
+}
+
+// templateReferences returns every {{var}} the renderer would substitute in
+// values, sorted and without duplicates.
+func templateReferences(values map[string]any) []string {
+	refs := make(map[string]struct{})
+	var walk func(v any)
+	walk = func(v any) {
+		switch val := v.(type) {
+		case string:
+			for _, m := range templateVarRegex.FindAllStringSubmatch(val, -1) {
+				refs[m[1]] = struct{}{}
+			}
+		case map[string]any:
+			for _, item := range val {
+				walk(item)
+			}
+		}
+	}
+	walk(values)
+	return slices.Sorted(maps.Keys(refs))
 }
