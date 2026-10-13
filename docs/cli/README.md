@@ -85,8 +85,8 @@ pond context add prod \
 `--kube-context`, `--kube-namespace` and `--kubectl-forward-port` must be set together —
 an incomplete combination is ignored with a warning. `--kube-service` defaults to
 `pond-server`. The forward binds `--kubectl-forward-port` locally and targets port `8080`
-on the service — point `--server` at that same local port. `scripts/setup.sh` picks a
-random free forward port for you.
+on the service — point `--server` at that same local port. `scripts/homelab-quick-setup.sh`
+picks a random free forward port for you.
 
 The same four settings can come from flags or environment variables instead of a context,
 so a port-forward can be configured with no config file at all. They are independent of

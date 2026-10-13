@@ -9,6 +9,23 @@ This guide walks through installing the Pond server and connecting a cluster age
 - `curl` and `jq` for bootstrapping via the API
 - `openssl` for generating secrets
 
+## Quick setup for a homelab
+
+To try Pond on a cluster you control, one script runs all of the steps below and configures the CLI:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pondplatform/pond/main/scripts/homelab-quick-setup.sh | bash
+```
+
+It asks which kubectl context to use, which environments to create, and whether to set up two optional parts. It then shows the plan and changes nothing until you confirm:
+
+- **Managed Postgres** installs the CloudNativePG operator, so `postgres` dependencies can be `managed: true`.
+- **HTTPS for exposed services** gives each environment a `Gateway` and a wildcard certificate: `*.<env>.<domain>`, or `*.<domain>` for the first environment. Certificates come from Let's Encrypt via Cloudflare DNS, from a private CA created in the cluster, or from an existing cert-manager `ClusterIssuer`. On k3s, the bundled traefik serves as the gateway. Elsewhere the script installs Envoy Gateway, which needs a LoadBalancer implementation.
+
+cert-manager, CloudNativePG and Envoy Gateway are used as they are when already installed. Every question also has a flag (`--help`). Re-running the script upgrades an existing installation and keeps its secrets, so issued tokens keep working.
+
+The server's bundled PostgreSQL has no volume (see [Production Considerations](production.md#external-postgresql)). A restart of that pod loses projects, environments and tokens; re-run the script to set Pond up again.
+
 ## 1. Generate secrets
 
 ```sh
