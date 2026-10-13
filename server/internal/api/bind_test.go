@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	shared "github.com/pondplatform/pond/shared/server/api"
 )
 
 func TestDecodeJSON_Messages(t *testing.T) {
@@ -38,6 +39,27 @@ func TestDecodeJSON_Messages(t *testing.T) {
 			err := decodeJSON(strings.NewReader(tt.body), &v)
 			if err == nil || err.Error() != tt.want {
 				t.Errorf("got %v\nwant %s", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestDecodeJSON_SubmitRequestRejectsUnknownConfigFields(t *testing.T) {
+	tests := []struct {
+		body string
+		want string
+	}{
+		{`{"overridableConfig": {"imgae": "x"}}`, `unknown field "imgae"`},
+		{`{"overridableConfig": {"deployment": {"replica": 2}}}`, `unknown field "replica"`},
+		{`{"overridableConfig": {"overrides": {"production": {"image": "x"}}}}`, `unknown field "image"`},
+		{`{"overridableConfig": {"gateway": {"http": {"rules": [{"matches": [{"pth": {}}]}]}}}}`, `unknown field "pth"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.body, func(t *testing.T) {
+			var req shared.SubmitRequest
+			err := decodeJSON(strings.NewReader(tt.body), &req)
+			if err == nil || !strings.HasPrefix(err.Error(), tt.want+" in request body") {
+				t.Errorf("got %v\nwant prefix %s", err, tt.want)
 			}
 		})
 	}

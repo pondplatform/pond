@@ -2,6 +2,8 @@
 
 Every service that Pond deploys is described by a `pond.yml` file in the root of your project directory.
 
+Keys not listed in this reference are rejected with the file and line, e.g. `pond.yml:4: unknown field "replica"`. Free-form maps (`env`, `configs.*.values` and `dependencies.*.config`) accept any keys.
+
 ## Minimal example
 
 ```yaml
