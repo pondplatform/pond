@@ -248,15 +248,24 @@ func TestGenerator_Generate_ImageTag(t *testing.T) {
 
 func Test_Marshal_Dotenv(t *testing.T) {
 	values := map[string]any{
-		"ab": "fd$as\"",
-		"cd": 123,
+		"PASSWORD": `p$ss"w\rd #1`,
+		"PORT":     5432,
+		"QUOTE":    `it's $HOME`,
+		"CERT":     "line1\nline2",
+		"EMPTY":    "",
 	}
-	marshaled, _ := marshalEnv(values)
+	marshaled, err := marshalEnv(values)
+	if err != nil {
+		t.Fatalf("marshalEnv failed: %v", err)
+	}
 
-	expected := `ab="fd\$as\""
-cd="123"
+	expected := `CERT="line1\nline2"
+EMPTY=''
+PASSWORD='p$ss"w\rd #1'
+PORT='5432'
+QUOTE="it's $HOME"
 `
 	if string(marshaled) != expected {
-		t.Errorf("Expected %s but got %s", expected, &marshaled)
+		t.Errorf("expected:\n%s\ngot:\n%s", expected, marshaled)
 	}
 }

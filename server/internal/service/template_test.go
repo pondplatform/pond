@@ -1,6 +1,7 @@
 package service
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -105,6 +106,49 @@ func TestRender_NestedMap_RecursivelyRendered(t *testing.T) {
 	}
 }
 
+func TestRender_List_RecursivelyRendered(t *testing.T) {
+	contexts := map[string]map[string]any{
+		"db": {"host": "db.internal", "port": "5432"},
+	}
+	values := map[string]any{
+		"hosts": []any{
+			"{{db.host}}",
+			map[string]any{"port": "{{db.port}}"},
+			[]any{"{{db.host}}:{{db.port}}"},
+			7,
+		},
+	}
+
+	got, err := renderTemplate(values, contexts, &serviceconfig.ServiceConfig{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []any{
+		"db.internal",
+		map[string]any{"port": "5432"},
+		[]any{"db.internal:5432"},
+		7,
+	}
+	if !reflect.DeepEqual(got["hosts"], want) {
+		t.Errorf("expected %#v, got %#v", want, got["hosts"])
+	}
+	if values["hosts"].([]any)[0] != "{{db.host}}" {
+		t.Error("input list was mutated")
+	}
+}
+
+func TestRender_MissingVarInList_ReturnsError(t *testing.T) {
+	values := map[string]any{"hosts": []any{"ok", "{{db.host}}"}}
+
+	_, err := renderTemplate(values, nil, &serviceconfig.ServiceConfig{})
+	if err == nil {
+		t.Fatal("expected error for unresolved variable in list, got nil")
+	}
+	if !strings.Contains(err.Error(), "db.host") {
+		t.Errorf("error missing variable name %q: %s", "db.host", err)
+	}
+}
+
 func TestRender_MissingVar_ReturnsError(t *testing.T) {
 	values := map[string]any{"url": "{{db.host}}"}
 
@@ -170,10 +214,11 @@ func TestTemplateReferences_FindsEveryVariableOnce(t *testing.T) {
 	values := map[string]any{
 		"url":    "postgres://{{db.user}}@{{db.host}}",
 		"nested": map[string]any{"host": "{{db.host}}", "port": "{{service.port}}"},
+		"list":   []any{"{{cache.addr}}", map[string]any{"name": "{{db.database}}"}},
 		"count":  3,
 	}
 	got := templateReferences(values)
-	want := []string{"db.host", "db.user", "service.port"}
+	want := []string{"cache.addr", "db.database", "db.host", "db.user", "service.port"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("expected %v, got %v", want, got)
 	}

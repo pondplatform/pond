@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/pondplatform/pond/shared/serviceconfig"
@@ -185,6 +186,52 @@ func TestResolve_ManagementProbeReplacedPerEnvironment(t *testing.T) {
 	// The base must not be mutated by resolution.
 	if base.Deployment.Management.LivenessProbe.HTTPGet.Path != "/health/live" {
 		t.Errorf("base liveness probe was mutated: %q", base.Deployment.Management.LivenessProbe.HTTPGet.Path)
+	}
+}
+
+func TestResolve_OverridesDoNotLeakIntoLaterEnvironments(t *testing.T) {
+	base := &serviceconfig.OverridableConfig{
+		ServiceConfig: serviceconfig.ServiceConfig{
+			Name:         "api",
+			Env:          map[string]string{"LOG_LEVEL": "info"},
+			Dependencies: map[string]serviceconfig.DependencyDeclaration{"db": {Type: "postgres"}},
+			Configs: map[string]serviceconfig.ConfigFileSpec{
+				"app.json": {Format: "json", MountPath: "/etc/app.json"},
+			},
+		},
+		Overrides: map[string]serviceconfig.Override{
+			"staging": {
+				Env:          map[string]string{"LOG_LEVEL": "debug", "STAGING_ONLY": "1"},
+				Dependencies: map[string]serviceconfig.DependencyDeclaration{"cache": {Type: "redis"}},
+				Configs: map[string]serviceconfig.ConfigFileSpec{
+					"debug.env": {Format: ".env", MountPath: "/etc/debug.env"},
+				},
+			},
+		},
+	}
+	resolver := config.NewResolver()
+
+	if _, err := resolver.Resolve(base, "staging"); err != nil {
+		t.Fatalf("Resolve staging failed: %v", err)
+	}
+	prod, err := resolver.Resolve(base, "production")
+	if err != nil {
+		t.Fatalf("Resolve production failed: %v", err)
+	}
+	// Writing to the result must not reach base either.
+	prod.Env["PROD_ONLY"] = "1"
+
+	if !maps.Equal(base.Env, map[string]string{"LOG_LEVEL": "info"}) {
+		t.Errorf("base env was mutated: %v", base.Env)
+	}
+	if want := map[string]string{"LOG_LEVEL": "info", "PROD_ONLY": "1"}; !maps.Equal(prod.Env, want) {
+		t.Errorf("production env: want %v, got %v", want, prod.Env)
+	}
+	if _, ok := prod.Dependencies["cache"]; ok {
+		t.Error("staging dependency leaked into production")
+	}
+	if _, ok := prod.Configs["debug.env"]; ok {
+		t.Error("staging config leaked into production")
 	}
 }
 

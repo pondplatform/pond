@@ -108,7 +108,7 @@ overrides:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `replicas` | integer | `2` | Number of pod replicas. |
+| `replicas` | integer | `1` | Number of pod replicas. |
 | `management` | object | none | Health probes and metrics endpoint. See below. |
 
 #### `deployment.management`

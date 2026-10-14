@@ -60,6 +60,16 @@ func renderValue(v any, lookup map[string]string) (any, error) {
 		return renderString(val, lookup)
 	case map[string]any:
 		return renderMap(val, lookup)
+	case []any:
+		result := make([]any, len(val))
+		for i, item := range val {
+			rendered, err := renderValue(item, lookup)
+			if err != nil {
+				return nil, fmt.Errorf("item %d: %w", i, err)
+			}
+			result[i] = rendered
+		}
+		return result, nil
 	default:
 		return v, nil
 	}
@@ -95,6 +105,10 @@ func templateReferences(values map[string]any) []string {
 				refs[m[1]] = struct{}{}
 			}
 		case map[string]any:
+			for _, item := range val {
+				walk(item)
+			}
+		case []any:
 			for _, item := range val {
 				walk(item)
 			}

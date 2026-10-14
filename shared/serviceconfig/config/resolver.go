@@ -1,6 +1,10 @@
 package config
 
-import "github.com/pondplatform/pond/shared/serviceconfig"
+import (
+	"maps"
+
+	"github.com/pondplatform/pond/shared/serviceconfig"
+)
 
 type resolver struct{}
 
@@ -11,15 +15,11 @@ func NewResolver() ConfigResolver {
 func (r *resolver) Resolve(base *serviceconfig.OverridableConfig, envName string) (*serviceconfig.ServiceConfig, error) {
 	cfg := base.ServiceConfig
 
-	if cfg.Env == nil {
-		cfg.Env = make(map[string]string)
-	}
-	if cfg.Dependencies == nil {
-		cfg.Dependencies = make(map[string]serviceconfig.DependencyDeclaration)
-	}
-	if cfg.Configs == nil {
-		cfg.Configs = make(map[string]serviceconfig.ConfigFileSpec)
-	}
+	// Copying the struct still shares its maps with base, so merging an
+	// override into them would carry it into every later Resolve of base.
+	cfg.Env = cloneMap(base.Env)
+	cfg.Dependencies = cloneMap(base.Dependencies)
+	cfg.Configs = cloneMap(base.Configs)
 
 	override, ok := base.Overrides[envName]
 	if !ok {
@@ -85,6 +85,12 @@ func (r *resolver) Resolve(base *serviceconfig.OverridableConfig, envName string
 	}
 
 	return &cfg, nil
+}
+
+func cloneMap[K comparable, V any](m map[K]V) map[K]V {
+	out := make(map[K]V, len(m))
+	maps.Copy(out, m)
+	return out
 }
 
 // mergeManagement replaces each present sub-block wholesale rather than merging

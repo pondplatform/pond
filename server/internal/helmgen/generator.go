@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	domain "github.com/pondplatform/pond/server/internal/model/db"
@@ -143,14 +145,23 @@ func encodeConfigFile(format string, values map[string]any) (string, error) {
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
+// envDoubleQuoteEscaper leaves $ alone: Node's dotenv and python-dotenv keep
+// a \$ verbatim rather than unescaping it.
+var envDoubleQuoteEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`)
+
+// marshalEnv single-quotes values because dotenv readers take single-quoted
+// text literally: no escapes and no $ interpolation. A value that contains a
+// single quote or a line break cannot be single-quoted, so it falls back to
+// double quotes and the common \\ \" \n \r escapes.
 func marshalEnv(values map[string]any) ([]byte, error) {
-	var result []byte
-	for k, v := range values {
-		escaped := strings.ReplaceAll(fmt.Sprintf("%v", v), "\\", "\\\\")
-		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
-		escaped = strings.ReplaceAll(escaped, "$", "\\$")
-		line := fmt.Sprintf("%s=\"%s\"\n", k, escaped)
-		result = append(result, []byte(line)...)
+	var b strings.Builder
+	for _, k := range slices.Sorted(maps.Keys(values)) {
+		v := fmt.Sprintf("%v", values[k])
+		if strings.ContainsAny(v, "'\n\r") {
+			fmt.Fprintf(&b, "%s=\"%s\"\n", k, envDoubleQuoteEscaper.Replace(v))
+		} else {
+			fmt.Fprintf(&b, "%s='%s'\n", k, v)
+		}
 	}
-	return result, nil
+	return []byte(b.String()), nil
 }

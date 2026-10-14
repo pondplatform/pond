@@ -122,6 +122,11 @@ func TestValidateSubmission_Rejects(t *testing.T) {
 			want: []api.ValidationError{{Component: "config", Field: "app.env",
 				Message: "template variable {{cache.url}} names no declared dependency and no known value (service.port, deployment.replicas, env.<NAME>)"}},
 		},
+		"template variable naming nothing inside a list": {
+			req: withConfigValues(submitRequest(postgresDep, nil), map[string]any{"URLS": []any{"{{db.host}}", "{{cache.url}}"}}),
+			want: []api.ValidationError{{Component: "config", Field: "app.env",
+				Message: "template variable {{cache.url}} names no declared dependency and no known value (service.port, deployment.replicas, env.<NAME>)"}},
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

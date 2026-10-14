@@ -21,12 +21,14 @@ Pond renders the file from `values`, formats it according to `format`, and mount
 
 ### `.env`
 
-Renders a shell-style `.env` file:
+Renders a `.env` file with keys in sorted order:
 
 ```
-KEY=value
-OTHER_KEY=other_value
+KEY='value'
+OTHER_KEY='other $value'
 ```
+
+Values are single-quoted, so dotenv readers take them literally: `$`, `"`, `\` and `#` reach your app unchanged. A value containing a single quote or a line break is double-quoted instead, with `\` → `\\`, `"` → `\"` and line breaks → `\n`. Readers differ on those escapes; Node's `dotenv`, for example, only decodes `\n` and `\r`.
 
 ```yaml
 configs:
@@ -71,7 +73,7 @@ configs:
 
 ## Template variables
 
-Values support `{{variable}}` syntax. Variables are resolved at deploy time.
+String values support `{{variable}}` syntax at any depth, including inside nested maps and lists. Variables are resolved at deploy time.
 
 | Variable | Description |
 |---|---|
