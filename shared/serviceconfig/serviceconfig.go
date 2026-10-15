@@ -1,7 +1,12 @@
 package serviceconfig
 
+import "regexp"
+
 // Ptr returns a pointer to v. Useful when constructing ServiceConfig literals.
 func Ptr[T any](v T) *T { return &v }
+
+// TemplateVar matches a {{var}} reference and captures the variable's name.
+var TemplateVar = regexp.MustCompile(`\{\{(\w+(?:\.\w+)*)\}\}`)
 
 // ServiceConfig is the fully-resolved configuration for deploying a service
 // to a specific environment (overrides already applied).
@@ -34,7 +39,8 @@ type ServiceConfig struct {
 
 // VariableDeclaration is a {{variables.<name>}} whose value comes from the deployment input.
 type VariableDeclaration struct {
-	// Secret keeps the value out of command, which anyone who can read the workload sees.
+	// Secret keeps the value out of command and the gateway, which anyone who
+	// can read the workload sees.
 	Secret bool `json:"secret,omitempty" yaml:"secret"`
 }
 

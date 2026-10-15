@@ -98,9 +98,11 @@ func withVariables(req api.SubmitRequest, declared map[string]serviceconfig.Vari
 }
 
 func withGateway(req api.SubmitRequest, hostname *string) api.SubmitRequest {
-	req.OverridableConfig.ServiceConfig.Gateway = &serviceconfig.GatewayConfig{
-		HTTP: &serviceconfig.GatewayHTTPConfig{Enabled: serviceconfig.Ptr(true), Hostname: hostname},
-	}
+	return withGatewayRule(req, hostname)
+}
+
+func withGatewayRule(req api.SubmitRequest, hostname *string, rules ...serviceconfig.HTTPRouteRule) api.SubmitRequest {
+	req.OverridableConfig.ServiceConfig.Gateway = gatewayWithRules(hostname, rules...)
 	return req
 }
 
@@ -230,9 +232,44 @@ func TestValidateSubmission_Rejects(t *testing.T) {
 			want: []api.ValidationError{{Component: "variable", Field: "EXTRA", Message: "not declared in pond.yml"}},
 		},
 		"variable without a value": {
-			req: withVariables(submitRequest(nil, nil),
+			req: withEnv(withVariables(submitRequest(nil, nil),
 				map[string]serviceconfig.VariableDeclaration{"KEY": {Secret: true}, "NAME": {}}, map[string]string{"NAME": ""}),
+				map[string]string{"KEY": "{{variables.KEY}}"}),
 			want: []api.ValidationError{{Component: "variable", Field: "KEY", Message: "missing value: the input gives none"}},
+		},
+		"gateway checked as rendered": {
+			req: withVariables(withGateway(submitRequest(nil, nil), serviceconfig.Ptr("{{variables.CUSTOMER}}.example.com")),
+				map[string]serviceconfig.VariableDeclaration{"CUSTOMER": {}}, map[string]string{"CUSTOMER": "Acme Corp"}),
+			want: []api.ValidationError{{Component: "config", Field: "gateway.http.hostname",
+				Message: `must be a lowercase DNS hostname without scheme, port or path, got "Acme Corp.example.com"`}},
+		},
+		"gateway hostname rendered to a wildcard": {
+			req: withEnv(withVariables(withGateway(submitRequest(nil, nil), serviceconfig.Ptr("{{variables.HOST}}")),
+				map[string]serviceconfig.VariableDeclaration{"HOST": {}}, map[string]string{"HOST": "*.example.com"}),
+				map[string]string{"PUBLIC_URL": "{{gateway.url}}"}),
+			want: []api.ValidationError{{Component: "config", Field: `env["PUBLIC_URL"]`,
+				Message: `template variable {{gateway.url}} needs a single hostname, and gateway.http.hostname "{{variables.HOST}}" is a wildcard`}},
+		},
+		// Left unrendered, the hostname isn't checked as one: only the reference is wrong.
+		"undeclared dependency in the gateway": {
+			req: withGateway(submitRequest(postgresDep, nil), serviceconfig.Ptr("{{dependencies.cache.host}}")),
+			want: []api.ValidationError{{Component: "config", Field: "gateway.http.hostname",
+				Message: `template variable {{dependencies.cache.host}} names no declared dependency: "cache" is not under dependencies in pond.yml`}},
+		},
+		"gateway values in the gateway": {
+			req: withGatewayRule(submitRequest(nil, nil), serviceconfig.Ptr("web.example.com"), templatedRule("{{gateway.url}}", "{{gateway.hostname}}")),
+			want: []api.ValidationError{
+				{Component: "config", Field: "gateway.http.rules[0].filters[0].requestHeaderModifier.set[0].value",
+					Message: "template variable {{gateway.url}} comes from the gateway, so the gateway can't use it"},
+				{Component: "config", Field: "gateway.http.rules[0].filters[1].requestRedirect.hostname",
+					Message: "template variable {{gateway.hostname}} comes from the gateway, so the gateway can't use it"},
+			},
+		},
+		"secret variable in the gateway": {
+			req: withVariables(withGatewayRule(submitRequest(nil, nil), nil, templatedRule("Bearer {{variables.TOKEN}}", "web.example.com")),
+				map[string]serviceconfig.VariableDeclaration{"TOKEN": {Secret: true}}, map[string]string{"TOKEN": "s3cr3t"}),
+			want: []api.ValidationError{{Component: "config", Field: "gateway.http.rules[0].filters[0].requestHeaderModifier.set[0].value",
+				Message: "template variable {{variables.TOKEN}} is a secret variable, and the gateway's settings are visible to anyone who can read the HTTPRoute"}},
 		},
 	}
 	for name, tc := range cases {
@@ -273,6 +310,30 @@ func TestValidateSubmission_AcceptsEveryKnownValue(t *testing.T) {
 	req.OverridableConfig.ServiceConfig.Deployment = &serviceconfig.DeploymentSpec{Replicas: serviceconfig.Ptr(int32(2))}
 	if _, _, err := s.validateSubmission(context.Background(), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateSubmission_AcceptsATemplatedGateway(t *testing.T) {
+	cases := map[string]api.SubmitRequest{
+		"every field rendered now": withVariables(withGatewayRule(submitRequest(nil, nil),
+			serviceconfig.Ptr("{{service.name}}-{{environment.name}}.example.com"), templatedRule("{{variables.UPSTREAM}}", "old.{{variables.DOMAIN}}")),
+			map[string]serviceconfig.VariableDeclaration{"UPSTREAM": {}, "DOMAIN": {}}, map[string]string{"UPSTREAM": "http://api", "DOMAIN": "example.com"}),
+		// A dependency's outputs are only known, and checked, at rollout.
+		"a hostname from a dependency": withGatewayRule(submitRequest(postgresDep, nil),
+			serviceconfig.Ptr("{{dependencies.db.host}}"), templatedRule("{{dependencies.db.host}}", "{{dependencies.db.host}}")),
+	}
+	for name, req := range cases {
+		t.Run(name, func(t *testing.T) {
+			req = withEnv(req, map[string]string{"PUBLIC_URL": "{{gateway.url}}"})
+			s := newTestService(&testutil.MockDeploymentInfoStore{})
+			_, cfg, err := s.validateSubmission(context.Background(), req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(*cfg.Gateway.HTTP.Hostname, "{{") {
+				t.Errorf("expected the config kept as written for the rollout to render, got hostname %q", *cfg.Gateway.HTTP.Hostname)
+			}
+		})
 	}
 }
 

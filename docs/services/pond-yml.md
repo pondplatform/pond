@@ -109,7 +109,7 @@ overrides:
 | `command` | list of strings | no | Replaces the image's default command (`CMD`); the image's entrypoint stays. |
 | `deployment` | object | no | Workload settings: replica count, health probes and metrics. |
 | `service` | object | no | Service port settings. |
-| `gateway` | object | no | How the service is exposed to incoming HTTP traffic. |
+| `gateway` | object | no | How the service is exposed to incoming HTTP traffic. Values can contain templates. |
 | `dependencies` | map | no | External services your app needs (databases, HTTP services). |
 | `env` | map | no | Environment variables injected into the container. Values can contain templates. |
 | `variables` | map | no | Values given with each deploy rather than in `pond.yml`, such as secrets. |
@@ -232,6 +232,32 @@ gateway:
                   value: /admin
 ```
 
+#### Templates in the gateway
+
+Every string under `gateway.http`, from the hostname to a header value, can contain [template variables](config-files.md#template-variables), rendered at deploy time:
+
+```yaml
+gateway:
+  http:
+    enabled: true
+    hostname: "{{variables.CUSTOMER}}.example.com"
+    rules:
+      - matches:
+          - path:
+              value: "/{{environment.name}}"
+        filters:
+          - type: RequestHeaderModifier
+            requestHeaderModifier:
+              set:
+                - name: X-Upstream
+                  value: "{{dependencies.api.url}}"
+```
+
+- **Rendered values are checked like written ones.** With `CUSTOMER: Acme Corp`, the hostname above is rejected before anything is deployed. A value a dependency's output fills in is only known at rollout, so it's checked then, and a bad one fails the deployment.
+- **`{{gateway.hostname}}` and `{{gateway.url}}` can't be used here**, because they come from the rendered gateway. They work in `env`, `configs` and `command`, so `PUBLIC_URL: "{{gateway.url}}"` gives `https://acme.example.com`.
+- **No secrets.** Anyone who can read the service's `HTTPRoute` sees these values, so the values rejected in [`command`](#command) are rejected here too: a sensitive dependency output such as `{{dependencies.db.password}}`, any output the dependency's type doesn't declare, and any variable declared `secret: true`.
+- **Only strings.** Numbers and booleans, such as `enabled` or a redirect's `statusCode`, can't contain templates.
+
 ### `dependencies`
 
 A map of named dependencies. Each entry declares a dependency that must be provisioned before the service can start. See [Dependencies](dependencies.md) for all available types.
@@ -263,7 +289,7 @@ Templates can't read `env`. To use the same value in `env` and in a config file,
 
 ### `variables`
 
-Values that `pond.yml` leaves to each deploy, such as a signing key or a name that differs per customer. `pond.yml` declares them, and the deploy's input file gives their values. Reference them as `{{variables.<name>}}` in `env`, `configs` and `command`.
+Values that `pond.yml` leaves to each deploy, such as a signing key or a name that differs per customer. `pond.yml` declares them, and the deploy's input file gives their values. Reference them as `{{variables.<name>}}` in `env`, `configs`, `command` and `gateway`.
 
 ```yaml
 variables:
@@ -282,7 +308,7 @@ variables:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `secret` | boolean | `false` | Whether the value is a secret. A secret variable can't be used in `command`, whose arguments anyone who can read the workload sees. |
+| `secret` | boolean | `false` | Whether the value is a secret. A secret variable can't be used in `command` or `gateway`, which anyone who can read the workload sees. |
 
 - **Every declared variable needs a value in every deploy's input.** A missing value, or a value for a variable `pond.yml` doesn't declare, is rejected before anything is deployed. Values from earlier deployments are not reused.
 - **Values are strings.** In a YAML input file a value keeps the text you wrote, so `PIN: 0123` stays `0123`. In JSON, write every value as a string.

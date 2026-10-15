@@ -190,12 +190,28 @@ func validateProbe(errs *api.ValidationErrors, field string, p *serviceconfig.Pr
 	atLeastOne(errs, field+".failureThreshold", p.FailureThreshold)
 }
 
+// ValidateGateway checks a gateway once its templates are rendered.
+func ValidateGateway(gw *serviceconfig.GatewayConfig) error {
+	var errs api.ValidationErrors
+	validateGateway(&errs, gw)
+	if errs.HasErrors() {
+		return &errs
+	}
+	return nil
+}
+
+// pending says whether a gateway value still holds a template, so it can only
+// be checked once rendered.
+func pending(s string) bool {
+	return serviceconfig.TemplateVar.MatchString(s)
+}
+
 func validateGateway(errs *api.ValidationErrors, gw *serviceconfig.GatewayConfig) {
 	if gw == nil || gw.HTTP == nil {
 		return
 	}
 
-	if h := gw.HTTP.Hostname; h != nil {
+	if h := gw.HTTP.Hostname; h != nil && !pending(*h) {
 		validateHostname(errs, "gateway.http.hostname", *h)
 	}
 
@@ -211,7 +227,7 @@ func validateGateway(errs *api.ValidationErrors, gw *serviceconfig.GatewayConfig
 }
 
 func validateMatch(errs *api.ValidationErrors, field string, m serviceconfig.HTTPRouteMatch) {
-	if p := m.Path; p != nil {
+	if p := m.Path; p != nil && !pending(deref(p.Type)) {
 		// Gateway API defaults an omitted match type to PathPrefix.
 		matchType := "PathPrefix"
 		if p.Type != nil {
@@ -219,7 +235,9 @@ func validateMatch(errs *api.ValidationErrors, field string, m serviceconfig.HTT
 		}
 		switch matchType {
 		case "Exact", "PathPrefix":
-			validatePath(errs, field+".path.value", deref(p.Value))
+			if !pending(deref(p.Value)) {
+				validatePath(errs, field+".path.value", deref(p.Value))
+			}
 		case "RegularExpression":
 			if deref(p.Value) == "" {
 				errs.Add(validationComponent, field+".path.value", "must not be empty")
@@ -236,7 +254,7 @@ func validateMatch(errs *api.ValidationErrors, field string, m serviceconfig.HTT
 		validateHeaderMatch(errs, fmt.Sprintf("%s.queryParams[%d]", field, i), q)
 	}
 
-	if method := m.Method; method != nil && !slices.Contains(httpMethods, *method) {
+	if method := m.Method; method != nil && !pending(*method) && !slices.Contains(httpMethods, *method) {
 		errs.Add(validationComponent, field+".method", fmt.Sprintf("must be an uppercase HTTP method, got %q", *method))
 	}
 }
@@ -248,12 +266,16 @@ func validateHeaderMatch(errs *api.ValidationErrors, field string, h serviceconf
 	if h.Value == "" {
 		errs.Add(validationComponent, field+".value", "must not be empty")
 	}
-	if t := h.Type; t != nil && *t != "Exact" && *t != "RegularExpression" {
+	if t := h.Type; t != nil && !pending(*t) && *t != "Exact" && *t != "RegularExpression" {
 		errs.Add(validationComponent, field+".type", fmt.Sprintf("must be Exact or RegularExpression, got %q", *t))
 	}
 }
 
 func validateFilter(errs *api.ValidationErrors, field string, f serviceconfig.HTTPRouteFilter) {
+	// The type decides which block the filter needs.
+	if pending(f.Type) {
+		return
+	}
 	if !slices.Contains(filterTypes, f.Type) {
 		errs.Add(validationComponent, field+".type", fmt.Sprintf("must be one of %s, got %q", strings.Join(filterTypes, ", "), f.Type))
 		return
@@ -333,10 +355,10 @@ func validateRedirect(errs *api.ValidationErrors, field string, r *serviceconfig
 		return
 	}
 
-	if s := r.Scheme; s != nil && *s != "http" && *s != "https" {
+	if s := r.Scheme; s != nil && !pending(*s) && *s != "http" && *s != "https" {
 		errs.Add(validationComponent, field+".scheme", fmt.Sprintf("must be http or https, got %q", *s))
 	}
-	if h := r.Hostname; h != nil {
+	if h := r.Hostname; h != nil && !pending(*h) {
 		validateHostname(errs, field+".hostname", *h)
 	}
 	if p := r.Port; p != nil {
@@ -357,25 +379,29 @@ func validateURLRewrite(errs *api.ValidationErrors, field string, r *serviceconf
 	if r.Hostname == nil && r.Path == nil {
 		errs.Add(validationComponent, field, "must set hostname, path or both")
 	}
-	if h := r.Hostname; h != nil {
+	if h := r.Hostname; h != nil && !pending(*h) {
 		validateHostname(errs, field+".hostname", *h)
 	}
 	validatePathModifier(errs, field+".path", r.Path)
 }
 
 func validatePathModifier(errs *api.ValidationErrors, field string, m *serviceconfig.HTTPPathModifier) {
-	if m == nil {
+	if m == nil || pending(m.Type) {
 		return
 	}
 
 	switch m.Type {
 	case "ReplaceFullPath":
-		validatePath(errs, field+".replaceFullPath", deref(m.ReplaceFullPath))
+		if !pending(deref(m.ReplaceFullPath)) {
+			validatePath(errs, field+".replaceFullPath", deref(m.ReplaceFullPath))
+		}
 		if m.ReplacePrefixMatch != nil {
 			errs.Add(validationComponent, field+".replacePrefixMatch", "must not be set when type is ReplaceFullPath")
 		}
 	case "ReplacePrefixMatch":
-		validatePath(errs, field+".replacePrefixMatch", deref(m.ReplacePrefixMatch))
+		if !pending(deref(m.ReplacePrefixMatch)) {
+			validatePath(errs, field+".replacePrefixMatch", deref(m.ReplacePrefixMatch))
+		}
 		if m.ReplaceFullPath != nil {
 			errs.Add(validationComponent, field+".replaceFullPath", "must not be set when type is ReplacePrefixMatch")
 		}

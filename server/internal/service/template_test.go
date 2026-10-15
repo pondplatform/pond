@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"maps"
 	"reflect"
 	"strings"
@@ -11,7 +12,26 @@ import (
 )
 
 func gateway(hostname *string) *serviceconfig.GatewayConfig {
-	return &serviceconfig.GatewayConfig{HTTP: &serviceconfig.GatewayHTTPConfig{Enabled: serviceconfig.Ptr(true), Hostname: hostname}}
+	return gatewayWithRules(hostname)
+}
+
+func gatewayWithRules(hostname *string, rules ...serviceconfig.HTTPRouteRule) *serviceconfig.GatewayConfig {
+	return &serviceconfig.GatewayConfig{HTTP: &serviceconfig.GatewayHTTPConfig{Enabled: serviceconfig.Ptr(true), Hostname: hostname, Rules: rules}}
+}
+
+// templatedRule uses a template in a match, a filter and a redirect.
+func templatedRule(header, redirect string) serviceconfig.HTTPRouteRule {
+	return serviceconfig.HTTPRouteRule{
+		Matches: []serviceconfig.HTTPRouteMatch{{Path: &serviceconfig.HTTPPathMatch{Value: serviceconfig.Ptr("/{{environment.name}}")}}},
+		Filters: []serviceconfig.HTTPRouteFilter{
+			{Type: "RequestHeaderModifier", RequestHeaderModifier: &serviceconfig.HTTPHeaderFilter{
+				Set: []serviceconfig.HTTPHeader{{Name: "X-Upstream", Value: header}},
+			}},
+			{Type: "RequestRedirect", RequestRedirect: &serviceconfig.HTTPRequestRedirectFilter{
+				Hostname: serviceconfig.Ptr(redirect), StatusCode: serviceconfig.Ptr(301),
+			}},
+		},
+	}
 }
 
 func TestNewTemplateContext(t *testing.T) {
@@ -24,13 +44,12 @@ func TestNewTemplateContext(t *testing.T) {
 	env := &db.Environment{Name: "staging", DefaultIngressBaseHost: "e2e.local"}
 
 	got := newTemplateContext(cfg, env, map[string]string{"SIGNING_KEY": "s3cr3t"})
+	// No gateway values: they come from the gateway once it is rendered.
 	want := templateContext{
 		"service.name":          "web",
 		"service.port":          "8080",
 		"deployment.replicas":   "2",
 		"environment.name":      "staging",
-		"gateway.hostname":      "web.e2e.local",
-		"gateway.url":           "https://web.e2e.local",
 		"variables.SIGNING_KEY": "s3cr3t",
 	}
 	if !maps.Equal(got, want) {
@@ -46,7 +65,7 @@ func TestNewTemplateContext_OmitsWhatIsNotSet(t *testing.T) {
 	}
 }
 
-func TestNewTemplateContext_Gateway(t *testing.T) {
+func TestWithGateway(t *testing.T) {
 	cases := map[string]struct {
 		gateway  *serviceconfig.GatewayConfig
 		baseHost string
@@ -63,7 +82,11 @@ func TestNewTemplateContext_Gateway(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			cfg := &serviceconfig.ServiceConfig{Name: "web", Gateway: tc.gateway}
-			got := newTemplateContext(cfg, &db.Environment{DefaultIngressBaseHost: tc.baseHost}, nil)
+			base := templateContext{"service.name": "web"}
+			got := base.withGateway(cfg, &db.Environment{DefaultIngressBaseHost: tc.baseHost})
+			if len(base) != 1 {
+				t.Errorf("the receiver was modified: %v", base)
+			}
 			hostname, hasHostname := got["gateway.hostname"]
 			url, hasURL := got["gateway.url"]
 			if tc.want == "" {
@@ -116,6 +139,7 @@ func TestParseDependencyRef(t *testing.T) {
 func TestRenderServiceConfig(t *testing.T) {
 	cfg := serviceconfig.ServiceConfig{
 		Name:    "web",
+		Gateway: gateway(serviceconfig.Ptr("web.e2e.local")),
 		Command: []string{"serve", "--port={{service.port}}"},
 		Env: map[string]string{
 			"DATABASE_HOST": "{{dependencies.db.host}}",
@@ -128,12 +152,11 @@ func TestRenderServiceConfig(t *testing.T) {
 	}
 	ctx := templateContext{
 		"service.port":          "8080",
-		"gateway.url":           "https://web.e2e.local",
 		"variables.PUBLIC_NAME": "Acme",
 		"dependencies.db.host":  "db.internal",
 	}
 
-	got, err := renderServiceConfig(cfg, ctx)
+	got, err := renderServiceConfig(cfg, &db.Environment{}, ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,11 +176,63 @@ func TestRenderServiceConfig(t *testing.T) {
 	}
 }
 
+func TestRenderServiceConfig_Gateway(t *testing.T) {
+	cfg := serviceconfig.ServiceConfig{
+		Name:    "web",
+		Gateway: gatewayWithRules(serviceconfig.Ptr("{{variables.CUSTOMER}}.example.com"), templatedRule("{{dependencies.api.url}}", "old.{{variables.CUSTOMER}}.example.com")),
+		Env:     map[string]string{"PUBLIC_URL": "{{gateway.url}}"},
+	}
+	ctx := templateContext{"environment.name": "staging", "variables.CUSTOMER": "acme", "dependencies.api.url": "http://api"}
+
+	got, err := renderServiceConfig(cfg, &db.Environment{}, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := gatewayWithRules(serviceconfig.Ptr("acme.example.com"), templatedRule("http://api", "old.acme.example.com"))
+	want.HTTP.Rules[0].Matches[0].Path.Value = serviceconfig.Ptr("/staging")
+	if !reflect.DeepEqual(got.Gateway, want) {
+		t.Errorf("expected gateway %s, got %s", jsonOf(want), jsonOf(got.Gateway))
+	}
+	if url := got.Env["PUBLIC_URL"]; url != "https://acme.example.com" {
+		t.Errorf("expected {{gateway.url}} from the rendered hostname, got %q", url)
+	}
+	if *cfg.Gateway.HTTP.Hostname != "{{variables.CUSTOMER}}.example.com" || *cfg.Gateway.HTTP.Rules[0].Matches[0].Path.Value != "/{{environment.name}}" {
+		t.Errorf("the input gateway was modified: %s", jsonOf(cfg.Gateway))
+	}
+}
+
+func TestRenderServiceConfig_TheGatewayCantUseItsOwnValues(t *testing.T) {
+	cfg := serviceconfig.ServiceConfig{Name: "web", Gateway: gatewayWithRules(serviceconfig.Ptr("web.example.com"), templatedRule("{{gateway.url}}", "web.example.com"))}
+	_, err := renderServiceConfig(cfg, &db.Environment{}, templateContext{"environment.name": "staging"})
+	if err == nil || !strings.Contains(err.Error(), "gateway.url") {
+		t.Errorf("expected {{gateway.url}} unresolved in the gateway, got %v", err)
+	}
+}
+
+func TestRenderGatewayKnown_LeavesWhatItDoesNotKnow(t *testing.T) {
+	gw := gatewayWithRules(serviceconfig.Ptr("{{service.name}}.example.com"), templatedRule("{{dependencies.api.url}}", "{{dependencies.api.host}}"))
+	got := renderGatewayKnown(gw, templateContext{"service.name": "web", "environment.name": "staging"})
+
+	want := gatewayWithRules(serviceconfig.Ptr("web.example.com"), templatedRule("{{dependencies.api.url}}", "{{dependencies.api.host}}"))
+	want.HTTP.Rules[0].Matches[0].Path.Value = serviceconfig.Ptr("/staging")
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("expected gateway %s, got %s", jsonOf(want), jsonOf(got))
+	}
+	if renderGatewayKnown(nil, templateContext{}) != nil {
+		t.Error("expected no gateway to stay none")
+	}
+}
+
+func jsonOf(v any) string {
+	data, _ := json.Marshal(v)
+	return string(data)
+}
+
 func TestRenderServiceConfig_IsSinglePass(t *testing.T) {
 	cfg := serviceconfig.ServiceConfig{Env: map[string]string{"KEY": "{{variables.KEY}}"}}
 	ctx := templateContext{"variables.KEY": "{{service.name}}", "service.name": "web"}
 
-	got, err := renderServiceConfig(cfg, ctx)
+	got, err := renderServiceConfig(cfg, &db.Environment{}, ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,10 +251,15 @@ func TestRenderServiceConfig_ErrorsNameTheField(t *testing.T) {
 		"config": {serviceconfig.ServiceConfig{Configs: map[string]serviceconfig.ConfigFileSpec{
 			"app.yaml": {Values: map[string]any{"user": "{{dependencies.db.username}}"}},
 		}}, `config "app.yaml"`},
+		"gateway": {serviceconfig.ServiceConfig{Gateway: gatewayWithRules(nil, serviceconfig.HTTPRouteRule{
+			Filters: []serviceconfig.HTTPRouteFilter{{Type: "RequestHeaderModifier", RequestHeaderModifier: &serviceconfig.HTTPHeaderFilter{
+				Set: []serviceconfig.HTTPHeader{{Name: "X-User", Value: "{{dependencies.db.username}}"}},
+			}}},
+		})}, "gateway.http.rules[0].filters[0].requestHeaderModifier.set[0].value"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := renderServiceConfig(tc.cfg, templateContext{})
+			_, err := renderServiceConfig(tc.cfg, &db.Environment{}, templateContext{})
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "dependencies.db.username") {
 				t.Errorf("expected an error naming %s and the variable, got %v", tc.want, err)
 			}
@@ -292,7 +372,7 @@ func TestRender_EnvIsNoLongerASource(t *testing.T) {
 		Env:     map[string]string{"DB_NAME": "mydb"},
 		Configs: map[string]serviceconfig.ConfigFileSpec{"app.yaml": {Values: map[string]any{"db": "{{env.DB_NAME}}"}}},
 	}
-	if _, err := renderServiceConfig(cfg, newTemplateContext(&cfg, &db.Environment{}, nil)); err == nil || !strings.Contains(err.Error(), "env.DB_NAME") {
+	if _, err := renderServiceConfig(cfg, &db.Environment{}, newTemplateContext(&cfg, &db.Environment{}, nil)); err == nil || !strings.Contains(err.Error(), "env.DB_NAME") {
 		t.Errorf("expected {{env.DB_NAME}} to be unresolved, got %v", err)
 	}
 }

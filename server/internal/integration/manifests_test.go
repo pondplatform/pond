@@ -10,7 +10,8 @@ import (
 
 // TestManifests_GatewayRoute checks the HTTPRoute the gateway fixture becomes:
 // a hostname derived from the environment's base host, the platform's
-// parentRefs and backendRefs, and the user's matches and filters as written.
+// parentRefs and backendRefs, and the user's matches and filters as written,
+// templates rendered.
 func TestManifests_GatewayRoute(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -31,7 +32,7 @@ rules:
       - type: URLRewrite
         urlRewrite: {path: {type: ReplacePrefixMatch, replacePrefixMatch: /}}
       - type: RequestHeaderModifier
-        requestHeaderModifier: {set: [{name: X-Pond-Filter, value: applied}]}
+        requestHeaderModifier: {set: [{name: X-Pond-Filter, value: gateway-demo in test-env}]}
     backendRefs: [{name: gateway-demo, port: 80, weight: 1}]
   - matches: [{path: {type: PathPrefix, value: /}}]
     backendRefs: [{name: gateway-demo, port: 80, weight: 1}]

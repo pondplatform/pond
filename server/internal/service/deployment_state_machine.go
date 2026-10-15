@@ -13,6 +13,7 @@ import (
 	"github.com/pondplatform/pond/shared/agent/wire"
 	"github.com/pondplatform/pond/shared/server/api"
 	"github.com/pondplatform/pond/shared/serviceconfig"
+	"github.com/pondplatform/pond/shared/serviceconfig/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -284,9 +285,13 @@ func helmUpgradePayload(deployment db.Deployment, env db.Environment, outputs ma
 	}
 	snapshot := deployment.ServiceConfigSnapshot
 	templates := newTemplateContext(&snapshot, &env, deployment.Variables).withDependencies(contexts)
-	cfg, err := renderServiceConfig(snapshot, templates)
+	cfg, err := renderServiceConfig(snapshot, &env, templates)
 	if err != nil {
 		return nil, err
+	}
+	// The submit could only check what was known then, not a dependency's outputs.
+	if err := config.ValidateGateway(cfg.Gateway); err != nil {
+		return nil, fmt.Errorf("rendered gateway: %w", err)
 	}
 	values, err := helmValuesYAML(helmGen, &cfg, &env, deployment.ImageTag, deployment.ID)
 	if err != nil {

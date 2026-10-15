@@ -1,6 +1,6 @@
 # Dependencies
 
-Pond can provision and connect dependencies for your service. You declare what your service needs in `pond.yml`; Pond provisions the dependency, collects its connection details, and makes them available as [template variables](config-files.md#template-variables) in your `env`, config files and `command`.
+Pond can provision and connect dependencies for your service. You declare what your service needs in `pond.yml`; Pond provisions the dependency, collects its connection details, and makes them available as [template variables](config-files.md#template-variables) in your `env`, config files, `command` and `gateway`.
 
 ## Declaring a dependency
 

@@ -27,10 +27,23 @@ func (s *deploymentService) validateSubmission(ctx context.Context, req api.Subm
 		return nil, nil, fmt.Errorf("resolve config for environment %q: %w", env.Name, err)
 	}
 
+	// Only declared variables can be referenced; values for others are rejected below.
+	values := maps.Clone(req.Variables)
+	maps.DeleteFunc(values, func(name, _ string) bool {
+		_, declared := svcConfig.Variables[name]
+		return !declared
+	})
+	known := newTemplateContext(svcConfig, env, values)
+	// The gateway is checked as rendered. What a dependency's outputs fill in is
+	// only known at rollout, which checks the gateway again.
+	rendered := *svcConfig
+	rendered.Gateway = renderGatewayKnown(svcConfig.Gateway, known)
+	known = known.withGateway(&rendered, env)
+
 	var errs api.ValidationErrors
 	// Reject a malformed config here rather than letting it reach the cluster as
 	// a failed rollout the user has to read helm output to understand.
-	if err := config.Validate(svcConfig); err != nil {
+	if err := config.Validate(&rendered); err != nil {
 		var invalid *api.ValidationErrors
 		if !errors.As(err, &invalid) {
 			return nil, nil, err
@@ -44,13 +57,8 @@ func (s *deploymentService) validateSubmission(ctx context.Context, req api.Subm
 	}
 	addUndeclaredInputErrors(&errs, svcConfig.Dependencies, req.Dependencies)
 	addVariableInputErrors(&errs, svcConfig.Variables, req.Variables)
-	// Values don't matter here, only which variables exist.
-	placeholders := make(map[string]string, len(svcConfig.Variables))
-	for name := range svcConfig.Variables {
-		placeholders[name] = ""
-	}
-	addTemplateReferenceErrors(&errs, svcConfig, newTemplateContext(svcConfig, env, placeholders))
-	s.addCommandReferenceErrors(&errs, svcConfig)
+	addTemplateReferenceErrors(&errs, svcConfig, known)
+	s.addVisibleReferenceErrors(&errs, svcConfig)
 
 	if errs.HasErrors() {
 		return nil, nil, &errs
@@ -111,19 +119,36 @@ func addVariableInputErrors(errs *api.ValidationErrors, declared map[string]serv
 type templateSite struct {
 	field string
 	refs  []string
+	// inGateway marks the gateway's fields, which {{gateway.*}} are rendered from.
+	inGateway bool
 }
 
 func templateSites(cfg *serviceconfig.ServiceConfig) []templateSite {
 	var sites []templateSite
 	for _, file := range slices.Sorted(maps.Keys(cfg.Configs)) {
-		sites = append(sites, templateSite{file, templateReferences(cfg.Configs[file].Values)})
+		sites = append(sites, templateSite{field: file, refs: templateReferences(cfg.Configs[file].Values)})
 	}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Env)) {
-		sites = append(sites, templateSite{fmt.Sprintf("env[%q]", name), templateReferences(cfg.Env[name])})
+		sites = append(sites, templateSite{field: fmt.Sprintf("env[%q]", name), refs: templateReferences(cfg.Env[name])})
 	}
+	sites = append(sites, commandSites(cfg)...)
+	return append(sites, gatewaySites(cfg)...)
+}
+
+func commandSites(cfg *serviceconfig.ServiceConfig) []templateSite {
+	sites := make([]templateSite, len(cfg.Command))
 	for i, arg := range cfg.Command {
-		sites = append(sites, templateSite{commandField(i), templateReferences(arg)})
+		sites[i] = templateSite{field: commandField(i), refs: templateReferences(arg)}
 	}
+	return sites
+}
+
+func gatewaySites(cfg *serviceconfig.ServiceConfig) []templateSite {
+	var sites []templateSite
+	_, _ = mapGatewayStrings(cfg.Gateway, func(field, s string) (string, error) {
+		sites = append(sites, templateSite{field: field, refs: templateReferences(s), inGateway: true})
+		return s, nil
+	})
 	return sites
 }
 
@@ -135,7 +160,11 @@ func commandField(i int) string { return fmt.Sprintf("command[%d]", i) }
 func addTemplateReferenceErrors(errs *api.ValidationErrors, cfg *serviceconfig.ServiceConfig, known templateContext) {
 	for _, site := range templateSites(cfg) {
 		for _, ref := range site.refs {
-			if problem := referenceProblem(cfg, known, ref); problem != "" {
+			problem := referenceProblem(cfg, known, ref)
+			if site.inGateway && strings.HasPrefix(ref, "gateway.") {
+				problem = "comes from the gateway, so the gateway can't use it"
+			}
+			if problem != "" {
 				errs.Add("config", site.field, fmt.Sprintf("template variable {{%s}} %s", ref, problem))
 			}
 		}
@@ -159,6 +188,10 @@ func referenceProblem(cfg *serviceconfig.ServiceConfig, known templateContext, r
 		}
 		return ""
 	case "variables":
+		// A declared variable without a value is reported as missing from the input.
+		if _, declared := cfg.Variables[rest]; declared {
+			return ""
+		}
 		return fmt.Sprintf("names no declared variable: %q is not under variables in pond.yml", rest)
 	case "env":
 		return "is no longer available: declare a variable and use {{variables.<name>}} wherever the value is needed, env included"
@@ -191,14 +224,22 @@ func gatewayProblem(cfg *serviceconfig.ServiceConfig, known templateContext) str
 	return fmt.Sprintf("needs a hostname: set gateway.http.hostname, or a base host on environment %q", known["environment.name"])
 }
 
-// addCommandReferenceErrors rejects a reference in command that may carry a
-// secret: arguments are visible to anyone who can read the workload.
-func (s *deploymentService) addCommandReferenceErrors(errs *api.ValidationErrors, cfg *serviceconfig.ServiceConfig) {
-	for i, arg := range cfg.Command {
-		for _, ref := range templateReferences(arg) {
-			if reason := s.refSensitive(cfg, ref); reason != "" {
-				errs.Add("config", commandField(i), fmt.Sprintf(
-					"template variable {{%s}} %s, and arguments are visible to anyone who can read the workload; pass it in env or a config file instead", ref, reason))
+// addVisibleReferenceErrors rejects a reference that may carry a secret in
+// command or the gateway, which anyone who can read the workload sees.
+func (s *deploymentService) addVisibleReferenceErrors(errs *api.ValidationErrors, cfg *serviceconfig.ServiceConfig) {
+	visible := []struct {
+		sites []templateSite
+		why   string
+	}{
+		{commandSites(cfg), "arguments are visible to anyone who can read the workload; pass it in env or a config file instead"},
+		{gatewaySites(cfg), "the gateway's settings are visible to anyone who can read the HTTPRoute"},
+	}
+	for _, v := range visible {
+		for _, site := range v.sites {
+			for _, ref := range site.refs {
+				if reason := s.refSensitive(cfg, ref); reason != "" {
+					errs.Add("config", site.field, fmt.Sprintf("template variable {{%s}} %s, and %s", ref, reason, v.why))
+				}
 			}
 		}
 	}

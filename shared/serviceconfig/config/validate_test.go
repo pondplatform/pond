@@ -516,6 +516,44 @@ func TestValidate_Gateway(t *testing.T) {
 			}),
 			wantFields: []string{"gateway.http.rules[0].filters[0].requestMirror.backendRef.name"},
 		},
+		{
+			name: "templates are checked once rendered",
+			gateway: &serviceconfig.GatewayConfig{HTTP: &serviceconfig.GatewayHTTPConfig{
+				Hostname: serviceconfig.Ptr("{{dependencies.dns.host}}"),
+				Rules: []serviceconfig.HTTPRouteRule{{
+					Matches: []serviceconfig.HTTPRouteMatch{
+						{
+							Path:    &serviceconfig.HTTPPathMatch{Type: serviceconfig.Ptr("{{variables.TYPE}}"), Value: serviceconfig.Ptr("api")},
+							Headers: []serviceconfig.HTTPHeaderMatch{{Type: serviceconfig.Ptr("{{variables.TYPE}}"), Name: "X", Value: "1"}},
+							Method:  serviceconfig.Ptr("{{variables.METHOD}}"),
+						},
+						{Path: &serviceconfig.HTTPPathMatch{Value: serviceconfig.Ptr("{{variables.PREFIX}}")}},
+					},
+					Filters: []serviceconfig.HTTPRouteFilter{
+						{Type: "{{variables.FILTER}}"},
+						{Type: "RequestRedirect", RequestRedirect: &serviceconfig.HTTPRequestRedirectFilter{
+							Scheme:   serviceconfig.Ptr("{{variables.SCHEME}}"),
+							Hostname: serviceconfig.Ptr("{{dependencies.dns.host}}"),
+							Path:     &serviceconfig.HTTPPathModifier{Type: "ReplaceFullPath", ReplaceFullPath: serviceconfig.Ptr("{{variables.PATH}}")},
+						}},
+						{Type: "URLRewrite", URLRewrite: &serviceconfig.HTTPURLRewriteFilter{
+							Hostname: serviceconfig.Ptr("{{dependencies.dns.host}}"),
+							Path:     &serviceconfig.HTTPPathModifier{Type: "{{variables.TYPE}}", ReplacePrefixMatch: serviceconfig.Ptr("api")},
+						}},
+					},
+				}},
+			}},
+		},
+		{
+			name: "plain values next to templates are still checked",
+			gateway: &serviceconfig.GatewayConfig{HTTP: &serviceconfig.GatewayHTTPConfig{
+				Hostname: serviceconfig.Ptr("{{variables.HOST}}"),
+				Rules: []serviceconfig.HTTPRouteRule{{
+					Matches: []serviceconfig.HTTPRouteMatch{{Path: &serviceconfig.HTTPPathMatch{Value: serviceconfig.Ptr("api")}}},
+				}},
+			}},
+			wantFields: []string{"gateway.http.rules[0].matches[0].path.value"},
+		},
 	}
 
 	for _, tc := range tests {

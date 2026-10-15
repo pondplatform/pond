@@ -18,6 +18,7 @@ import (
 	"github.com/pondplatform/pond/server/internal/testutil"
 	"github.com/pondplatform/pond/shared/agent/wire"
 	"github.com/pondplatform/pond/shared/server/api"
+	"github.com/pondplatform/pond/shared/serviceconfig"
 	"gopkg.in/yaml.v3"
 )
 
@@ -241,6 +242,41 @@ func TestAdvance_TheRolloutRendersEnvAndVariables(t *testing.T) {
 	}
 	if got := values.PodAnnotations["pond/deployment-id"]; got != f.deployment.ID.String() {
 		t.Errorf("expected the deployment ID %s as an annotation so every deployment rolls the pods, got %q", f.deployment.ID, got)
+	}
+}
+
+func TestAdvance_TheRolloutRendersTheGateway(t *testing.T) {
+	f := newMachineFixture(nil).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal"}`, "")
+	f.deployment.Variables = map[string]string{"CUSTOMER": "acme"}
+	f.deployment.ServiceConfigSnapshot.Gateway = gatewayWithRules(serviceconfig.Ptr("{{variables.CUSTOMER}}.example.com"),
+		templatedRule("{{dependencies.db.host}}", "{{dependencies.db.host}}"))
+	f.deployment.ServiceConfigSnapshot.Env = map[string]string{"PUBLIC_URL": "{{gateway.url}}"}
+	w := f.advance(t)
+
+	if len(w.created) != 1 {
+		t.Fatalf("expected a helm command, got saved=%+v created=%+v", w.saved, w.created)
+	}
+	values := helmValues(t, w.created[0])
+	if want := []string{"acme.example.com"}; !slices.Equal(values.HTTPRoute.Hostnames, want) {
+		t.Errorf("expected hostnames %q, got %q", want, values.HTTPRoute.Hostnames)
+	}
+	want := templatedRule("db.internal", "db.internal")
+	want.Matches[0].Path.Value = serviceconfig.Ptr("/staging")
+	if got := values.HTTPRoute.Rules; len(got) != 1 || jsonOf(got[0]) != jsonOf(want) {
+		t.Errorf("expected rules [%s], got %s", jsonOf(want), jsonOf(got))
+	}
+	if url := values.Env["PUBLIC_URL"]; url != "https://acme.example.com" {
+		t.Errorf("expected {{gateway.url}} from the rendered hostname, got %q", url)
+	}
+}
+
+func TestAdvance_AnInvalidRenderedGatewayFailsTheDeployment(t *testing.T) {
+	f := newMachineFixture(nil).withTofu(db.CommandStatusSucceeded, `{"host":"DB.internal:5432"}`, "")
+	f.deployment.ServiceConfigSnapshot.Gateway = gatewayWithRules(nil, templatedRule("x", "{{dependencies.db.host}}"))
+	w := f.advance(t)
+	want := `rendered gateway: validation failed: config.gateway.http.rules[0].filters[1].requestRedirect.hostname: must be a lowercase DNS hostname without scheme, port or path, got "DB.internal:5432"`
+	if w.saved == nil || w.saved.Status != db.DeploymentFailed || reasonOf(w.saved) != want || len(w.created) != 0 {
+		t.Errorf("expected failed with %q and no command, got saved=%+v created=%+v", want, w.saved, w.created)
 	}
 }
 

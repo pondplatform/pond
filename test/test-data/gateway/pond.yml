@@ -31,7 +31,7 @@ gateway:
             requestHeaderModifier:
               set:
                 - name: X-Pond-Filter
-                  value: applied
+                  value: "{{service.name}} in {{environment.name}}"
       - matches:
           - path:
               type: PathPrefix

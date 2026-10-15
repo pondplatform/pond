@@ -100,22 +100,23 @@ String values support `{{variable}}` syntax at any depth, including inside neste
 | `{{service.port}}` | `service.port` | `service.port` is set |
 | `{{deployment.replicas}}` | `deployment.replicas` | `deployment.replicas` is set |
 | `{{environment.name}}` | The name of the environment being deployed to | always |
-| `{{gateway.hostname}}` | `gateway.http.hostname`, or else `<name>.<environment base host>` | the gateway is enabled, and it has a hostname that isn't a `*.` wildcard |
+| `{{gateway.hostname}}` | `gateway.http.hostname` as rendered, or else `<name>.<environment base host>` | the gateway is enabled, and it has a hostname that isn't a `*.` wildcard |
 | `{{gateway.url}}` | `https://<gateway.hostname>` | the same as `{{gateway.hostname}}` |
 | `{{variables.<name>}}` | The input's value for a [variable](pond-yml.md#variables) | the variable is declared |
 | `{{dependencies.<name>.<output>}}` | An output of a [dependency](dependencies.md), such as `{{dependencies.db.host}}` | the dependency is declared |
 
-Templates work in three places:
+Templates work in four places:
 
 - **`configs`:** every string value.
 - **[`env`](pond-yml.md#env):** every value.
 - **[`command`](pond-yml.md#command):** every argument, except values that may be secret: a dependency output marked sensitive, such as `{{dependencies.db.password}}`, any output the dependency's type doesn't declare, and a variable declared `secret: true`. Anyone who can read the workload sees its arguments, so pass these in `env` or a config file instead.
+- **[`gateway`](pond-yml.md#templates-in-the-gateway):** every string, from the hostname to a header value, except the values that may be secret, as in `command`, and `{{gateway.hostname}}` and `{{gateway.url}}`, which come from the rendered gateway.
 
 A template can't read `env`, so there is no `{{env.<NAME>}}`. To use the same value in `env` and in a config file, declare it as a variable.
 
 Pond renders each value once. A value that itself contains `{{…}}`, such as a variable's, reaches your app as written.
 
-A reference that can never resolve is rejected before anything is deployed, for example an undeclared dependency, or `{{gateway.url}}` without the gateway. A dependency's outputs are only known once it's provisioned, so a reference to an output it doesn't have fails the rollout instead.
+A reference that can never resolve is rejected before anything is deployed, for example an undeclared dependency, or `{{gateway.url}}` without the gateway. A dependency's outputs are only known once it's provisioned, so a reference to an output it doesn't have fails the rollout instead. The same goes for the gateway's rendered values, which are checked like written ones: before anything is deployed, or at rollout where a dependency's output fills them in.
 
 ---
 
