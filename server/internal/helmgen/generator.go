@@ -107,8 +107,11 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 		}
 	}
 
-	// Config files (values are already rendered by the deployment service)
-	for name, cfgFile := range cfg.Configs {
+	// Config files (values are already rendered by the deployment service).
+	// The chart names each one's Secret and pod volume by its list index, so
+	// map order would rename them on every deploy and roll the pod for nothing.
+	for _, name := range slices.Sorted(maps.Keys(cfg.Configs)) {
+		cfgFile := cfg.Configs[name]
 		encoded, err := encodeConfigFile(cfgFile.Format, cfgFile.Values)
 		if err != nil {
 			return nil, fmt.Errorf("encode config %q: %w", name, err)

@@ -2,6 +2,7 @@ package helmgen
 
 import (
 	"encoding/base64"
+	"slices"
 	"strings"
 	"testing"
 
@@ -54,6 +55,38 @@ func TestGenerator_Generate_ConfigFiles(t *testing.T) {
 	expected := "database_url: postgres://admin:password123@db-host:5432/mydb\ndebug: true\n"
 	if string(decoded) != expected {
 		t.Errorf("Unexpected rendered config:\nExpected: %q\nGot:      %q", expected, string(decoded))
+	}
+}
+
+// The chart names config Secrets and pod volumes config-<index>, so the list
+// order must not depend on map iteration: a reshuffle changes the pod template.
+func TestGenerator_Generate_ConfigFilesInNameOrder(t *testing.T) {
+	g := NewGenerator()
+
+	cfg := &serviceconfig.ServiceConfig{
+		Name: "test-service",
+		Configs: map[string]serviceconfig.ConfigFileSpec{
+			"c.json":   {Format: "json", MountPath: "/etc/c.json"},
+			"a.yaml":   {Format: "yaml", MountPath: "/etc/a.yaml"},
+			"b.env":    {Format: ".env", MountPath: "/etc/b.env"},
+			"d.yaml":   {Format: "yaml", MountPath: "/etc/d.yaml"},
+			"e.config": {Format: "json", MountPath: "/etc/e.config"},
+		},
+	}
+
+	for range 20 {
+		vals, err := g.Generate(cfg, &domain.Environment{}, "")
+		if err != nil {
+			t.Fatalf("Generate failed: %v", err)
+		}
+		var got []string
+		for _, c := range vals.Configs {
+			got = append(got, c.MountLocation)
+		}
+		want := []string{"/etc/a.yaml", "/etc/b.env", "/etc/c.json", "/etc/d.yaml", "/etc/e.config"}
+		if !slices.Equal(got, want) {
+			t.Fatalf("Expected configs in name order %v, got %v", want, got)
+		}
 	}
 }
 
