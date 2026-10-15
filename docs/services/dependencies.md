@@ -1,6 +1,6 @@
 # Dependencies
 
-Pond can provision and connect dependencies for your service. You declare what your service needs in `pond.yml`; Pond provisions the dependency, collects its connection details, and makes them available as template variables in your [config files](config-files.md).
+Pond can provision and connect dependencies for your service. You declare what your service needs in `pond.yml`; Pond provisions the dependency, collects its connection details, and makes them available as [template variables](config-files.md#template-variables) in your `env`, config files and `command`.
 
 ## Declaring a dependency
 
@@ -12,7 +12,7 @@ dependencies:
       key: value
 ```
 
-The `<name>` you choose becomes the prefix for template variables (e.g. `{{db.host}}` when the name is `db`).
+Template variables refer to the dependency by the `<name>` you choose: `{{dependencies.db.host}}` when the name is `db`.
 
 ---
 
@@ -32,11 +32,11 @@ A PostgreSQL database.
 
 | Variable | Description |
 |---|---|
-| `{{<name>.host}}` | Database host |
-| `{{<name>.port}}` | Database port |
-| `{{<name>.username}}` | Database username |
-| `{{<name>.password}}` | Database password. Sensitive, so not allowed in [`command`](pond-yml.md#command). |
-| `{{<name>.database}}` | Database name |
+| `{{dependencies.<name>.host}}` | Database host |
+| `{{dependencies.<name>.port}}` | Database port |
+| `{{dependencies.<name>.username}}` | Database username |
+| `{{dependencies.<name>.password}}` | Database password. Sensitive, so not allowed in [`command`](pond-yml.md#command). |
+| `{{dependencies.<name>.database}}` | Database name |
 
 **Example:**
 
@@ -62,7 +62,7 @@ An external HTTP service that is not managed by Pond. Useful for referencing a t
 
 | Variable | Description |
 |---|---|
-| `{{<name>.url}}` | The service URL |
+| `{{dependencies.<name>.url}}` | The service URL |
 
 **Example:**
 
@@ -125,3 +125,14 @@ pond deploy --tag v1.2.3 --input ./deploy-input.json
 Or name it `pond-input-<env>.json` (or `pond-input-<env>.yml`, with the same structure in YAML) next to `pond.yml`, and `pond deploy` picks it up for that environment without `--input`.
 
 Every deployment needs input for every declared dependency; input from earlier deployments is not reused. A dependency the file leaves out makes the server reject the request, and nothing is created. Keeping the file as `pond-input-<env>.yml` next to `pond.yml` means each `pond deploy` sends it without extra flags.
+
+The same file gives the values of the service's [variables](pond-yml.md#variables), under `variables:`:
+
+```yaml
+# pond-input-staging.yml
+dependencies:
+  db: { managed: true, values: { instances: 1 } }
+variables:
+  SIGNING_KEY: "s3cr3t"
+  PUBLIC_NAME: "Acme"
+```

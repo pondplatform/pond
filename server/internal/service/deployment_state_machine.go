@@ -259,9 +259,9 @@ func abbreviate(raw json.RawMessage) string {
 	return string(raw)
 }
 
-// dependencyOutputs are the values a config template can refer to as
-// {{name.key}}: a managed dependency's tofu outputs, an unmanaged one's
-// configuration.
+// dependencyOutputs are the values a template can refer to as
+// {{dependencies.<name>.<key>}}: a managed dependency's tofu outputs, an
+// unmanaged one's configuration.
 func dependencyOutputs(dependencies []db.DependencyDeployment, commands []*db.Command) map[string]json.RawMessage {
 	outputs := make(map[string]json.RawMessage, len(dependencies))
 	for _, dependency := range dependencies {
@@ -282,7 +282,9 @@ func helmUpgradePayload(deployment db.Deployment, env db.Environment, outputs ma
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := renderTemplates(deployment.ServiceConfigSnapshot, contexts)
+	snapshot := deployment.ServiceConfigSnapshot
+	templates := newTemplateContext(&snapshot, &env, deployment.Variables).withDependencies(contexts)
+	cfg, err := renderServiceConfig(snapshot, templates)
 	if err != nil {
 		return nil, err
 	}
@@ -312,36 +314,4 @@ func helmValuesYAML(helmGen helmgen.HelmValuesGenerator, cfg *serviceconfig.Serv
 		return nil, fmt.Errorf("marshal helm values: %w", err)
 	}
 	return out, nil
-}
-
-// renderTemplates substitutes dependency outputs into every config file's
-// values and into the command.
-func renderTemplates(cfg serviceconfig.ServiceConfig, contexts map[string]map[string]any) (serviceconfig.ServiceConfig, error) {
-	if cfg.Command != nil {
-		lookup := buildLookupTable(contexts, &cfg)
-		command := make([]string, len(cfg.Command))
-		for i, arg := range cfg.Command {
-			rendered, err := renderString(arg, lookup)
-			if err != nil {
-				return cfg, fmt.Errorf("render command[%d]: %w", i, err)
-			}
-			command[i] = rendered
-		}
-		cfg.Command = command
-	}
-
-	if len(cfg.Configs) == 0 {
-		return cfg, nil
-	}
-	rendered := make(map[string]serviceconfig.ConfigFileSpec, len(cfg.Configs))
-	for name, file := range cfg.Configs {
-		values, err := renderTemplate(file.Values, contexts, &cfg)
-		if err != nil {
-			return cfg, fmt.Errorf("render config %q: %w", name, err)
-		}
-		file.Values = values
-		rendered[name] = file
-	}
-	cfg.Configs = rendered
-	return cfg, nil
 }

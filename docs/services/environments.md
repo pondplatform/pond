@@ -66,6 +66,8 @@ The `name`, `image` and `build` fields cannot be overridden per environment.
 
 Neither can `volumes`: a service needs the same storage in staging as in production, just as it needs the same memory. Each environment still gets its own volume with its own data. An `overrides.<env>.volumes` key is rejected like any other unknown field.
 
+`variables` can't be overridden either, and don't need to be: their values come from each environment's own input file. See [`variables`](pond-yml.md#variables).
+
 > **Warning:** an override that raises `deployment.replicas` for a service with volumes makes every replica in that environment read and write the same files. Pond accepts it, but it is only safe for some apps, on some storage. Read [More than one replica](volumes.md#more-than-one-replica) first, and check it for each environment you raise it in.
 
 Within `deployment.management`, each of `livenessProbe`, `readinessProbe` and

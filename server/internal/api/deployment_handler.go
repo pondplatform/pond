@@ -63,9 +63,9 @@ func (h *DeploymentHandler) Submit(c *gin.Context) {
 }
 
 func (h *DeploymentHandler) submit(ctx context.Context, req shared.SubmitRequest) (*domain.Deployment, error) {
-	// Dependency values can carry credentials, so they stay out of the log.
+	// Dependency values and variables can carry credentials, so they stay out of the log.
 	logged := req
-	logged.Dependencies = nil
+	logged.DeploymentInput = shared.DeploymentInput{}
 	encoded, _ := json.Marshal(logged)
 	h.log.Info("Deploying service: " + string(encoded))
 

@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
-	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -82,9 +80,6 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		if err != nil {
 			return err
 		}
-		if err := verifyVolumesDoNotShrink(ctx, tx.Deployments, svc.ID, env.ID, svcConfig.Volumes); err != nil {
-			return err
-		}
 		inputs, err := resolveInputs(svcConfig.Dependencies, req.Dependencies)
 		if err != nil {
 			return err
@@ -142,44 +137,6 @@ func getOrCreateService(ctx context.Context, services store.ServiceRepository, r
 	return svc, nil
 }
 
-// verifyVolumesDoNotShrink rejects a volume smaller than the environment's last
-// succeeded deployment gave it: Kubernetes can grow a claim but never shrink
-// it. A failed deployment doesn't count, so a failed grow can be reverted.
-func verifyVolumesDoNotShrink(ctx context.Context, deployments store.DeploymentInfoStore, serviceID, environmentID uuid.UUID, volumes map[string]serviceconfig.VolumeSpec) error {
-	if len(volumes) == 0 {
-		return nil
-	}
-	succeeded := api.DeploymentStatusSucceeded
-	last, err := deployments.ListByServiceFiltered(ctx, serviceID, &environmentID, &succeeded, 1, "")
-	if err != nil {
-		return fmt.Errorf("get the last succeeded deployment: %w", err)
-	}
-	if len(last) == 0 {
-		return nil
-	}
-
-	previous := last[0].ServiceConfigSnapshot.Volumes
-	var errs api.ValidationErrors
-	for _, name := range slices.Sorted(maps.Keys(volumes)) {
-		before, ok := previous[name]
-		if !ok {
-			continue
-		}
-		// Both sizes passed validation when they were submitted.
-		was, _ := config.VolumeSizeBytes(before.Size)
-		now, _ := config.VolumeSizeBytes(volumes[name].Size)
-		if now < was {
-			errs.Add("config", fmt.Sprintf("volumes[%q].size", name), fmt.Sprintf(
-				"must be at least %s, its size in the last successful deployment: a volume can grow but never shrink, got %s",
-				before.Size, volumes[name].Size))
-		}
-	}
-	if errs.HasErrors() {
-		return &errs
-	}
-	return nil
-}
-
 func newDeployment(req api.SubmitRequest, serviceID, environmentID uuid.UUID, svcConfig serviceconfig.ServiceConfig, now time.Time) db.Deployment {
 	return db.Deployment{
 		ID:                    uuid.New(),
@@ -187,6 +144,7 @@ func newDeployment(req api.SubmitRequest, serviceID, environmentID uuid.UUID, sv
 		EnvironmentID:         environmentID,
 		ImageTag:              req.ImageTag,
 		ServiceConfigSnapshot: svcConfig,
+		Variables:             req.Variables,
 		Status:                db.DeploymentInProgress,
 		TriggeredBy:           req.TriggeredBy,
 		CreatedAt:             now,

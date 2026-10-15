@@ -98,12 +98,13 @@ func TestValidate_FullConfigIsValid(t *testing.T) {
 	cfg.Env = map[string]string{"LOG_LEVEL": "info"}
 	cfg.Dependencies = map[string]serviceconfig.DependencyDeclaration{"db": {Type: "postgres"}}
 	cfg.Configs = map[string]serviceconfig.ConfigFileSpec{
-		".env": {Format: ".env", MountPath: "/app/.env", Values: map[string]any{"DB_HOST": "{{db.host}}"}},
+		".env": {Format: ".env", MountPath: "/app/.env", Values: map[string]any{"DB_HOST": "{{dependencies.db.host}}"}},
 	}
 	cfg.Volumes = map[string]serviceconfig.VolumeSpec{
 		"data": {Type: "shared-single-node", MountPath: "/var/lib/my-service", Size: "10Gi"},
 	}
 	cfg.Command = []string{"serve", "--port", "{{service.port}}"}
+	cfg.Variables = map[string]serviceconfig.VariableDeclaration{"SIGNING_KEY": {Secret: true}}
 
 	if err := Validate(cfg); err != nil {
 		t.Errorf("Expected valid config, got: %v", err)
@@ -580,8 +581,8 @@ func TestValidate_EnvConfigsAndDependencies(t *testing.T) {
 			wantFields: []string{`configs["app.yaml"].format`, `configs["app.yaml"].mountPath`},
 		},
 		{
-			// Config templates reference dependencies as {{name.field}}, which
-			// cannot express a dash.
+			// Templates reference dependencies as {{dependencies.<name>.<output>}},
+			// which can't express a dash.
 			name: "dependency name outside the template charset",
 			mutate: func(c *serviceconfig.ServiceConfig) {
 				c.Dependencies = map[string]serviceconfig.DependencyDeclaration{"my-db": {Type: "postgres"}}
@@ -594,6 +595,21 @@ func TestValidate_EnvConfigsAndDependencies(t *testing.T) {
 				c.Dependencies = map[string]serviceconfig.DependencyDeclaration{"db": {}}
 			},
 			wantFields: []string{`dependencies["db"].type`},
+		},
+		{
+			// Templates reference variables as {{variables.<name>}}, which can't
+			// express a dash or a dot.
+			name: "variable names outside the template charset",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				c.Variables = map[string]serviceconfig.VariableDeclaration{
+					"SIGNING_KEY": {Secret: true},
+					"public_name": {},
+					"MY-KEY":      {},
+					"my.key":      {},
+					"":            {},
+				}
+			},
+			wantFields: []string{`variables[""]`, `variables["MY-KEY"]`, `variables["my.key"]`},
 		},
 	}
 
@@ -862,7 +878,6 @@ func TestValidate_Volumes(t *testing.T) {
 	}
 }
 
-// Shrink checks compare bytes, so the same size in another unit is not smaller.
 func TestVolumeSizeBytes(t *testing.T) {
 	tests := map[string]int64{
 		"1Mi":    1 << 20,

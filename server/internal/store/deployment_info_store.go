@@ -38,15 +38,15 @@ const (
 		string(domain.CommandStatusDispatched) + `')`
 )
 
-const deploymentColumns = `d.id, d.service_id, d.environment_id, d.image_tag, d.service_config_snapshot,
+const deploymentColumns = `d.id, d.service_id, d.environment_id, d.image_tag, d.service_config_snapshot, d.variables,
 	d.status, d.triggered_by, d.created_at, d.completed_at, d.error, ` + startedSQL + `, ` + stoppingSQL
 
 func scanDeployment(row rowScanner) (*domain.Deployment, error) {
 	var d domain.Deployment
-	var configJSON []byte
+	var configJSON, variablesJSON []byte
 	var triggeredBy sql.NullString
 	if err := row.Scan(
-		&d.ID, &d.ServiceID, &d.EnvironmentID, &d.ImageTag, &configJSON,
+		&d.ID, &d.ServiceID, &d.EnvironmentID, &d.ImageTag, &configJSON, &variablesJSON,
 		&d.Status, &triggeredBy, &d.CreatedAt, &d.CompletedAt, &d.Error, &d.Started, &d.Stopping,
 	); err != nil {
 		return nil, err
@@ -54,6 +54,9 @@ func scanDeployment(row rowScanner) (*domain.Deployment, error) {
 	d.TriggeredBy = triggeredBy.String
 	if err := json.Unmarshal(configJSON, &d.ServiceConfigSnapshot); err != nil {
 		return nil, fmt.Errorf("unmarshal config snapshot: %w", err)
+	}
+	if err := json.Unmarshal(variablesJSON, &d.Variables); err != nil {
+		return nil, fmt.Errorf("unmarshal variables: %w", err)
 	}
 	return &d, nil
 }
@@ -141,12 +144,18 @@ func (s *deploymentInfoStore) Create(ctx context.Context, d *domain.Deployment) 
 	if err != nil {
 		return fmt.Errorf("marshal config snapshot: %w", err)
 	}
+	variables := d.Variables
+	if variables == nil {
+		variables = map[string]string{}
+	}
+	// A map of strings always encodes.
+	variablesJSON, _ := json.Marshal(variables)
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO deployments
-		        (id, service_id, environment_id, image_tag, service_config_snapshot,
+		        (id, service_id, environment_id, image_tag, service_config_snapshot, variables,
 		         status, triggered_by, created_at, completed_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		d.ID, d.ServiceID, d.EnvironmentID, d.ImageTag, configJSON,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		d.ID, d.ServiceID, d.EnvironmentID, d.ImageTag, configJSON, variablesJSON,
 		d.Status, d.TriggeredBy, d.CreatedAt, d.CompletedAt,
 	)
 	if err != nil {

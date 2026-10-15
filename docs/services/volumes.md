@@ -14,11 +14,11 @@ volumes:
 |---|---|---|---|
 | `type` | string | yes | Which copies of the service mount the volume, and from where. `shared-single-node` is the only type so far: one volume that every copy of the service mounts, attached to one node at a time. See [What `shared-single-node` means](#what-shared-single-node-means). |
 | `mountPath` | string | yes | Absolute path of the directory inside the container. |
-| `size` | string | yes | How much data you expect: a whole number of `Mi`, `Gi` or `Ti`, e.g. `512Mi` or `10Gi`. It can grow later, but never shrink. |
+| `size` | string | yes | How much data you expect: a whole number of `Mi`, `Gi` or `Ti`, e.g. `512Mi` or `10Gi`. It can grow later, see [Sizes](#sizes). |
 
 The name (`data` above) identifies the data. Renaming a volume gives the service a new, empty one, and the old one is kept (see [Removing a volume](#removing-a-volume)). Names are lowercase letters, digits and `-`, start and end with a letter or digit, and are at most 59 characters.
 
-There is no default size: a volume can't shrink, so a guess that turns out too large can never be taken back. There is no default type either. How copies of a service share their data decides how the service can be scaled and deployed, so `pond.yml` says it rather than Pond assuming it.
+There is no default size: the cluster can't shrink a volume, so a guess that turns out too large is hard to take back. There is no default type either. How copies of a service share their data decides how the service can be scaled and deployed, so `pond.yml` says it rather than Pond assuming it.
 
 ---
 
@@ -82,15 +82,15 @@ Moving an existing volume to another type will mean moving its data: the cluster
 
 ## Sizes
 
-A size can grow but never shrink. Pond rejects a size smaller than the last successful deployment to the same environment used, before anything is deployed. Sizes are compared by value, so `1024Mi` and `1Gi` are the same size.
+A size can grow. The cluster can't shrink a volume it has created, so a smaller size usually fails the deploy. Pond doesn't check this itself: it can't see what was done to the volume in the cluster, such as replacing it with a smaller one. Sizes are compared by value, so `1024Mi` and `1Gi` are the same size.
 
-Growing only works if the cluster's storage supports expanding volumes. Where it doesn't, as with the `local-path` storage of k3s and Rancher Desktop, a larger size fails the deploy. Put the old size back and deploy again: a failed deployment doesn't count towards the shrink check.
+Growing only works if the cluster's storage supports expanding volumes. Where it doesn't, as with the `local-path` storage of k3s and Rancher Desktop, a larger size fails the deploy. Put the old size back and deploy again.
 
 Some storage, `local-path` included, doesn't enforce the size at all. Treat it as the space you ask for, not as a quota.
 
 ## Removing a volume
 
-Removing a volume from `pond.yml` stops mounting it, but **the data stays in the cluster**. Adding a volume with the same name back mounts the old data again. It keeps the size it had, so the cluster rejects a smaller size, even though Pond can't check it in that case.
+Removing a volume from `pond.yml` stops mounting it, but **the data stays in the cluster**. Adding a volume with the same name back mounts the old data again. It keeps the size it had, so the cluster rejects a smaller size.
 
 Pond doesn't delete volume data. That will be an explicit action later; until then, it takes an operator.
 

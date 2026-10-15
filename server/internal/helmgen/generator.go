@@ -1,6 +1,7 @@
 package helmgen
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -67,18 +68,9 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 		vals.Args = append(vals.Args, argEscaper.Replace(arg))
 	}
 
-	gatewayEnabled := cfg.Gateway != nil && cfg.Gateway.HTTP != nil &&
-		cfg.Gateway.HTTP.Enabled != nil && *cfg.Gateway.HTTP.Enabled
-
-	vals.HTTPRoute = HelmHTTPRoute{Enabled: gatewayEnabled}
-	if gatewayEnabled {
-		hostname := ""
-		if cfg.Gateway.HTTP.Hostname != nil {
-			hostname = *cfg.Gateway.HTTP.Hostname
-		} else if env != nil && env.DefaultIngressBaseHost != "" {
-			hostname = fmt.Sprintf("%s.%s", cfg.Name, env.DefaultIngressBaseHost)
-		}
-		if hostname != "" {
+	vals.HTTPRoute = HelmHTTPRoute{Enabled: gatewayEnabled(cfg)}
+	if vals.HTTPRoute.Enabled {
+		if hostname := GatewayHostname(cfg, env); hostname != "" {
 			vals.HTTPRoute.Hostnames = []string{hostname}
 		}
 
@@ -130,8 +122,46 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 	}
 
 	addVolumes(vals, cfg)
+	addConfigChecksum(vals)
 
 	return vals, nil
+}
+
+func gatewayEnabled(cfg *serviceconfig.ServiceConfig) bool {
+	return cfg.Gateway != nil && cfg.Gateway.HTTP != nil &&
+		cfg.Gateway.HTTP.Enabled != nil && *cfg.Gateway.HTTP.Enabled
+}
+
+// GatewayHostname is the hostname the service's route matches: the one
+// pond.yml sets, else <name>.<environment base host>. It is "" when the
+// gateway is disabled or neither is set.
+func GatewayHostname(cfg *serviceconfig.ServiceConfig, env *domain.Environment) string {
+	switch {
+	case !gatewayEnabled(cfg):
+		return ""
+	case cfg.Gateway.HTTP.Hostname != nil:
+		return *cfg.Gateway.HTTP.Hostname
+	case env != nil && env.DefaultIngressBaseHost != "":
+		return cfg.Name + "." + env.DefaultIngressBaseHost
+	}
+	return ""
+}
+
+// addConfigChecksum rolls the pods when env or a config file changes: a
+// changed Secret alone never reaches a running pod, least of all via subPath.
+func addConfigChecksum(vals *HelmValues) {
+	if len(vals.Env) == 0 && len(vals.Configs) == 0 {
+		return
+	}
+	// Map keys encode sorted and Configs is in name order, so the sum is stable.
+	data, _ := json.Marshal(struct {
+		Env     map[string]string
+		Configs []HelmConfig
+	}{vals.Env, vals.Configs})
+	if vals.PodAnnotations == nil {
+		vals.PodAnnotations = make(map[string]string)
+	}
+	vals.PodAnnotations["checksum/config"] = fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
 // argEscaper doubles every $ so arguments reach the app verbatim: Kubernetes

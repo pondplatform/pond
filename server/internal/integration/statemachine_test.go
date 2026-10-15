@@ -95,7 +95,7 @@ func TestStateMachine_RenderFailureAfterDepsFails(t *testing.T) {
 	h.StartFakeAgent(ctx, t, scenario.AgentToken, TofuOutputBehavior(PostgresOutput))
 
 	cfg := WithConfigValues(ServiceConfigWithDep("test-service"), map[string]any{
-		"db_user": "{{postgres.username}}",
+		"db_user": "{{dependencies.postgres.username}}",
 	})
 	req := SubmitRequest(scenario, cfg, "v1.0.0")
 	req.Dependencies = managedPostgres
@@ -105,8 +105,8 @@ func TestStateMachine_RenderFailureAfterDepsFails(t *testing.T) {
 	if got := field(body, "status"); got != "failed" {
 		t.Fatalf("expected status failed, got %q\n%s", got, describeDeployment(h.DB, id))
 	}
-	if errMsg := field(body, "error"); !strings.Contains(errMsg, "postgres.username") {
-		t.Errorf("expected the error to name postgres.username, got %q", errMsg)
+	if errMsg := field(body, "error"); !strings.Contains(errMsg, "dependencies.postgres.username") {
+		t.Errorf("expected the error to name dependencies.postgres.username, got %q", errMsg)
 	}
 	if n := countCommands(t, h.DB, id, wire.CommandHelmUpgrade); n != 0 {
 		t.Errorf("expected no helm.upgrade command, got %d\n%s", n, describeDeployment(h.DB, id))

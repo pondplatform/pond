@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	shared "github.com/pondplatform/pond/shared/server/api"
+	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
 func countDeployments(t *testing.T, h *TestHarness, projectID uuid.UUID) int {
@@ -67,6 +68,47 @@ func TestSubmit_PreviousInputIsNotReused(t *testing.T) {
 	}
 }
 
+// TestSubmit_UnsafeCommandIsRejected checks that a command which would expose
+// a secret in the pod spec, or clear the image's command, is refused and
+// writes nothing.
+func TestSubmit_UnsafeCommandIsRejected(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	h := NewTestHarness(t, testConnStr)
+	scenario := BuildScenario(ctx, t, h)
+
+	for name, tc := range map[string]struct {
+		change func(req *shared.SubmitRequest)
+		want   string
+	}{
+		"a sensitive output": {
+			change: func(req *shared.SubmitRequest) {
+				req.OverridableConfig.Dependencies = map[string]serviceconfig.DependencyDeclaration{"db": {Type: "postgres"}}
+				req.OverridableConfig.Command = []string{"nginx", "-g", "daemon off;", "{{dependencies.db.password}}"}
+				req.Dependencies = map[string]shared.DependencyInput{"db": {Managed: true, Values: map[string]any{"instances": 1}}}
+			},
+			want: "{{dependencies.db.password}} is sensitive",
+		},
+		"an empty command": {
+			change: func(req *shared.SubmitRequest) { req.OverridableConfig.Command = []string{} },
+			want:   "must not be empty",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := SubmitFileRequest(t, scenario, "command/pond.yml")
+			tc.change(&req)
+			_, err := h.Client().SubmitDeployment(ctx, req)
+			if err == nil || !strings.Contains(err.Error(), "status 422") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected a 422 containing %q, got %v", tc.want, err)
+			}
+			if n := countDeployments(t, h, scenario.ProjectID); n != 0 {
+				t.Errorf("expected no deployment to be written, got %d", n)
+			}
+		})
+	}
+}
+
 // TestSubmit_UnrenderableConfigIsRejected checks that a config that cannot be
 // rendered from an unmanaged dependency's values is refused at submit, since
 // nothing has to run before it is known.
@@ -78,14 +120,14 @@ func TestSubmit_UnrenderableConfigIsRejected(t *testing.T) {
 	scenario := BuildScenario(ctx, t, h)
 
 	cfg := WithConfigValues(ServiceConfigWithDeps("test-service", map[string]string{"api": "http-service"}), map[string]any{
-		"API_TOKEN": "{{api.token}}",
+		"API_TOKEN": "{{dependencies.api.token}}",
 	})
 	req := SubmitRequest(scenario, cfg, "v1.0.0")
 	req.Dependencies = map[string]shared.DependencyInput{"api": {Managed: false, Values: map[string]any{"url": "http://api"}}}
 
 	_, err := h.Client().SubmitDeployment(ctx, req)
-	if err == nil || !strings.Contains(err.Error(), "status 422") || !strings.Contains(err.Error(), "api.token") {
-		t.Fatalf("expected a 422 naming api.token, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "status 422") || !strings.Contains(err.Error(), "dependencies.api.token") {
+		t.Fatalf("expected a 422 naming dependencies.api.token, got %v", err)
 	}
 	if n := countDeployments(t, h, scenario.ProjectID); n != 0 {
 		t.Errorf("expected no deployment to be written, got %d", n)

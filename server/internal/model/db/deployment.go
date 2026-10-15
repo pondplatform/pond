@@ -30,6 +30,8 @@ type Deployment struct {
 	CreatedAt             time.Time                   `json:"createdAt"`
 	CompletedAt           *time.Time                  `json:"completedAt"`
 	Error                 *string                     `json:"error,omitempty"`
+	// Variables include secret values, so they are never encoded.
+	Variables map[string]string `json:"-"`
 	// Started and Stopping are computed, not stored. Started: an agent has
 	// picked up one of the deployment's commands. Stopping: an agent is still
 	// running one, though the deployment may already have ended.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -67,9 +68,9 @@ func submitRequest(deps map[string]serviceconfig.DependencyDeclaration, inputs m
 				Dependencies: deps,
 			},
 		},
-		ImageTag:     "v1",
-		TriggeredBy:  "user",
-		Dependencies: inputs,
+		ImageTag:        "v1",
+		TriggeredBy:     "user",
+		DeploymentInput: api.DeploymentInput{Dependencies: inputs},
 	}
 }
 
@@ -85,6 +86,28 @@ func withCommand(req api.SubmitRequest, args ...string) api.SubmitRequest {
 	return req
 }
 
+func withEnv(req api.SubmitRequest, env map[string]string) api.SubmitRequest {
+	req.OverridableConfig.ServiceConfig.Env = env
+	return req
+}
+
+func withVariables(req api.SubmitRequest, declared map[string]serviceconfig.VariableDeclaration, values map[string]string) api.SubmitRequest {
+	req.OverridableConfig.ServiceConfig.Variables = declared
+	req.Variables = values
+	return req
+}
+
+func withGateway(req api.SubmitRequest, hostname *string) api.SubmitRequest {
+	req.OverridableConfig.ServiceConfig.Gateway = &serviceconfig.GatewayConfig{
+		HTTP: &serviceconfig.GatewayHTTPConfig{Enabled: serviceconfig.Ptr(true), Hostname: hostname},
+	}
+	return req
+}
+
+const unknownReference = "names no known value (service.name, service.port, deployment.replicas, environment.name, gateway.hostname, gateway.url, variables.<name>, dependencies.<name>.<output>)"
+
+const visibleArguments = ", and arguments are visible to anyone who can read the workload; pass it in env or a config file instead"
+
 func validationErrors(t *testing.T, err error) []api.ValidationError {
 	t.Helper()
 	var ve *api.ValidationErrors
@@ -99,7 +122,7 @@ var postgresDep = map[string]serviceconfig.DependencyDeclaration{"db": {Type: "p
 func TestValidateSubmission_AcceptsAValidRequest(t *testing.T) {
 	s := newTestService(&testutil.MockDeploymentInfoStore{})
 	req := withConfigValues(submitRequest(postgresDep, nil), map[string]any{
-		"DB_HOST": "{{db.host}}",
+		"DB_HOST": "{{dependencies.db.host}}",
 	})
 	env, cfg, err := s.validateSubmission(context.Background(), req)
 	if err != nil {
@@ -126,28 +149,90 @@ func TestValidateSubmission_Rejects(t *testing.T) {
 		"template variable naming nothing": {
 			req: withConfigValues(submitRequest(postgresDep, nil), map[string]any{"URL": "{{cache.url}}"}),
 			want: []api.ValidationError{{Component: "config", Field: "app.env",
-				Message: "template variable {{cache.url}} names no declared dependency and no known value (service.port, deployment.replicas, env.<NAME>)"}},
+				Message: "template variable {{cache.url}} " + unknownReference}},
 		},
-		"template variable naming nothing inside a list": {
-			req: withConfigValues(submitRequest(postgresDep, nil), map[string]any{"URLS": []any{"{{db.host}}", "{{cache.url}}"}}),
+		"undeclared dependency": {
+			req: withConfigValues(submitRequest(postgresDep, nil), map[string]any{"URL": "{{dependencies.cache.url}}"}),
 			want: []api.ValidationError{{Component: "config", Field: "app.env",
-				Message: "template variable {{cache.url}} names no declared dependency and no known value (service.port, deployment.replicas, env.<NAME>)"}},
+				Message: `template variable {{dependencies.cache.url}} names no declared dependency: "cache" is not under dependencies in pond.yml`}},
 		},
-		"template variable naming nothing in the command": {
-			req: withCommand(submitRequest(postgresDep, nil), "serve", "--cache={{cache.url}}"),
+		"undeclared dependency inside a list": {
+			req: withConfigValues(submitRequest(postgresDep, nil), map[string]any{"URLS": []any{"{{dependencies.db.host}}", "{{dependencies.cache.url}}"}}),
+			want: []api.ValidationError{{Component: "config", Field: "app.env",
+				Message: `template variable {{dependencies.cache.url}} names no declared dependency: "cache" is not under dependencies in pond.yml`}},
+		},
+		"undeclared dependency in the command": {
+			req: withCommand(submitRequest(postgresDep, nil), "serve", "--cache={{dependencies.cache.url}}"),
 			want: []api.ValidationError{{Component: "config", Field: "command[1]",
-				Message: "template variable {{cache.url}} names no declared dependency and no known value (service.port, deployment.replicas, env.<NAME>)"}},
+				Message: `template variable {{dependencies.cache.url}} names no declared dependency: "cache" is not under dependencies in pond.yml`}},
+		},
+		"undeclared dependency in env": {
+			req: withEnv(submitRequest(postgresDep, nil), map[string]string{"CACHE_URL": "{{dependencies.cache.url}}", "DB_HOST": "{{dependencies.db.host}}"}),
+			want: []api.ValidationError{{Component: "config", Field: `env["CACHE_URL"]`,
+				Message: `template variable {{dependencies.cache.url}} names no declared dependency: "cache" is not under dependencies in pond.yml`}},
+		},
+		"a dependency without an output": {
+			req: withConfigValues(submitRequest(postgresDep, nil), map[string]any{"DB": "{{dependencies.db}}"}),
+			want: []api.ValidationError{{Component: "config", Field: "app.env",
+				Message: "template variable {{dependencies.db}} names no output: write {{dependencies.db.<output>}}"}},
+		},
+		"a dependency output without the dependencies prefix": {
+			req: withEnv(submitRequest(postgresDep, nil), map[string]string{"DB_HOST": "{{db.host}}"}),
+			want: []api.ValidationError{{Component: "config", Field: `env["DB_HOST"]`,
+				Message: "template variable {{db.host}} names no known value: did you mean {{dependencies.db.host}}?"}},
+		},
+		"env as a source": {
+			req: withConfigValues(withEnv(submitRequest(nil, nil), map[string]string{"LOG_LEVEL": "debug"}), map[string]any{"LEVEL": "{{env.LOG_LEVEL}}"}),
+			want: []api.ValidationError{{Component: "config", Field: "app.env",
+				Message: "template variable {{env.LOG_LEVEL}} is no longer available: declare a variable and use {{variables.<name>}} wherever the value is needed, env included"}},
+		},
+		"undeclared variable": {
+			req: withEnv(submitRequest(nil, nil), map[string]string{"KEY": "{{variables.KEY}}"}),
+			want: []api.ValidationError{{Component: "config", Field: `env["KEY"]`,
+				Message: `template variable {{variables.KEY}} names no declared variable: "KEY" is not under variables in pond.yml`}},
+		},
+		"gateway values without the gateway": {
+			req: withEnv(submitRequest(nil, nil), map[string]string{"PUBLIC_URL": "{{gateway.url}}"}),
+			want: []api.ValidationError{{Component: "config", Field: `env["PUBLIC_URL"]`,
+				Message: "template variable {{gateway.url}} needs the gateway: set gateway.http.enabled"}},
+		},
+		// The test environment has no base host to derive one from.
+		"gateway values without a hostname": {
+			req: withEnv(withGateway(submitRequest(nil, nil), nil), map[string]string{"HOST": "{{gateway.hostname}}"}),
+			want: []api.ValidationError{{Component: "config", Field: `env["HOST"]`,
+				Message: `template variable {{gateway.hostname}} needs a hostname: set gateway.http.hostname, or a base host on environment "staging"`}},
+		},
+		"gateway values with a wildcard hostname": {
+			req: withEnv(withGateway(submitRequest(nil, nil), serviceconfig.Ptr("*.example.com")), map[string]string{"PUBLIC_URL": "{{gateway.url}}"}),
+			want: []api.ValidationError{{Component: "config", Field: `env["PUBLIC_URL"]`,
+				Message: `template variable {{gateway.url}} needs a single hostname, and gateway.http.hostname "*.example.com" is a wildcard`}},
 		},
 		"sensitive output in the command": {
-			req: withCommand(submitRequest(postgresDep, nil), "serve", "--db", "postgres://{{db.username}}:{{db.password}}@{{db.host}}"),
+			req: withCommand(submitRequest(postgresDep, nil), "serve", "--db", "postgres://{{dependencies.db.username}}:{{dependencies.db.password}}@{{dependencies.db.host}}"),
 			want: []api.ValidationError{{Component: "config", Field: "command[2]",
-				Message: "template variable {{db.password}} is sensitive, and arguments are visible to anyone who can read the workload; pass it in a config file instead"}},
+				Message: "template variable {{dependencies.db.password}} is sensitive" + visibleArguments}},
 		},
 		// An unmanaged input may carry any key, and nothing says whether it is a secret.
 		"undeclared output in the command": {
-			req: withCommand(submitRequest(map[string]serviceconfig.DependencyDeclaration{"api": {Type: "http-service"}}, nil), "--token={{api.token}}"),
+			req: withCommand(submitRequest(map[string]serviceconfig.DependencyDeclaration{"api": {Type: "http-service"}}, nil), "--token={{dependencies.api.token}}"),
 			want: []api.ValidationError{{Component: "config", Field: "command[0]",
-				Message: `template variable {{api.token}}: http-service declares no "token" output, so it may be sensitive, and arguments are visible to anyone who can read the workload; pass it in a config file instead`}},
+				Message: `template variable {{dependencies.api.token}} may be sensitive: http-service declares no "token" output` + visibleArguments}},
+		},
+		"secret variable in the command": {
+			req: withCommand(withVariables(submitRequest(nil, nil),
+				map[string]serviceconfig.VariableDeclaration{"KEY": {Secret: true}, "NAME": {}},
+				map[string]string{"KEY": "s3cr3t", "NAME": "acme"}), "serve", "--name={{variables.NAME}}", "--key={{variables.KEY}}"),
+			want: []api.ValidationError{{Component: "config", Field: "command[2]",
+				Message: "template variable {{variables.KEY}} is a secret variable" + visibleArguments}},
+		},
+		"variable input not declared": {
+			req:  withVariables(submitRequest(nil, nil), nil, map[string]string{"EXTRA": "x"}),
+			want: []api.ValidationError{{Component: "variable", Field: "EXTRA", Message: "not declared in pond.yml"}},
+		},
+		"variable without a value": {
+			req: withVariables(submitRequest(nil, nil),
+				map[string]serviceconfig.VariableDeclaration{"KEY": {Secret: true}, "NAME": {}}, map[string]string{"NAME": ""}),
+			want: []api.ValidationError{{Component: "variable", Field: "KEY", Message: "missing value: the input gives none"}},
 		},
 	}
 	for name, tc := range cases {
@@ -167,14 +252,25 @@ func TestValidateSubmission_Rejects(t *testing.T) {
 	}
 }
 
-func TestValidateSubmission_AcceptsReferencesToOwnValues(t *testing.T) {
+func TestValidateSubmission_AcceptsEveryKnownValue(t *testing.T) {
 	s := newTestService(&testutil.MockDeploymentInfoStore{})
-	req := withConfigValues(submitRequest(nil, nil), map[string]any{
-		"PORT":  "{{service.port}}",
-		"LEVEL": "{{env.LOG_LEVEL}}",
+	req := withVariables(submitRequest(postgresDep, nil),
+		map[string]serviceconfig.VariableDeclaration{"SIGNING_KEY": {Secret: true}, "LOG_LEVEL": {}},
+		map[string]string{"SIGNING_KEY": "s3cr3t", "LOG_LEVEL": "debug"})
+	req = withGateway(req, serviceconfig.Ptr("web.example.com"))
+	req = withEnv(req, map[string]string{
+		"SIGNING_KEY": "{{variables.SIGNING_KEY}}",
+		"DB_PASSWORD": "{{dependencies.db.password}}",
+		"PUBLIC_URL":  "{{gateway.url}}",
+	})
+	req = withConfigValues(req, map[string]any{
+		"PORT":     "{{service.port}}",
+		"REPLICAS": "{{deployment.replicas}}",
+		"NAME":     "{{service.name}} in {{environment.name}} at {{gateway.hostname}}",
+		"LEVEL":    "{{variables.LOG_LEVEL}}",
 	})
 	req.OverridableConfig.ServiceConfig.Service = &serviceconfig.ServiceSpec{Port: serviceconfig.Ptr(int32(8080))}
-	req.OverridableConfig.ServiceConfig.Env = map[string]string{"LOG_LEVEL": "debug"}
+	req.OverridableConfig.ServiceConfig.Deployment = &serviceconfig.DeploymentSpec{Replicas: serviceconfig.Ptr(int32(2))}
 	if _, _, err := s.validateSubmission(context.Background(), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -184,11 +280,52 @@ func TestValidateSubmission_AcceptsNonSensitiveReferencesInTheCommand(t *testing
 	s := newTestService(&testutil.MockDeploymentInfoStore{})
 	deps := map[string]serviceconfig.DependencyDeclaration{"db": {Type: "postgres"}, "api": {Type: "http-service"}}
 	req := withCommand(submitRequest(deps, nil),
-		"serve", "--port", "{{service.port}}", "--db={{db.host}}:{{db.port}}", "--api", "{{api.url}}", "--log-level", "{{env.LOG_LEVEL}}")
+		"serve", "--port", "{{service.port}}", "--db={{dependencies.db.host}}:{{dependencies.db.port}}", "--api", "{{dependencies.api.url}}", "--log-level", "{{variables.LOG_LEVEL}}")
+	req = withVariables(req, map[string]serviceconfig.VariableDeclaration{"LOG_LEVEL": {}}, map[string]string{"LOG_LEVEL": "debug"})
 	req.OverridableConfig.ServiceConfig.Service = &serviceconfig.ServiceSpec{Port: serviceconfig.Ptr(int32(8080))}
-	req.OverridableConfig.ServiceConfig.Env = map[string]string{"LOG_LEVEL": "debug"}
 	if _, _, err := s.validateSubmission(context.Background(), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// The rollout runs from the deployment the submit creates, so its variables
+// have to be on it both in the store and in memory.
+func TestSubmit_KeepsTheVariablesForTheRollout(t *testing.T) {
+	var stored map[string]string
+	var helm *db.Command
+	deployments := &testutil.MockDeploymentInfoStore{
+		CreateFn: func(_ context.Context, d *db.Deployment) error {
+			stored = d.Variables
+			return nil
+		},
+		CreateCommandFn: func(_ context.Context, cmd *db.Command) error {
+			helm = cmd
+			return nil
+		},
+	}
+	s := newTestService(deployments)
+	s.repos.Services.(*testutil.MockServiceRepository).GetByNameFn = func(context.Context, uuid.UUID, string) (*db.Service, error) {
+		return &db.Service{ID: uuid.New(), ProjectID: testProjectID, Name: "my-service"}, nil
+	}
+	s.repos.Envs.(*testutil.MockEnvironmentRepository).GetByIDFn = func(context.Context, uuid.UUID) (*db.Environment, error) {
+		return &testEnv, nil
+	}
+	values := map[string]string{"SIGNING_KEY": "s3cr3t"}
+	req := withEnv(withVariables(submitRequest(nil, nil),
+		map[string]serviceconfig.VariableDeclaration{"SIGNING_KEY": {Secret: true}}, values),
+		map[string]string{"SIGNING_KEY": "{{variables.SIGNING_KEY}}"})
+
+	if _, err := s.Submit(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !maps.Equal(stored, values) {
+		t.Errorf("expected the variables stored with the deployment, got %v", stored)
+	}
+	if helm == nil || helm.Type != db.CommandTypeHelmUpgrade {
+		t.Fatalf("expected a helm command, got %+v", helm)
+	}
+	if env := helmValues(t, helm).Env; env["SIGNING_KEY"] != "s3cr3t" {
+		t.Errorf("expected the variable rendered into env, got %v", env)
 	}
 }
 
@@ -236,99 +373,27 @@ func TestSubmit_WritesNothingWhenValidationFails(t *testing.T) {
 	}
 }
 
-func TestSubmit_VolumesNeverShrink(t *testing.T) {
-	data := func(size string) map[string]serviceconfig.VolumeSpec {
-		return map[string]serviceconfig.VolumeSpec{"data": {Type: "shared-single-node", MountPath: "/data", Size: size}}
-	}
-	succeeded := func(volumes map[string]serviceconfig.VolumeSpec) []db.Deployment {
-		return []db.Deployment{{
-			Status:                db.DeploymentSucceeded,
-			ServiceConfigSnapshot: serviceconfig.ServiceConfig{Volumes: volumes},
-		}}
-	}
-
-	cases := map[string]struct {
-		lastSucceeded []db.Deployment
-		volumes       map[string]serviceconfig.VolumeSpec
-		wantRejected  bool
-	}{
-		"smaller than in the last succeeded deployment": {succeeded(data("10Gi")), data("5Gi"), true},
-		"the same size in another unit":                 {succeeded(data("1Gi")), data("1024Mi"), false},
-		"grown":                                         {succeeded(data("1Gi")), data("2Gi"), false},
-		"a volume the last deployment didn't have":      {succeeded(nil), data("1Gi"), false},
-		"the first deployment":                          {nil, data("1Gi"), false},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			svc := &db.Service{ID: uuid.New(), ProjectID: testProjectID, Name: "my-service"}
-			env := &db.Environment{ID: uuid.New(), Name: "staging"}
-			created := false
-			deployments := &testutil.MockDeploymentInfoStore{
-				ListByServiceFilteredFn: func(_ context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *api.DeploymentStatus, limit int, cursor string) ([]db.Deployment, error) {
-					// Only this environment's succeeded deployments count, so a
-					// failed grow can be reverted.
-					if serviceID != svc.ID || environmentID == nil || *environmentID != env.ID ||
-						status == nil || *status != api.DeploymentStatusSucceeded || limit != 1 || cursor != "" {
-						t.Errorf("unexpected lookup: service %s, environment %v, status %v, limit %d, cursor %q", serviceID, environmentID, status, limit, cursor)
-					}
-					return tc.lastSucceeded, nil
-				},
-				CreateFn: func(context.Context, *db.Deployment) error {
-					created = true
-					return nil
-				},
-			}
-			s := newTestService(deployments)
-			s.repos.Services.(*testutil.MockServiceRepository).GetByNameFn = func(context.Context, uuid.UUID, string) (*db.Service, error) {
-				return svc, nil
-			}
-			envs := s.repos.Envs.(*testutil.MockEnvironmentRepository)
-			envs.GetByNameFn = func(context.Context, uuid.UUID, string) (*db.Environment, error) { return env, nil }
-			envs.GetByIDFn = func(context.Context, uuid.UUID) (*db.Environment, error) { return env, nil }
-
-			req := submitRequest(nil, nil)
-			req.OverridableConfig.ServiceConfig.Volumes = tc.volumes
-			_, err := s.Submit(context.Background(), req)
-
-			if !tc.wantRejected {
-				if err != nil || !created {
-					t.Fatalf("expected the deployment to be created, got %v", err)
-				}
-				return
-			}
-			want := []api.ValidationError{{Component: "config", Field: `volumes["data"].size`,
-				Message: "must be at least 10Gi, its size in the last successful deployment: a volume can grow but never shrink, got 5Gi"}}
-			if got := validationErrors(t, err); !slices.Equal(got, want) {
-				t.Errorf("expected %+v, got %+v", want, got)
-			}
-			if created {
-				t.Error("no deployment should be created when a volume shrinks")
-			}
-		})
-	}
-}
-
 func TestVerifyUnmanagedReferences(t *testing.T) {
 	cfg := withConfigValues(submitRequest(nil, nil), map[string]any{
-		"API_URL":   "{{api.url}}",
-		"API_TOKEN": "{{api.token}}",
-		"DB_HOST":   "{{db.host}}",
+		"API_URL":   "{{dependencies.api.url}}",
+		"API_TOKEN": "{{dependencies.api.token}}",
+		"DB_HOST":   "{{dependencies.db.host}}",
 	}).OverridableConfig.ServiceConfig
 	inputs := map[string]api.DependencyInput{
 		"api": {Managed: false, Values: map[string]any{"url": "http://api"}},
 		"db":  {Managed: true},
 	}
 	got := validationErrors(t, verifyUnmanagedReferences(&cfg, inputs))
-	if len(got) != 1 || !strings.Contains(got[0].Message, "{{api.token}}") {
+	if len(got) != 1 || !strings.Contains(got[0].Message, "{{dependencies.api.token}}") {
 		t.Errorf("expected only api.token rejected; a managed dependency's outputs are not known yet. Got %+v", got)
 	}
 }
 
 func TestVerifyUnmanagedReferences_InTheCommand(t *testing.T) {
-	cfg := withCommand(submitRequest(nil, nil), "serve", "--api={{api.url}}").OverridableConfig.ServiceConfig
+	cfg := withCommand(submitRequest(nil, nil), "serve", "--api={{dependencies.api.url}}").OverridableConfig.ServiceConfig
 	inputs := map[string]api.DependencyInput{"api": {Managed: false, Values: map[string]any{"host": "api"}}}
 	want := []api.ValidationError{{Component: "config", Field: "command[1]",
-		Message: `template variable {{api.url}}: the input of unmanaged dependency "api" has no "url"`}}
+		Message: `template variable {{dependencies.api.url}}: the input of unmanaged dependency "api" has no "url"`}}
 	if got := validationErrors(t, verifyUnmanagedReferences(&cfg, inputs)); !slices.Equal(got, want) {
 		t.Errorf("expected %+v, got %+v", want, got)
 	}

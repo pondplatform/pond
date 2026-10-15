@@ -195,6 +195,77 @@ func TestGenerator_Generate_GatewayDisabledByDefault(t *testing.T) {
 	}
 }
 
+func TestGatewayHostname(t *testing.T) {
+	gateway := func(enabled *bool, hostname *string) *serviceconfig.GatewayConfig {
+		return &serviceconfig.GatewayConfig{HTTP: &serviceconfig.GatewayHTTPConfig{Enabled: enabled, Hostname: hostname}}
+	}
+	on := serviceconfig.Ptr(true)
+	tests := []struct {
+		name     string
+		gateway  *serviceconfig.GatewayConfig
+		env      *domain.Environment
+		expected string
+	}{
+		{"explicit hostname wins", gateway(on, serviceconfig.Ptr("api.example.com")), &domain.Environment{DefaultIngressBaseHost: "pond.local"}, "api.example.com"},
+		{"derived from the base host", gateway(on, nil), &domain.Environment{DefaultIngressBaseHost: "pond.local"}, "web.pond.local"},
+		{"no base host", gateway(on, nil), &domain.Environment{}, ""},
+		{"no environment", gateway(on, nil), nil, ""},
+		{"gateway unset", nil, &domain.Environment{DefaultIngressBaseHost: "pond.local"}, ""},
+		{"enabled unset", gateway(nil, serviceconfig.Ptr("api.example.com")), &domain.Environment{}, ""},
+		{"disabled", gateway(serviceconfig.Ptr(false), serviceconfig.Ptr("api.example.com")), &domain.Environment{}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GatewayHostname(&serviceconfig.ServiceConfig{Name: "web", Gateway: tt.gateway}, tt.env)
+			if got != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, got)
+			}
+		})
+	}
+}
+
+// Env and config files reach the pod from Secrets, so only the checksum
+// annotation tells Kubernetes the pod template changed.
+func TestGenerator_Generate_ConfigChecksum(t *testing.T) {
+	checksum := func(env map[string]string, configValue string) string {
+		t.Helper()
+		cfg := &serviceconfig.ServiceConfig{Name: "web", Env: env}
+		if configValue != "" {
+			cfg.Configs = map[string]serviceconfig.ConfigFileSpec{
+				"a.yaml": {Format: "yaml", MountPath: "/etc/a.yaml", Values: map[string]any{"key": configValue}},
+				"b.json": {Format: "json", MountPath: "/etc/b.json", Values: map[string]any{"x": 1, "y": 2}},
+			}
+		}
+		vals, err := NewGenerator().Generate(cfg, &domain.Environment{}, "")
+		if err != nil {
+			t.Fatalf("Generate failed: %v", err)
+		}
+		return vals.PodAnnotations["checksum/config"]
+	}
+
+	base := checksum(map[string]string{"A": "1", "B": "2", "C": "3"}, "v1")
+	if base == "" {
+		t.Fatal("expected a checksum annotation")
+	}
+	for range 20 {
+		if got := checksum(map[string]string{"C": "3", "B": "2", "A": "1"}, "v1"); got != base {
+			t.Fatalf("expected a stable checksum %s, got %s", base, got)
+		}
+	}
+	if checksum(map[string]string{"A": "1", "B": "2", "C": "changed"}, "v1") == base {
+		t.Error("expected an env change to change the checksum")
+	}
+	if checksum(map[string]string{"A": "1", "B": "2", "C": "3"}, "v2") == base {
+		t.Error("expected a config file change to change the checksum")
+	}
+	if checksum(nil, "v1") == "" || checksum(map[string]string{"A": "1"}, "") == "" {
+		t.Error("expected a checksum with only config files or only env")
+	}
+	if got := checksum(nil, ""); got != "" {
+		t.Errorf("expected no checksum without env or config files, got %s", got)
+	}
+}
+
 // Regression guard: an unset replica count must be omitted from the values so
 // the chart default of 1 applies, rather than pinning the deployment to zero.
 func TestGenerator_Generate_OmitsUnsetReplicaCountAndPort(t *testing.T) {

@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -43,6 +44,18 @@ func TestParse_RejectsUnknownFields(t *testing.T) {
 			name: "volumes in an override",
 			yaml: "version: 1\nname: api\noverrides:\n  production:\n    volumes:\n      data:\n        type: shared-single-node\n        mountPath: /data\n        size: 1Gi\n",
 			want: `pond.yml:5: unknown field "volumes"`,
+		},
+		{
+			// The input file already gives each environment its own values.
+			name: "variables in an override",
+			yaml: "version: 1\nname: api\noverrides:\n  production:\n    variables:\n      KEY: {}\n",
+			want: `pond.yml:5: unknown field "variables"`,
+		},
+		{
+			// A declaration says only whether the value is secret; the value is the input's.
+			name: "inside a variable",
+			yaml: "version: 1\nname: api\nvariables:\n  KEY:\n    secret: true\n    default: x\n",
+			want: `pond.yml:6: unknown field "default"`,
 		},
 		{
 			name: "inside a volume",
@@ -119,6 +132,28 @@ volumes:
 	want := serviceconfig.VolumeSpec{Type: "shared-single-node", MountPath: "/data", Size: "10Gi"}
 	if got := cfg.Volumes["data"]; got != want {
 		t.Errorf("want %+v, got %+v", want, got)
+	}
+}
+
+func TestParse_Variables(t *testing.T) {
+	yaml := `version: 1
+name: api
+variables:
+  SIGNING_KEY: { secret: true }
+  PUBLIC_NAME: {}
+  BARE:
+`
+	cfg, err := config.NewParser().Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	want := map[string]serviceconfig.VariableDeclaration{
+		"SIGNING_KEY": {Secret: true},
+		"PUBLIC_NAME": {},
+		"BARE":        {},
+	}
+	if !maps.Equal(cfg.Variables, want) {
+		t.Errorf("want %+v, got %+v", want, cfg.Variables)
 	}
 }
 

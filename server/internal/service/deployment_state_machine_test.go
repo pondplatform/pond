@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -166,8 +167,22 @@ func reasonOf(d *db.Deployment) string {
 	return *d.Error
 }
 
+// helmValues decodes the values a helm.upgrade command carries.
+func helmValues(t *testing.T, cmd *db.Command) helmgen.HelmValues {
+	t.Helper()
+	var payload wire.HelmUpgradePayload
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	var values helmgen.HelmValues
+	if err := yaml.Unmarshal(payload.Values, &values); err != nil {
+		t.Fatalf("decode helm values %s: %v", payload.Values, err)
+	}
+	return values
+}
+
 func TestAdvance_DependenciesReadyStartsTheRollout(t *testing.T) {
-	f := newMachineFixture(map[string]any{"DB_HOST": "{{db.host}}"}).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal"}`, "")
+	f := newMachineFixture(map[string]any{"DB_HOST": "{{dependencies.db.host}}"}).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal"}`, "")
 	w := f.advance(t)
 
 	if w.saved != nil || len(w.created) != 1 {
@@ -177,17 +192,9 @@ func TestAdvance_DependenciesReadyStartsTheRollout(t *testing.T) {
 	if helm.Type != db.CommandTypeHelmUpgrade || helm.Status != db.CommandStatusQueued || helm.ClusterID != testEnv.ClusterID {
 		t.Fatalf("expected a queued helm command for the environment's cluster, got %+v", helm)
 	}
-	var payload wire.HelmUpgradePayload
-	if err := json.Unmarshal(helm.Payload, &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	var values struct {
-		Configs []struct {
-			Data string `yaml:"data"`
-		} `yaml:"configs"`
-	}
-	if err := yaml.Unmarshal(payload.Values, &values); err != nil || len(values.Configs) != 1 {
-		t.Fatalf("decode helm values %s: %v", payload.Values, err)
+	values := helmValues(t, helm)
+	if len(values.Configs) != 1 {
+		t.Fatalf("expected one config file, got %+v", values.Configs)
 	}
 	if file, _ := base64.StdEncoding.DecodeString(values.Configs[0].Data); !strings.Contains(string(file), "db.internal") {
 		t.Errorf("expected the dependency's output in the rendered config, got %q", file)
@@ -196,30 +203,56 @@ func TestAdvance_DependenciesReadyStartsTheRollout(t *testing.T) {
 
 func TestAdvance_TheRolloutRendersTheCommand(t *testing.T) {
 	f := newMachineFixture(nil).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal","port":5432}`, "")
-	f.deployment.ServiceConfigSnapshot.Command = []string{"serve", "--db={{db.host}}:{{db.port}}"}
+	f.deployment.ServiceConfigSnapshot.Command = []string{"serve", "--db={{dependencies.db.host}}:{{dependencies.db.port}}"}
 	w := f.advance(t)
 
 	if len(w.created) != 1 {
 		t.Fatalf("expected a helm command, got saved=%+v created=%+v", w.saved, w.created)
 	}
-	var payload wire.HelmUpgradePayload
-	if err := json.Unmarshal(w.created[0].Payload, &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+	if want, got := []string{"serve", "--db=db.internal:5432"}, helmValues(t, w.created[0]).Args; !slices.Equal(got, want) {
+		t.Errorf("expected args %q, got %q", want, got)
 	}
-	var values struct {
-		Args []string `yaml:"args"`
+}
+
+func TestAdvance_TheRolloutRendersEnvAndVariables(t *testing.T) {
+	f := newMachineFixture(map[string]any{"NAME": "{{variables.PUBLIC_NAME}}"}).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal"}`, "")
+	f.deployment.Variables = map[string]string{"PUBLIC_NAME": "Acme", "SIGNING_KEY": "s3cr3t"}
+	f.deployment.ServiceConfigSnapshot.Env = map[string]string{
+		"DB_HOST":     "{{dependencies.db.host}}",
+		"SIGNING_KEY": "{{variables.SIGNING_KEY}}",
+		"WHERE":       "{{service.name}} in {{environment.name}}",
+		"LOG_LEVEL":   "info",
 	}
-	if err := yaml.Unmarshal(payload.Values, &values); err != nil {
-		t.Fatalf("decode helm values %s: %v", payload.Values, err)
+	w := f.advance(t)
+
+	if len(w.created) != 1 {
+		t.Fatalf("expected a helm command, got saved=%+v created=%+v", w.saved, w.created)
 	}
-	if want := []string{"serve", "--db=db.internal:5432"}; !slices.Equal(values.Args, want) {
-		t.Errorf("expected args %q, got %q", want, values.Args)
+	values := helmValues(t, w.created[0])
+	want := map[string]string{"DB_HOST": "db.internal", "SIGNING_KEY": "s3cr3t", "WHERE": "svc in staging", "LOG_LEVEL": "info"}
+	if !maps.Equal(values.Env, want) {
+		t.Errorf("expected env %v, got %v", want, values.Env)
+	}
+	if file, _ := base64.StdEncoding.DecodeString(values.Configs[0].Data); string(file) != "NAME='Acme'\n" {
+		t.Errorf("expected the variable in the rendered config, got %q", file)
+	}
+	if values.PodAnnotations["checksum/config"] == "" {
+		t.Errorf("expected a checksum annotation so the pods roll, got %v", values.PodAnnotations)
+	}
+}
+
+func TestAdvance_AnUnrenderableEnvFailsTheDeployment(t *testing.T) {
+	f := newMachineFixture(nil).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal"}`, "")
+	f.deployment.ServiceConfigSnapshot.Env = map[string]string{"DB_USER": "{{dependencies.db.username}}"}
+	w := f.advance(t)
+	if w.saved == nil || w.saved.Status != db.DeploymentFailed || !strings.Contains(reasonOf(w.saved), `env["DB_USER"]`) || len(w.created) != 0 {
+		t.Errorf("expected failed naming env[\"DB_USER\"] and no command, got saved=%+v created=%+v", w.saved, w.created)
 	}
 }
 
 func TestAdvance_AnUnrenderableCommandFailsTheDeployment(t *testing.T) {
 	f := newMachineFixture(nil).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal"}`, "")
-	f.deployment.ServiceConfigSnapshot.Command = []string{"serve", "--user={{db.username}}"}
+	f.deployment.ServiceConfigSnapshot.Command = []string{"serve", "--user={{dependencies.db.username}}"}
 	w := f.advance(t)
 	if w.saved == nil || w.saved.Status != db.DeploymentFailed || !strings.Contains(reasonOf(w.saved), "command[1]") || len(w.created) != 0 {
 		t.Errorf("expected failed naming command[1] and no command, got saved=%+v created=%+v", w.saved, w.created)
@@ -227,7 +260,7 @@ func TestAdvance_AnUnrenderableCommandFailsTheDeployment(t *testing.T) {
 }
 
 func TestAdvance_AnUnrenderableRolloutFailsTheDeployment(t *testing.T) {
-	f := newMachineFixture(map[string]any{"DB_USER": "{{db.username}}"}).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal"}`, "")
+	f := newMachineFixture(map[string]any{"DB_USER": "{{dependencies.db.username}}"}).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal"}`, "")
 	w := f.advance(t)
 	if w.saved == nil || w.saved.Status != db.DeploymentFailed || !strings.Contains(reasonOf(w.saved), "db.username") || len(w.created) != 0 {
 		t.Errorf("expected failed naming db.username and no command, got saved=%+v created=%+v", w.saved, w.created)

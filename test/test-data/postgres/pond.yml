@@ -5,17 +5,32 @@ image: ghcr.io/pondplatform/sample-postgres-todo
 service:
   port: 3000
 
+# The app connects to the database and migrates before it listens, and /
+# queries it, so the deployment only succeeds once the rendered credentials work.
+deployment:
+  management:
+    readinessProbe:
+      httpGet:
+        path: /
+      periodSeconds: 2
+
 dependencies:
   db:
     type: postgres
+
+# The same values as the .env file, so the app is unaffected; they exercise
+# templated env, which keeps the password out of the pod spec.
+env:
+  DB_HOST: "{{dependencies.db.host}}"
+  DB_PASSWORD: "{{dependencies.db.password}}"
 
 configs:
   .env:
     format: .env
     mountPath: /usr/src/app/.env
     values:
-      DB_HOST: "{{db.host}}"
-      DB_PORT: "{{db.port}}"
-      DB_USER: "{{db.username}}"
-      DB_PASSWORD: "{{db.password}}"
-      DB_DATABASE: "{{db.database}}"
+      DB_HOST: "{{dependencies.db.host}}"
+      DB_PORT: "{{dependencies.db.port}}"
+      DB_USER: "{{dependencies.db.username}}"
+      DB_PASSWORD: "{{dependencies.db.password}}"
+      DB_DATABASE: "{{dependencies.db.database}}"

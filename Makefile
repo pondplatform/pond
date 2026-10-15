@@ -73,6 +73,15 @@ helm-lint:
 	! helm template ci infra/agent/helm-charts/base-service -s templates/deployment.yaml | grep -q 'args:'
 	helm template ci infra/agent/helm-charts/base-service -s templates/deployment.yaml \
 		--set 'args[0]=serve' --set-string 'args[1]=8080' | grep -A2 'args:' | grep -q '"8080"'
+	@# env reaches the container from a Secret, so its values stay out of the pod spec.
+	helm template ci infra/agent/helm-charts/base-service -s templates/deployment.yaml --set env.FOO=bar \
+		| grep -A2 'envFrom:' | grep -q 'name: ci-base-service-env'
+	! helm template ci infra/agent/helm-charts/base-service -s templates/deployment.yaml --set env.FOO=bar | grep -q 'value: "bar"'
+	helm template ci infra/agent/helm-charts/base-service -s templates/env-secret.yaml --set env.FOO=bar | grep -q '"FOO": "YmFy"'
+	! helm template ci infra/agent/helm-charts/base-service | grep -qE 'envFrom|kind: Secret'
+	@# env beats envFrom, so a blank KUBERNETES_* entry would hide the user's own value.
+	! helm template ci infra/agent/helm-charts/base-service -s templates/deployment.yaml \
+		--set env.KUBERNETES_SERVICE_HOST=x | grep -q 'name: KUBERNETES_SERVICE_HOST'
 	! helm template ci infra/agent/helm-charts/base-service | grep -q PersistentVolumeClaim
 	helm lint infra/agent/helm-charts/base-service --set strategy.type=Recreate \
 		--set 'persistentVolumeClaims[0].name=data' --set 'persistentVolumeClaims[0].size=1Gi'

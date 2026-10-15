@@ -218,6 +218,17 @@ fi
 info "Project ID: $PROJECT_ID"
 
 step "Creating environment 'staging'"
+# The bundled server database is wiped by a pod restart but e2e-staging is not, and
+# a new environment has no OpenTofu state, so its deploys would collide with leftovers.
+EXISTING_ENVS=$(curl_api "GET /projects/$PROJECT_ID/environments" \
+  "$SERVER_URL/api/v1/projects/$PROJECT_ID/environments" \
+  -H "Authorization: Bearer $POND_TOKEN")
+if ! jq -e '.items[] | select(.name=="staging")' <<<"$EXISTING_ENVS" >/dev/null \
+    && kubectl get namespace e2e-staging --context "$CONTEXT" &>/dev/null; then
+  info "The server has no 'staging' environment, so e2e-staging holds an earlier server's leftovers — deleting it"
+  kubectl delete namespace e2e-staging --context "$CONTEXT" --timeout 3m \
+    || die "failed to delete namespace 'e2e-staging'"
+fi
 kubectl create namespace "e2e-staging" --dry-run=client -o yaml | kubectl apply -f -
 ENV_HTTP=$(curl -s -o /tmp/pond_env_body -w "%{http_code}" \
   -X POST "$SERVER_URL/api/v1/projects/$PROJECT_ID/environments" \

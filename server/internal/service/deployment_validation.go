@@ -43,7 +43,13 @@ func (s *deploymentService) validateSubmission(ctx context.Context, req api.Subm
 		}
 	}
 	addUndeclaredInputErrors(&errs, svcConfig.Dependencies, req.Dependencies)
-	addTemplateReferenceErrors(&errs, svcConfig)
+	addVariableInputErrors(&errs, svcConfig.Variables, req.Variables)
+	// Values don't matter here, only which variables exist.
+	placeholders := make(map[string]string, len(svcConfig.Variables))
+	for name := range svcConfig.Variables {
+		placeholders[name] = ""
+	}
+	addTemplateReferenceErrors(&errs, svcConfig, newTemplateContext(svcConfig, env, placeholders))
 	s.addCommandReferenceErrors(&errs, svcConfig)
 
 	if errs.HasErrors() {
@@ -87,6 +93,19 @@ func addUndeclaredInputErrors(errs *api.ValidationErrors, declared map[string]se
 	}
 }
 
+func addVariableInputErrors(errs *api.ValidationErrors, declared map[string]serviceconfig.VariableDeclaration, inputs map[string]string) {
+	for _, name := range slices.Sorted(maps.Keys(inputs)) {
+		if _, ok := declared[name]; !ok {
+			errs.Add("variable", name, "not declared in pond.yml")
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(declared)) {
+		if _, ok := inputs[name]; !ok {
+			errs.Add("variable", name, "missing value: the input gives none")
+		}
+	}
+}
+
 // templateSite is a field the renderer substitutes into, named as validation
 // errors report it, with the {{var}}s it references.
 type templateSite struct {
@@ -99,6 +118,9 @@ func templateSites(cfg *serviceconfig.ServiceConfig) []templateSite {
 	for _, file := range slices.Sorted(maps.Keys(cfg.Configs)) {
 		sites = append(sites, templateSite{file, templateReferences(cfg.Configs[file].Values)})
 	}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Env)) {
+		sites = append(sites, templateSite{fmt.Sprintf("env[%q]", name), templateReferences(cfg.Env[name])})
+	}
 	for i, arg := range cfg.Command {
 		sites = append(sites, templateSite{commandField(i), templateReferences(arg)})
 	}
@@ -107,65 +129,118 @@ func templateSites(cfg *serviceconfig.ServiceConfig) []templateSite {
 
 func commandField(i int) string { return fmt.Sprintf("command[%d]", i) }
 
-// addTemplateReferenceErrors rejects a {{var}} that could never resolve: one
-// that names neither a declared dependency nor a value the service config
-// itself provides. A dependency's outputs are only known once it is
+// addTemplateReferenceErrors rejects a {{var}} that could never resolve
+// against known. A dependency's outputs are only known once it is
 // provisioned, so references into them are checked at rollout.
-func addTemplateReferenceErrors(errs *api.ValidationErrors, cfg *serviceconfig.ServiceConfig) {
-	own := buildLookupTable(nil, cfg)
+func addTemplateReferenceErrors(errs *api.ValidationErrors, cfg *serviceconfig.ServiceConfig, known templateContext) {
 	for _, site := range templateSites(cfg) {
 		for _, ref := range site.refs {
-			if _, ok := own[ref]; ok {
-				continue
+			if problem := referenceProblem(cfg, known, ref); problem != "" {
+				errs.Add("config", site.field, fmt.Sprintf("template variable {{%s}} %s", ref, problem))
 			}
-			if _, ok := cfg.Dependencies[strings.SplitN(ref, ".", 2)[0]]; ok && strings.Contains(ref, ".") {
-				continue
-			}
-			errs.Add("config", site.field, fmt.Sprintf(
-				"template variable {{%s}} names no declared dependency and no known value (service.port, deployment.replicas, env.<NAME>)", ref))
 		}
 	}
 }
 
-// addCommandReferenceErrors only lets command reference a dependency output
-// its type declares as not sensitive: arguments are visible to anyone who can
-// read the workload, and an undeclared key, such as an extra value in an
-// unmanaged input, may well be a secret.
+// referenceProblem says why ref can't resolve, or returns "" if it can.
+func referenceProblem(cfg *serviceconfig.ServiceConfig, known templateContext, ref string) string {
+	if _, ok := known[ref]; ok {
+		return ""
+	}
+	namespace, rest, _ := strings.Cut(ref, ".")
+	switch namespace {
+	case "dependencies":
+		name, _, hasKey := strings.Cut(rest, ".")
+		if _, declared := cfg.Dependencies[name]; !declared {
+			return fmt.Sprintf("names no declared dependency: %q is not under dependencies in pond.yml", name)
+		}
+		if !hasKey {
+			return fmt.Sprintf("names no output: write {{dependencies.%s.<output>}}", name)
+		}
+		return ""
+	case "variables":
+		return fmt.Sprintf("names no declared variable: %q is not under variables in pond.yml", rest)
+	case "env":
+		return "is no longer available: declare a variable and use {{variables.<name>}} wherever the value is needed, env included"
+	case "gateway":
+		if problem := gatewayProblem(cfg, known); problem != "" {
+			return problem
+		}
+	}
+	if _, ok := cfg.Dependencies[namespace]; ok && rest != "" {
+		return fmt.Sprintf("names no known value: did you mean {{%s%s}}?", dependencyRefPrefix, ref)
+	}
+	return "names no known value (service.name, service.port, deployment.replicas, environment.name, gateway.hostname, gateway.url, variables.<name>, dependencies.<name>.<output>)"
+}
+
+// gatewayProblem says why the service has no gateway values, or returns "" if it has them.
+func gatewayProblem(cfg *serviceconfig.ServiceConfig, known templateContext) string {
+	if _, ok := known["gateway.hostname"]; ok {
+		return ""
+	}
+	var route *serviceconfig.GatewayHTTPConfig
+	if cfg.Gateway != nil {
+		route = cfg.Gateway.HTTP
+	}
+	switch {
+	case route == nil || route.Enabled == nil || !*route.Enabled:
+		return "needs the gateway: set gateway.http.enabled"
+	case route.Hostname != nil:
+		return fmt.Sprintf("needs a single hostname, and gateway.http.hostname %q is a wildcard", *route.Hostname)
+	}
+	return fmt.Sprintf("needs a hostname: set gateway.http.hostname, or a base host on environment %q", known["environment.name"])
+}
+
+// addCommandReferenceErrors rejects a reference in command that may carry a
+// secret: arguments are visible to anyone who can read the workload.
 func (s *deploymentService) addCommandReferenceErrors(errs *api.ValidationErrors, cfg *serviceconfig.ServiceConfig) {
-	own := buildLookupTable(nil, cfg)
 	for i, arg := range cfg.Command {
 		for _, ref := range templateReferences(arg) {
-			name, key, ok := strings.Cut(ref, ".")
-			dependency, declared := cfg.Dependencies[name]
-			if _, isOwn := own[ref]; isOwn || !ok || !declared {
-				continue
-			}
-			spec, err := s.specs.Get(dependency.Type)
-			if err != nil {
-				continue
-			}
-			output := slices.IndexFunc(spec.OutputFields, func(f db.FieldSpec) bool { return f.Name == key })
-			switch {
-			case output < 0:
+			if reason := s.refSensitive(cfg, ref); reason != "" {
 				errs.Add("config", commandField(i), fmt.Sprintf(
-					"template variable {{%s}}: %s declares no %q output, so it may be sensitive, and arguments are visible to anyone who can read the workload; pass it in a config file instead",
-					ref, dependency.Type, key))
-			case spec.OutputFields[output].Sensitive:
-				errs.Add("config", commandField(i), fmt.Sprintf(
-					"template variable {{%s}} is sensitive, and arguments are visible to anyone who can read the workload; pass it in a config file instead", ref))
+					"template variable {{%s}} %s, and arguments are visible to anyone who can read the workload; pass it in env or a config file instead", ref, reason))
 			}
 		}
 	}
 }
 
-// verifyUnmanagedReferences rejects a {{dep.key}} on an unmanaged dependency
-// whose input has no such key: its values are known now, so the rollout could
-// never render.
+// refSensitive says why ref may carry a secret, or returns "" if it can't. A
+// dependency output its type doesn't declare, such as an extra value in an
+// unmanaged input, may well be one.
+func (s *deploymentService) refSensitive(cfg *serviceconfig.ServiceConfig, ref string) string {
+	if name, ok := strings.CutPrefix(ref, "variables."); ok {
+		if cfg.Variables[name].Secret {
+			return "is a secret variable"
+		}
+		return ""
+	}
+	name, key, ok := parseDependencyRef(ref)
+	dependency, declared := cfg.Dependencies[name]
+	if !ok || !declared {
+		return ""
+	}
+	spec, err := s.specs.Get(dependency.Type)
+	if err != nil {
+		return ""
+	}
+	output := slices.IndexFunc(spec.OutputFields, func(f db.FieldSpec) bool { return f.Name == key })
+	switch {
+	case output < 0:
+		return fmt.Sprintf("may be sensitive: %s declares no %q output", dependency.Type, key)
+	case spec.OutputFields[output].Sensitive:
+		return "is sensitive"
+	}
+	return ""
+}
+
+// verifyUnmanagedReferences rejects a {{dependencies.<name>.<key>}} on an
+// unmanaged dependency whose input has no such key: its values are known now,
+// so the rollout could never render.
 func verifyUnmanagedReferences(cfg *serviceconfig.ServiceConfig, inputs map[string]api.DependencyInput) error {
 	var errs api.ValidationErrors
 	for _, site := range templateSites(cfg) {
 		for _, ref := range site.refs {
-			name, key, ok := strings.Cut(ref, ".")
+			name, key, ok := parseDependencyRef(ref)
 			input, declared := inputs[name]
 			if !ok || !declared || input.Managed {
 				continue

@@ -89,7 +89,7 @@ type SubmitRequest struct {
 	ImageTag          string                          `json:"imageTag"`
 	TriggeredBy       string                          `json:"triggeredBy"`
 	CreateIfNotExists bool                            `json:"createIfNotExists"`
-	Dependencies      map[string]DependencyInput      `json:"dependencies"`
+	DeploymentInput
 }
 
 type DependencyInput struct {
@@ -97,8 +97,9 @@ type DependencyInput struct {
 	Values  map[string]any `json:"values"`
 }
 
-// ConfigureDeploymentRequest is the format of a dependency input file, as
-// passed to `pond deploy --input`.
-type ConfigureDeploymentRequest struct {
+// DeploymentInput is the format of the input file passed to `pond deploy --input`.
+type DeploymentInput struct {
 	Dependencies map[string]DependencyInput `json:"dependencies"`
+	// omitempty: a server that predates variables rejects the key.
+	Variables map[string]string `json:"variables,omitempty"`
 }

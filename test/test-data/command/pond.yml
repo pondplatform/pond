@@ -1,0 +1,9 @@
+version: 1
+name: command-demo
+image: nginx
+service:
+  port: 80
+command:
+  - sh
+  - -c
+  - 'echo "port {{service.port}}, pid $$" > /tmp/started && exec nginx -g "daemon off;"'

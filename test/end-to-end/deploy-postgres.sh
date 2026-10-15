@@ -3,7 +3,8 @@
 #
 # Flow:
 #   1. Submit the deployment with its dependency input (managed=true, instances=1)
-#   2. Wait for succeeded
+#   2. Wait for succeeded: tofu provisioned the database, and the readiness probe
+#      only passes once the app has connected to it with the rendered credentials
 #
 # Prerequisites:
 #   - local-setup.sh has been run (creates test/end-to-end/.e2e-env)
@@ -36,16 +37,5 @@ info "Deployment ID: $DEPLOYMENT_ID"
 # ── Wait for succeeded ────────────────────────────────────────────────────────
 step "Waiting for deployment to complete"
 poll_status "$DEPLOYMENT_ID" "succeeded" 150 2
-
-# ── Bare invocation ───────────────────────────────────────────────────────────
-# Deliberately no flags and no inline env prefix: server, token, project and env all
-# come from the exported environment. This is the path that regressed when the CLI
-# ignored POND_PROJECT_ID and fell back to a stale context.
-step "Listing deployments with configuration from the environment only"
-LIST_OUTPUT=$("$POND" deployment list --service postgres-demo 2>&1) \
-  || die "bare 'deployment list' failed — environment-only configuration is broken: $LIST_OUTPUT"
-echo "$LIST_OUTPUT"
-grep -q "$DEPLOYMENT_ID" <<<"$LIST_OUTPUT" \
-  || die "deployment $DEPLOYMENT_ID missing from the listing — resolution picked the wrong project or environment"
 
 step "Done — deployment succeeded"

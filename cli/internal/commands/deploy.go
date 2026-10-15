@@ -75,11 +75,11 @@ func NewDeployCmd() *cobra.Command {
 				}
 			}
 			if inputPath != "" {
-				deps, err := readDependencyInput(inputPath)
+				input, err := readInput(inputPath)
 				if err != nil {
 					return err
 				}
-				req.Dependencies = deps
+				req.DeploymentInput = input
 			}
 
 			d, err := sc.SubmitDeployment(cmd.Context(), req)
@@ -98,7 +98,7 @@ func NewDeployCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&filePath, "pond-file", "f", "./pond.yml", "Path to pond.yml")
 	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Image tag to deploy")
-	cmd.Flags().StringVarP(&inputPath, "input", "i", "", "Path to a JSON or YAML file with input for dependencies (default: pond-input-<env>.yml or .json next to the pond file, if present)")
+	cmd.Flags().StringVarP(&inputPath, "input", "i", "", "Path to a JSON or YAML file with input for dependencies and variables (default: pond-input-<env>.yml or .json next to the pond file, if present)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for completion")
 	cmd.MarkFlagRequired("tag")
 
@@ -152,26 +152,36 @@ func defaultInputPath(dir, env string) (string, error) {
 	}
 }
 
-func readDependencyInput(path string) (map[string]api.DependencyInput, error) {
+func readInput(path string) (api.DeploymentInput, error) {
+	var input api.DeploymentInput
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read input %q: %w", path, err)
+		return input, fmt.Errorf("read input %q: %w", path, err)
 	}
 
-	// YAML goes through JSON so the api types' json tags stay the one source of field names.
-	if ext := filepath.Ext(path); ext == ".yml" || ext == ".yaml" {
-		var v any
-		if err := yaml.Unmarshal(data, &v); err != nil {
-			return nil, fmt.Errorf("parse input %q: %w", path, err)
+	if ext := filepath.Ext(path); ext != ".yml" && ext != ".yaml" {
+		if err := json.Unmarshal(data, &input); err != nil {
+			return input, fmt.Errorf("parse input %q: %w", path, err)
 		}
-		if data, err = json.Marshal(v); err != nil {
-			return nil, fmt.Errorf("parse input %q: %w", path, err)
-		}
+		return input, nil
 	}
 
-	var req api.ConfigureDeploymentRequest
-	if err := json.Unmarshal(data, &req); err != nil {
-		return nil, fmt.Errorf("parse input %q: %w", path, err)
+	// Dependencies go through JSON so the api types' json tags name their fields.
+	// Variables don't: yaml.v3 keeps a scalar's text, where JSON would turn 0123 into 83.
+	var raw struct {
+		Dependencies any               `yaml:"dependencies"`
+		Variables    map[string]string `yaml:"variables"`
 	}
-	return req.Dependencies, nil
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return input, fmt.Errorf("parse input %q: %w", path, err)
+	}
+	deps, err := json.Marshal(raw.Dependencies)
+	if err == nil {
+		err = json.Unmarshal(deps, &input.Dependencies)
+	}
+	if err != nil {
+		return input, fmt.Errorf("parse input %q: %w", path, err)
+	}
+	input.Variables = raw.Variables
+	return input, nil
 }

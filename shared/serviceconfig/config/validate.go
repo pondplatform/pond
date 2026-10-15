@@ -42,7 +42,7 @@ var (
 	// is rejected when the pod is created.
 	envVarNamePattern = regexp.MustCompile(`^[-._a-zA-Z][-._a-zA-Z0-9]*$`)
 
-	// Config templates reference a dependency as {{name.field}} and the
+	// Templates reference dependencies and variables by name, and the
 	// renderer's pattern only matches word characters, so a name outside that
 	// set can never be referenced.
 	dependencyNamePattern = regexp.MustCompile(`^\w+$`)
@@ -120,6 +120,7 @@ func Validate(cfg *serviceconfig.ServiceConfig) error {
 	validateConfigs(&errs, cfg.Configs)
 	validateVolumes(&errs, cfg)
 	validateDependencies(&errs, cfg.Dependencies)
+	validateVariables(&errs, cfg.Variables)
 
 	if errs.HasErrors() {
 		return &errs
@@ -486,9 +487,8 @@ func validateVolumes(errs *api.ValidationErrors, cfg *serviceconfig.ServiceConfi
 	}
 }
 
-// VolumeSizeBytes converts a volume size such as "10Gi" to bytes, so sizes
-// written in different units compare correctly. Its errors are worded as
-// validation messages for the size field.
+// VolumeSizeBytes converts a volume size such as "10Gi" to bytes. Its errors
+// are worded as validation messages for the size field.
 func VolumeSizeBytes(size string) (int64, error) {
 	m := volumeSizePattern.FindStringSubmatch(size)
 	if m == nil {
@@ -507,10 +507,18 @@ func validateDependencies(errs *api.ValidationErrors, deps map[string]servicecon
 		field := fmt.Sprintf("dependencies[%q]", name)
 
 		if !dependencyNamePattern.MatchString(name) {
-			errs.Add(validationComponent, field, "must be letters, digits or underscores so config templates can reference it as {{name.field}}")
+			errs.Add(validationComponent, field, "must be letters, digits or underscores so templates can reference it as {{dependencies.<name>.<output>}}")
 		}
 		if deps[name].Type == "" {
 			errs.Add(validationComponent, field+".type", "must not be empty")
+		}
+	}
+}
+
+func validateVariables(errs *api.ValidationErrors, variables map[string]serviceconfig.VariableDeclaration) {
+	for _, name := range slices.Sorted(maps.Keys(variables)) {
+		if !dependencyNamePattern.MatchString(name) {
+			errs.Add(validationComponent, fmt.Sprintf("variables[%q]", name), "must be letters, digits or underscores so templates can reference it as {{variables.<name>}}")
 		}
 	}
 }

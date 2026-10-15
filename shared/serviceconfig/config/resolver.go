@@ -21,6 +21,7 @@ func (r *resolver) Resolve(base *serviceconfig.OverridableConfig, envName string
 	cfg.Dependencies = cloneMap(base.Dependencies)
 	cfg.Configs = cloneMap(base.Configs)
 	cfg.Volumes = cloneMap(base.Volumes)
+	cfg.Variables = cloneMap(base.Variables)
 
 	override, ok := base.Overrides[envName]
 	if !ok {

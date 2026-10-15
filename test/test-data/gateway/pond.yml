@@ -1,7 +1,8 @@
 version: 1
 name: gateway-demo
-# whoami echoes the request line and headers it received, which is what makes the
-# effect of the route's filters observable from outside the cluster.
+# whoami is a tiny HTTP server, enough to show the route serves. The rules and
+# filters are what the integration tests check the rendered HTTPRoute against,
+# and what the controller has to accept.
 image: traefik/whoami
 
 deployment:

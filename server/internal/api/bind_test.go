@@ -65,6 +65,25 @@ func TestDecodeJSON_SubmitRequestRejectsUnknownConfigFields(t *testing.T) {
 	}
 }
 
+func TestDecodeJSON_SubmitRequestCarriesTheInput(t *testing.T) {
+	body := `{
+		"overridableConfig": {"variables": {"SIGNING_KEY": {"secret": true}, "PUBLIC_NAME": {}}},
+		"dependencies": {"db": {"managed": true}},
+		"variables": {"SIGNING_KEY": "s3cr3t", "PUBLIC_NAME": "Acme"}
+	}`
+	var req shared.SubmitRequest
+	if err := decodeJSON(strings.NewReader(body), &req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !req.Dependencies["db"].Managed || req.Variables["SIGNING_KEY"] != "s3cr3t" || req.Variables["PUBLIC_NAME"] != "Acme" {
+		t.Errorf("input not decoded: %+v", req.DeploymentInput)
+	}
+	declared := req.OverridableConfig.Variables
+	if len(declared) != 2 || !declared["SIGNING_KEY"].Secret || declared["PUBLIC_NAME"].Secret {
+		t.Errorf("variable declarations not decoded: %+v", declared)
+	}
+}
+
 func TestDecodeJSON_Valid(t *testing.T) {
 	var v struct {
 		Name string `json:"name"`

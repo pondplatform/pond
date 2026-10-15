@@ -1,0 +1,12 @@
+version: 1
+name: volumes-demo
+image: nginx
+service:
+  port: 80
+env:
+  REVISION: "1"
+volumes:
+  data:
+    type: shared-single-node
+    mountPath: /data
+    size: 64Mi

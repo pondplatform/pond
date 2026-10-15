@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# End-to-end scenario: deploy a service with gateway.http enabled and verify the
-# resulting Gateway API HTTPRoute actually carries traffic.
+# End-to-end scenario: deploy a service with gateway.http enabled and verify a
+# real Gateway API controller accepts the resulting HTTPRoute and routes to it.
+#
+# What the route contains is checked by the integration tests, which render
+# the same pond.yml; this only covers what takes a real controller.
 #
 # Flow:
 #   1. Submit deployment (no dependencies, so it runs straight through)
-#   2. Assert deployment.replicas reached the Kubernetes Deployment
-#   3. Assert the HTTPRoute spec: derived hostname, platform-owned parentRefs and
-#      backendRefs, and the user's matches/filters
-#   4. Assert the route was Accepted with resolved refs by the controller
-#   5. Send real requests through the gateway data plane and check that the
-#      URLRewrite and RequestHeaderModifier filters took effect, and that a
-#      non-matching Host is not served
+#   2. Assert the controller Accepted the route and resolved its refs
+#   3. Send a request through the gateway data plane to the derived hostname
 #
 # Prerequisites:
 #   - local-setup.sh has been run (creates test/end-to-end/.e2e-env and the Gateway)
@@ -44,8 +42,6 @@ GATEWAY_CLASS=$(kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NS" \
 GATEWAY_CONTROLLER=$(kubectl get gatewayclass "$GATEWAY_CLASS" \
   -o jsonpath='{.spec.controllerName}') \
   || die "GatewayClass '$GATEWAY_CLASS' not found"
-BODY_FILE=$(mktemp /tmp/pond-gateway-body.XXXXXX)
-trap 'rm -f "$BODY_FILE"' EXIT
 
 FAILED=0
 expect_eq() {
@@ -66,10 +62,9 @@ route_condition() {
       | select(.type==$t) | .status] | first // ""' <<<"$1"
 }
 
-# gw_status <host> <path> — prints the HTTP status; the body lands in $BODY_FILE
+# gw_status <host> <path> — prints the HTTP status of a request through the gateway
 gw_status() {
-  curl -s -o "$BODY_FILE" -w '%{http_code}' \
-    -H "Host: $1" "$GATEWAY_URL$2"
+  curl -s -o /dev/null -w '%{http_code}' -H "Host: $1" "$GATEWAY_URL$2"
 }
 
 # ── Submit ────────────────────────────────────────────────────────────────────
@@ -88,12 +83,7 @@ info "Deployment ID: $DEPLOYMENT_ID"
 step "Waiting for deployment to complete"
 poll_status "$DEPLOYMENT_ID" "succeeded" 150 2
 
-# ── deployment.replicas ───────────────────────────────────────────────────────
-step "Checking deployment.replicas reached the workload"
-expect_eq "Deployment replicas" "1" \
-  "$(kubectl get deployment "$SERVICE_NAME" -n "$GATEWAY_NS" -o jsonpath='{.spec.replicas}')"
-
-# ── HTTPRoute spec ────────────────────────────────────────────────────────────
+# ── Controller acceptance ─────────────────────────────────────────────────────
 # Helm creates the route and the workload together, so the deployment can report
 # succeeded a beat before the controller has written status.parents. Re-read
 # until the conditions land rather than asserting against a status-less snapshot.
@@ -109,27 +99,6 @@ for i in $(seq 1 30); do
 done
 [[ -n "$ROUTE" ]] || die "HTTPRoute/$SERVICE_NAME was not created"
 
-step "Checking the HTTPRoute spec"
-
-expect_eq "hostnames" "$HOST" \
-  "$(jq -r '.spec.hostnames | join(",")' <<<"$ROUTE")"
-expect_eq "parentRefs" "$GATEWAY_NAME/http" \
-  "$(jq -r '.spec.parentRefs[0] | "\(.name)/\(.sectionName)"' <<<"$ROUTE")"
-expect_eq "rule count" "2" \
-  "$(jq -r '.spec.rules | length' <<<"$ROUTE")"
-expect_eq "rule 0 path match" "PathPrefix /rewritten" \
-  "$(jq -r '.spec.rules[0].matches[0].path | "\(.type) \(.value)"' <<<"$ROUTE")"
-expect_eq "rule 0 filters" "URLRewrite,RequestHeaderModifier" \
-  "$(jq -r '[.spec.rules[0].filters[].type] | join(",")' <<<"$ROUTE")"
-expect_eq "rule 0 rewrite" "ReplacePrefixMatch /" \
-  "$(jq -r '.spec.rules[0].filters[0].urlRewrite.path | "\(.type) \(.replacePrefixMatch)"' <<<"$ROUTE")"
-expect_eq "rule 1 path match" "PathPrefix /" \
-  "$(jq -r '.spec.rules[1].matches[0].path | "\(.type) \(.value)"' <<<"$ROUTE")"
-# backendRefs are supplied by the chart, never by pond.yml.
-expect_eq "backendRefs on every rule" "$SERVICE_NAME:80 $SERVICE_NAME:80" \
-  "$(jq -r '[.spec.rules[].backendRefs[0] | "\(.name):\(.port)"] | join(" ")' <<<"$ROUTE")"
-
-# ── Controller acceptance ─────────────────────────────────────────────────────
 step "Checking the controller accepted the route"
 expect_eq "Accepted condition" "True" "$(route_condition "$ROUTE" Accepted)"
 expect_eq "ResolvedRefs condition" "True" "$(route_condition "$ROUTE" ResolvedRefs)"
@@ -148,39 +117,8 @@ for i in $(seq 1 30); do
   sleep 2
 done
 [[ $ROUTING -eq 1 ]] || die "gateway never served $HOST at $GATEWAY_URL"
-
-step "Checking requests through the gateway"
-
-# The catch-all rule has no filters, so the injected header must be absent here.
-expect_eq "GET / status" "200" "$(gw_status "$HOST" /)"
-if grep -qi 'X-Pond-Filter' "$BODY_FILE"; then
-  warn "MISMATCH: catch-all rule injected X-Pond-Filter but has no filters"
-  FAILED=1
-else
-  info "ok: catch-all rule injected no header"
-fi
-
-# /rewritten/hello hits the first rule: URLRewrite strips the prefix and
-# RequestHeaderModifier adds a header, both observable in whoami's echo.
-# Avoid /echo — that is whoami's WebSocket endpoint and 400s a plain GET.
-expect_eq "GET /rewritten/hello status" "200" "$(gw_status "$HOST" /rewritten/hello)"
-if grep -q 'GET /hello ' "$BODY_FILE"; then
-  info "ok: URLRewrite rewrote /rewritten/hello to /hello"
-else
-  warn "MISMATCH: URLRewrite did not rewrite the path — backend saw:"
-  grep -E '^(GET|POST) ' "$BODY_FILE" || true
-  FAILED=1
-fi
-if grep -qi '^X-Pond-Filter: applied' "$BODY_FILE"; then
-  info "ok: RequestHeaderModifier added X-Pond-Filter"
-else
-  warn "MISMATCH: RequestHeaderModifier did not add X-Pond-Filter"
-  FAILED=1
-fi
-
-# hostnames scopes the route: another Host must not reach this service.
-expect_eq "non-matching Host status" "404" "$(gw_status "nope.$INGRESS_BASE_HOST" /)"
+info "ok: GET / on $HOST answered 200"
 
 [[ $FAILED -eq 0 ]] || die "one or more gateway assertions failed"
 
-step "Done — HTTPRoute created, accepted and serving traffic"
+step "Done — HTTPRoute accepted and serving traffic"

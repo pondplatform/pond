@@ -24,6 +24,13 @@ type ScenarioResult struct {
 // Services are created implicitly on first deployment (CreateIfNotExists: true).
 func BuildScenario(ctx context.Context, t *testing.T, h *TestHarness) ScenarioResult {
 	t.Helper()
+	return BuildScenarioWithBaseHost(ctx, t, h, "")
+}
+
+// BuildScenarioWithBaseHost is BuildScenario with an environment whose exposed
+// services get a hostname under ingressBaseHost.
+func BuildScenarioWithBaseHost(ctx context.Context, t *testing.T, h *TestHarness, ingressBaseHost string) ScenarioResult {
+	t.Helper()
 
 	sc := newScenarioClient(h.BaseURL, h.AdminToken)
 	id := uuid.New().String()[:8]
@@ -38,7 +45,7 @@ func BuildScenario(ctx context.Context, t *testing.T, h *TestHarness) ScenarioRe
 		t.Fatalf("create project: %v", err)
 	}
 
-	env, err := sc.createEnvironment(ctx, project.ID, "test-env", "test-namespace", cluster.ID)
+	env, err := sc.createEnvironment(ctx, project.ID, "test-env", "test-namespace", cluster.ID, ingressBaseHost)
 	if err != nil {
 		t.Fatalf("create environment: %v", err)
 	}
@@ -113,7 +120,7 @@ func WithConfigValues(cfg serviceconfig.ServiceConfig, values map[string]any) se
 
 // PostgresOutput is a tofu.apply output for a postgres dependency. It
 // deliberately has no username: the postgres spec declares that field, so
-// {{postgres.username}} passes up-front validation and fails only at render
+// {{dependencies.postgres.username}} passes up-front validation and fails only at render
 // time, after the dependency has succeeded.
 var PostgresOutput = map[string]any{
 	"host":     "db.test.local",

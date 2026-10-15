@@ -99,11 +99,12 @@ func (c *scenarioClient) createProject(ctx context.Context, name string) (projec
 	return result, nil
 }
 
-func (c *scenarioClient) createEnvironment(ctx context.Context, projectID uuid.UUID, name, namespace string, clusterID uuid.UUID) (envSetupResult, error) {
+func (c *scenarioClient) createEnvironment(ctx context.Context, projectID uuid.UUID, name, namespace string, clusterID uuid.UUID, ingressBaseHost string) (envSetupResult, error) {
 	body := map[string]any{
-		"name":      name,
-		"namespace": namespace,
-		"clusterId": clusterID,
+		"name":                   name,
+		"namespace":              namespace,
+		"clusterId":              clusterID,
+		"defaultIngressBaseHost": ingressBaseHost,
 	}
 	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/projects/%s/environments", projectID), body)
 	if err != nil {

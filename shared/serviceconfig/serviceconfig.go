@@ -27,6 +27,15 @@ type ServiceConfig struct {
 	// Volumes has no counterpart in Override: a service needs the same storage
 	// in every environment.
 	Volumes map[string]VolumeSpec `json:"volumes,omitempty" yaml:"volumes"`
+
+	// Variables has no counterpart in Override: the input file is already per environment.
+	Variables map[string]VariableDeclaration `json:"variables,omitempty" yaml:"variables"`
+}
+
+// VariableDeclaration is a {{variables.<name>}} whose value comes from the deployment input.
+type VariableDeclaration struct {
+	// Secret keeps the value out of command, which anyone who can read the workload sees.
+	Secret bool `json:"secret,omitempty" yaml:"secret"`
 }
 
 // VolumeSpec is a directory that survives restarts and redeploys. Its map key
@@ -38,7 +47,7 @@ type VolumeSpec struct {
 	// the service mounts, attachable to one node at a time.
 	Type      string `json:"type"      yaml:"type"`
 	MountPath string `json:"mountPath" yaml:"mountPath"`
-	// Size is a whole number of Mi, Gi or Ti. It can grow but never shrink.
+	// Size is a whole number of Mi, Gi or Ti.
 	Size string `json:"size" yaml:"size"`
 }
 

@@ -61,6 +61,11 @@ gateway:
 env:
   LOG_LEVEL: info
   FEATURE_X: "true"
+  PUBLIC_URL: "{{gateway.url}}"
+  SIGNING_KEY: "{{variables.SIGNING_KEY}}"
+
+variables:
+  SIGNING_KEY: { secret: true }
 
 dependencies:
   db:
@@ -71,11 +76,11 @@ configs:
     format: .env
     mountPath: /app/.env
     values:
-      DB_HOST: "{{db.host}}"
-      DB_PORT: "{{db.port}}"
-      DB_USER: "{{db.username}}"
-      DB_PASSWORD: "{{db.password}}"
-      DB_NAME: "{{db.database}}"
+      DB_HOST: "{{dependencies.db.host}}"
+      DB_PORT: "{{dependencies.db.port}}"
+      DB_USER: "{{dependencies.db.username}}"
+      DB_PASSWORD: "{{dependencies.db.password}}"
+      DB_NAME: "{{dependencies.db.database}}"
 
 volumes:
   uploads:
@@ -106,7 +111,8 @@ overrides:
 | `service` | object | no | Service port settings. |
 | `gateway` | object | no | How the service is exposed to incoming HTTP traffic. |
 | `dependencies` | map | no | External services your app needs (databases, HTTP services). |
-| `env` | map | no | Environment variables injected into the container. |
+| `env` | map | no | Environment variables injected into the container. Values can contain templates. |
+| `variables` | map | no | Values given with each deploy rather than in `pond.yml`, such as secrets. |
 | `configs` | map | no | Config files rendered and mounted into the container. |
 | `volumes` | map | no | Directories that keep their contents across restarts and redeploys. |
 | `overrides` | map | no | Environment-specific overrides. Keys are environment names. |
@@ -125,7 +131,7 @@ Each item is one argument, passed as written. There is no shell, so `$VAR`, `*` 
 command: [sh, -c, 'exec app --id "$HOSTNAME"']
 ```
 
-Arguments can contain the [template variables](config-files.md#template-variables) config files use, such as `{{service.port}}` or `{{db.host}}`, rendered at deploy time. Arguments are visible to anyone who can read the workload, so a dependency output is only allowed if its type declares it as not sensitive. `{{db.password}}` is rejected, and so is any key an unmanaged dependency's input adds beyond the declared outputs. Pass those in a config file instead.
+Arguments can contain [template variables](config-files.md#template-variables), such as `{{service.port}}` or `{{dependencies.db.host}}`, rendered at deploy time. Arguments are visible to anyone who can read the workload, so a dependency output is only allowed if its type declares it as not sensitive. `{{dependencies.db.password}}` is rejected, and so is any key an unmanaged dependency's input adds beyond the declared outputs, and any variable declared `secret: true`. Pass those in `env` or a config file instead.
 
 A string such as `command: serve --port 8080` is rejected, because splitting it would need shell quoting rules. An empty list is rejected too: the image's default command can be replaced but not cleared, so leave `command` out to keep it.
 
@@ -230,7 +236,7 @@ gateway:
 
 A map of named dependencies. Each entry declares a dependency that must be provisioned before the service can start. See [Dependencies](dependencies.md) for all available types.
 
-Names may contain letters, digits and underscores, because config files reference them as `{{<name>.<field>}}`.
+Names may contain letters, digits and underscores, because templates reference them as `{{dependencies.<name>.<output>}}`.
 
 ```yaml
 dependencies:
@@ -242,13 +248,47 @@ dependencies:
 
 ### `env`
 
-Plain key/value pairs injected as environment variables. Values are strings.
+Environment variables set in the container. Values are strings and can contain [template variables](config-files.md#template-variables), rendered at deploy time.
 
 ```yaml
 env:
-  DATABASE_URL: postgres://...
+  DATABASE_URL: "postgres://{{dependencies.db.username}}:{{dependencies.db.password}}@{{dependencies.db.host}}/{{dependencies.db.database}}"
+  PUBLIC_URL: "{{gateway.url}}"
   LOG_LEVEL: debug
 ```
+
+Pond keeps the rendered values in a Kubernetes Secret rather than in the workload, so a password in `env` isn't visible to everyone who can read the workload. Values reach your app as written: unlike in a Kubernetes manifest, `$(VAR)` isn't expanded. When a value changes, the service's pods restart to pick it up.
+
+Templates can't read `env`. To use the same value in `env` and in a config file, declare it as a [variable](#variables).
+
+### `variables`
+
+Values that `pond.yml` leaves to each deploy, such as a signing key or a name that differs per customer. `pond.yml` declares them, and the deploy's input file gives their values. Reference them as `{{variables.<name>}}` in `env`, `configs` and `command`.
+
+```yaml
+variables:
+  SIGNING_KEY: { secret: true }
+  PUBLIC_NAME: {}
+```
+
+The values go under `variables:` in the input file, next to the dependency input. See [Dependencies](dependencies.md#managed-vs-manual-dependencies) for how `pond deploy` finds that file.
+
+```yaml
+# pond-input-staging.yml
+variables:
+  SIGNING_KEY: "s3cr3t"
+  PUBLIC_NAME: "Acme"
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `secret` | boolean | `false` | Whether the value is a secret. A secret variable can't be used in `command`, whose arguments anyone who can read the workload sees. |
+
+- **Every declared variable needs a value in every deploy's input.** A missing value, or a value for a variable `pond.yml` doesn't declare, is rejected before anything is deployed. Values from earlier deployments are not reused.
+- **Values are strings.** In a YAML input file a value keeps the text you wrote, so `PIN: 0123` stays `0123`. In JSON, write every value as a string.
+- **Names** may contain letters, digits and underscores.
+- **There are no overrides.** Each environment already has its own input file, `pond-input-<env>.yml`.
+- **Storage:** Pond keeps the values with the deployment on the server, in plaintext, as it does an unmanaged dependency's input. They are not returned by the API or written to the server log.
 
 ### `configs`
 
@@ -279,7 +319,7 @@ volumes:
 |---|---|---|---|
 | `type` | string | yes | Which copies of the service mount the volume, and from where. Only `shared-single-node` so far: one volume that every copy of the service mounts, attached to one node at a time. |
 | `mountPath` | string | yes | Absolute path of the directory inside the container. Volumes may be nested, and config files may be mounted inside a volume, but a volume can't be mounted at or below a config file. |
-| `size` | string | yes | How much data you expect: a whole number of `Mi`, `Gi` or `Ti`. It can grow, but never shrink. |
+| `size` | string | yes | How much data you expect: a whole number of `Mi`, `Gi` or `Ti`. It can grow, see [Sizes](volumes.md#sizes). |
 
 The name identifies the data, so renaming a volume gives the service a new, empty one. Names are lowercase letters, digits and `-`, at most 59 characters.
 

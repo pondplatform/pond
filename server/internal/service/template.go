@@ -7,39 +7,101 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pondplatform/pond/server/internal/helmgen"
+	"github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
 var templateVarRegex = regexp.MustCompile(`\{\{(\w+(?:\.\w+)*)\}\}`)
 
-// renderTemplate interpolates {{var}} placeholders in config file values using
-// the dependency contexts (dependency name → output values) and the service
-// config's own values.
-func renderTemplate(values map[string]any, contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) (map[string]any, error) {
-	return renderMap(values, buildLookupTable(contexts, svcConfig))
+const dependencyRefPrefix = "dependencies."
+
+// templateContext maps each {{var}} a service's templates can use to its value.
+type templateContext map[string]string
+
+func newTemplateContext(cfg *serviceconfig.ServiceConfig, env *db.Environment, variables map[string]string) templateContext {
+	ctx := templateContext{
+		"service.name":     cfg.Name,
+		"environment.name": env.Name,
+	}
+	if cfg.Service != nil && cfg.Service.Port != nil {
+		ctx["service.port"] = fmt.Sprintf("%d", *cfg.Service.Port)
+	}
+	if cfg.Deployment != nil && cfg.Deployment.Replicas != nil {
+		ctx["deployment.replicas"] = fmt.Sprintf("%d", *cfg.Deployment.Replicas)
+	}
+	// A wildcard route matches many hostnames, so none of them is the service's.
+	if hostname := helmgen.GatewayHostname(cfg, env); hostname != "" && !strings.HasPrefix(hostname, "*.") {
+		ctx["gateway.hostname"] = hostname
+		ctx["gateway.url"] = "https://" + hostname
+	}
+	for name, value := range variables {
+		ctx["variables."+name] = value
+	}
+	return ctx
 }
 
-func buildLookupTable(contexts map[string]map[string]any, svcConfig *serviceconfig.ServiceConfig) map[string]string {
-	table := make(map[string]string)
-
-	for name, vals := range contexts {
-		for k, v := range vals {
-			table[name+"."+k] = fmt.Sprintf("%v", v)
+// withDependencies adds each dependency's outputs as {{dependencies.<name>.<key>}}.
+func (c templateContext) withDependencies(outputs map[string]map[string]any) templateContext {
+	merged := maps.Clone(c)
+	for name, values := range outputs {
+		for key, value := range values {
+			merged[dependencyRefPrefix+name+"."+key] = fmt.Sprintf("%v", value)
 		}
 	}
+	return merged
+}
 
-	if svcConfig.Service != nil && svcConfig.Service.Port != nil {
-		table["service.port"] = fmt.Sprintf("%d", *svcConfig.Service.Port)
+// parseDependencyRef splits a dependencies.<name>.<key> reference.
+func parseDependencyRef(ref string) (name, key string, ok bool) {
+	rest, ok := strings.CutPrefix(ref, dependencyRefPrefix)
+	if !ok {
+		return "", "", false
 	}
-	if svcConfig.Deployment != nil && svcConfig.Deployment.Replicas != nil {
-		table["deployment.replicas"] = fmt.Sprintf("%d", *svcConfig.Deployment.Replicas)
+	return strings.Cut(rest, ".")
+}
+
+// renderServiceConfig substitutes ctx into every field that takes templates.
+// It makes one pass, so a value that itself contains {{…}} stays as it is.
+func renderServiceConfig(cfg serviceconfig.ServiceConfig, ctx templateContext) (serviceconfig.ServiceConfig, error) {
+	if cfg.Env != nil {
+		env := make(map[string]string, len(cfg.Env))
+		for _, name := range slices.Sorted(maps.Keys(cfg.Env)) {
+			rendered, err := renderString(cfg.Env[name], ctx)
+			if err != nil {
+				return cfg, fmt.Errorf("render env[%q]: %w", name, err)
+			}
+			env[name] = rendered
+		}
+		cfg.Env = env
 	}
 
-	for k, v := range svcConfig.Env {
-		table["env."+k] = v
+	if cfg.Command != nil {
+		command := make([]string, len(cfg.Command))
+		for i, arg := range cfg.Command {
+			rendered, err := renderString(arg, ctx)
+			if err != nil {
+				return cfg, fmt.Errorf("render %s: %w", commandField(i), err)
+			}
+			command[i] = rendered
+		}
+		cfg.Command = command
 	}
 
-	return table
+	if cfg.Configs != nil {
+		configs := make(map[string]serviceconfig.ConfigFileSpec, len(cfg.Configs))
+		for _, name := range slices.Sorted(maps.Keys(cfg.Configs)) {
+			file := cfg.Configs[name]
+			values, err := renderMap(file.Values, ctx)
+			if err != nil {
+				return cfg, fmt.Errorf("render config %q: %w", name, err)
+			}
+			file.Values = values
+			configs[name] = file
+		}
+		cfg.Configs = configs
+	}
+	return cfg, nil
 }
 
 func renderMap(values map[string]any, lookup map[string]string) (map[string]any, error) {

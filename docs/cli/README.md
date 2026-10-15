@@ -150,7 +150,7 @@ pond deploy [flags]
 |---|---|---|
 | `-f, --pond-file` | `./pond.yml` | Path to the service definition file |
 | `-t, --tag` | _(required)_ | Image tag to deploy |
-| `-i, --input` | `pond-input-<env>.yml` or `.json`, if present | Path to a JSON or YAML file with input for dependencies; see [Dependencies](../services/dependencies.md) for the format |
+| `-i, --input` | `pond-input-<env>.yml` or `.json`, if present | Path to a JSON or YAML file with input for dependencies and variables; see [Dependencies](../services/dependencies.md) for the format |
 | `--wait` | `false` | Block until the deployment reaches a terminal state |
 
 Without `--wait`, the command prints the deployment ID and exits. With `--wait`, it polls every 2 seconds and exits when the deployment succeeds, fails or is cancelled.

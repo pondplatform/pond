@@ -67,26 +67,20 @@ spec:
           readinessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- $env := .Values.env | default dict }}
           env:
             # Disable any kubernetes related variables since kubernetes is an implementation detail that should not be exposed
-            - name: KUBERNETES_PORT
+            {{- /* env beats envFrom, so a blank entry would hide the user's own value. */}}
+            {{- range list "KUBERNETES_PORT" "KUBERNETES_PORT_443_TCP_ADDR" "KUBERNETES_PORT_443_TCP_PORT" "KUBERNETES_PORT_443_TCP_PROTO" "KUBERNETES_SERVICE_PORT_HTTPS" "KUBERNETES_PORT_443_TCP" "KUBERNETES_SERVICE_HOST" }}
+            {{- if not (hasKey $env .) }}
+            - name: {{ . }}
               value: ""
-            - name: KUBERNETES_PORT_443_TCP_ADDR
-              value: ""
-            - name: KUBERNETES_PORT_443_TCP_PORT
-              value: ""
-            - name: KUBERNETES_PORT_443_TCP_PROTO
-              value: ""
-            - name: KUBERNETES_SERVICE_PORT_HTTPS
-              value: ""
-            - name: KUBERNETES_PORT_443_TCP
-              value: ""
-            - name: KUBERNETES_SERVICE_HOST
-              value: ""
-
-          {{- range $key, $value := .Values.env }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+          {{- if $env }}
+          envFrom:
+            - secretRef:
+                name: {{ include "base-service.fullname" . }}-env
           {{- end }}
           {{- with .Values.resources }}
           resources:
