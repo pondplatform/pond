@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pondplatform/pond/shared/serviceconfig"
 	"github.com/pondplatform/pond/shared/serviceconfig/config"
 )
 
@@ -34,6 +35,17 @@ func TestParse_RejectsUnknownFields(t *testing.T) {
 			name: "base-only key in an override",
 			yaml: "version: 1\nname: api\noverrides:\n  production:\n    image: ghcr.io/acme/api\n",
 			want: `pond.yml:5: unknown field "image"`,
+		},
+		{
+			// A service needs the same storage in every environment.
+			name: "volumes in an override",
+			yaml: "version: 1\nname: api\noverrides:\n  production:\n    volumes:\n      data:\n        type: shared-single-node\n        mountPath: /data\n        size: 1Gi\n",
+			want: `pond.yml:5: unknown field "volumes"`,
+		},
+		{
+			name: "inside a volume",
+			yaml: "version: 1\nname: api\nvolumes:\n  data:\n    type: shared-single-node\n    path: /data\n    size: 1Gi\n",
+			want: `pond.yml:6: unknown field "path"`,
 		},
 		{
 			name: "every problem is reported",
@@ -80,6 +92,25 @@ dependencies:
 	}
 	if cfg.Configs["app"].Values["anything"] != "goes" || cfg.Dependencies["db"].Config["whatever"] != 1 {
 		t.Errorf("free-form values not decoded: %+v", cfg)
+	}
+}
+
+func TestParse_Volumes(t *testing.T) {
+	yaml := `version: 1
+name: api
+volumes:
+  data:
+    type: shared-single-node
+    mountPath: /data
+    size: 10Gi
+`
+	cfg, err := config.NewParser().Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	want := serviceconfig.VolumeSpec{Type: "shared-single-node", MountPath: "/data", Size: "10Gi"}
+	if got := cfg.Volumes["data"]; got != want {
+		t.Errorf("want %+v, got %+v", want, got)
 	}
 }
 

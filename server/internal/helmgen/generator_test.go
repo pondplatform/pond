@@ -241,6 +241,79 @@ func TestGenerator_Generate_ReplicasFromDeployment(t *testing.T) {
 	}
 }
 
+func TestGenerator_Generate_Volumes(t *testing.T) {
+	g := NewGenerator()
+
+	cfg := &serviceconfig.ServiceConfig{
+		Name: "files",
+		Volumes: map[string]serviceconfig.VolumeSpec{
+			"uploads": {Type: "shared-single-node", MountPath: "/var/www/html/data", Size: "50Gi"},
+			"html":    {Type: "shared-single-node", MountPath: "/var/www/html", Size: "1Gi"},
+		},
+	}
+
+	vals, err := g.Generate(cfg, &domain.Environment{}, "")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// A ReadWriteOnce claim can't be mounted by two pods, so the old pod stops first.
+	if vals.Strategy.Type != "Recreate" {
+		t.Errorf("Expected Recreate with volumes, got %q", vals.Strategy.Type)
+	}
+
+	wantClaims := []HelmPersistentVolumeClaim{{Name: "html", Size: "1Gi"}, {Name: "uploads", Size: "50Gi"}}
+	if !slices.Equal(vals.PersistentVolumeClaims, wantClaims) {
+		t.Errorf("claims: want %+v, got %+v", wantClaims, vals.PersistentVolumeClaims)
+	}
+	// The chart names each claim <fullname>-<name>, and fullname is the service name.
+	wantVolumes := []HelmVolume{
+		{Name: "vol-html", PersistentVolumeClaim: HelmPersistentVolumeClaimRef{ClaimName: "files-html"}},
+		{Name: "vol-uploads", PersistentVolumeClaim: HelmPersistentVolumeClaimRef{ClaimName: "files-uploads"}},
+	}
+	if !slices.Equal(vals.Volumes, wantVolumes) {
+		t.Errorf("volumes: want %+v, got %+v", wantVolumes, vals.Volumes)
+	}
+	wantMounts := []HelmVolumeMount{
+		{Name: "vol-html", MountPath: "/var/www/html"},
+		{Name: "vol-uploads", MountPath: "/var/www/html/data"},
+	}
+	if !slices.Equal(vals.VolumeMounts, wantMounts) {
+		t.Errorf("mounts: want %+v, got %+v", wantMounts, vals.VolumeMounts)
+	}
+
+	sc := vals.PodSecurityContext
+	if sc == nil || sc.FSGroup == nil || *sc.FSGroup != 1000 || sc.FSGroupChangePolicy != "OnRootMismatch" {
+		t.Errorf("Expected fsGroup 1000 with OnRootMismatch, got %+v", sc)
+	}
+}
+
+// Without volumes the values must not carry any of the volume keys: the chart
+// defaults apply, and the pod template stays what it was before volumes existed.
+func TestGenerator_Generate_NoVolumes(t *testing.T) {
+	g := NewGenerator()
+
+	vals, err := g.Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{}, "")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	out, err := yaml.Marshal(vals)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	for _, key := range []string{"persistentVolumeClaims", "podSecurityContext", "fsGroup", "volumes", "volumeMounts"} {
+		if strings.Contains(string(out), key+":") {
+			t.Errorf("%s should not appear in the values file:\n%s", key, out)
+		}
+	}
+	// The strategy is always explicit, so helm owns rollingUpdate and a later
+	// switch to Recreate can remove it.
+	if !strings.Contains(string(out), "strategy:\n    type: RollingUpdate\n") {
+		t.Errorf("Expected an explicit RollingUpdate strategy:\n%s", out)
+	}
+}
+
 func TestGenerator_Generate_ImageTag(t *testing.T) {
 	g := NewGenerator()
 

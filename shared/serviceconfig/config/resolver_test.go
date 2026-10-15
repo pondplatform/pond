@@ -235,6 +235,35 @@ func TestResolve_OverridesDoNotLeakIntoLaterEnvironments(t *testing.T) {
 	}
 }
 
+func TestResolve_VolumesAreTheSameInEveryEnvironment(t *testing.T) {
+	data := serviceconfig.VolumeSpec{Type: "shared-single-node", MountPath: "/data", Size: "10Gi"}
+	base := &serviceconfig.OverridableConfig{
+		ServiceConfig: serviceconfig.ServiceConfig{
+			Name:    "api",
+			Volumes: map[string]serviceconfig.VolumeSpec{"data": data},
+		},
+		Overrides: map[string]serviceconfig.Override{
+			"production": {Env: map[string]string{"LOG_LEVEL": "warn"}},
+		},
+	}
+	resolver := config.NewResolver()
+
+	for _, env := range []string{"production", "staging"} {
+		cfg, err := resolver.Resolve(base, env)
+		if err != nil {
+			t.Fatalf("Resolve %s failed: %v", env, err)
+		}
+		if want := map[string]serviceconfig.VolumeSpec{"data": data}; !maps.Equal(cfg.Volumes, want) {
+			t.Errorf("%s volumes: want %v, got %v", env, want, cfg.Volumes)
+		}
+		// Writing to the result must not reach base.
+		cfg.Volumes["scratch"] = serviceconfig.VolumeSpec{Type: "shared-single-node", MountPath: "/scratch", Size: "1Gi"}
+	}
+	if len(base.Volumes) != 1 {
+		t.Errorf("base volumes were mutated: %v", base.Volumes)
+	}
+}
+
 func TestResolve_NoOverrideForEnvironmentLeavesBaseIntact(t *testing.T) {
 	base := &serviceconfig.OverridableConfig{
 		ServiceConfig: serviceconfig.ServiceConfig{

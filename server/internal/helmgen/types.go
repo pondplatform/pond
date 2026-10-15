@@ -6,6 +6,7 @@ type HelmValues struct {
 	// ReplicaCount is a pointer so an unset value is omitted and the chart
 	// default applies, rather than being pinned to zero replicas.
 	ReplicaCount     *int              `yaml:"replicaCount,omitempty"`
+	Strategy         HelmStrategy      `yaml:"strategy"`
 	Image            Image             `yaml:"image"`
 	NameOverride     string            `yaml:"nameOverride"`
 	FullnameOverride string            `yaml:"fullnameOverride"`
@@ -17,6 +18,45 @@ type HelmValues struct {
 	Configs          []HelmConfig      `yaml:"configs"`
 	PodAnnotations   map[string]string `yaml:"podAnnotations,omitempty"`
 	PodLabels        map[string]string `yaml:"podLabels,omitempty"`
+
+	PodSecurityContext *HelmPodSecurityContext `yaml:"podSecurityContext,omitempty"`
+	// Volumes and VolumeMounts go through the chart's generic passthrough rather
+	// than being derived from PersistentVolumeClaims, so a chart too old to
+	// create the claims leaves the pod Pending instead of running without them.
+	Volumes                []HelmVolume                `yaml:"volumes,omitempty"`
+	VolumeMounts           []HelmVolumeMount           `yaml:"volumeMounts,omitempty"`
+	PersistentVolumeClaims []HelmPersistentVolumeClaim `yaml:"persistentVolumeClaims,omitempty"`
+}
+
+// HelmStrategy.Type is RollingUpdate or Recreate.
+type HelmStrategy struct {
+	Type string `yaml:"type"`
+}
+
+type HelmPodSecurityContext struct {
+	FSGroup             *int64 `yaml:"fsGroup,omitempty"`
+	FSGroupChangePolicy string `yaml:"fsGroupChangePolicy,omitempty"`
+}
+
+type HelmVolume struct {
+	Name                  string                       `yaml:"name"`
+	PersistentVolumeClaim HelmPersistentVolumeClaimRef `yaml:"persistentVolumeClaim"`
+}
+
+type HelmPersistentVolumeClaimRef struct {
+	ClaimName string `yaml:"claimName"`
+}
+
+type HelmVolumeMount struct {
+	Name      string `yaml:"name"`
+	MountPath string `yaml:"mountPath"`
+}
+
+// HelmPersistentVolumeClaim is named after the release: the chart creates it
+// as <fullname>-<name>.
+type HelmPersistentVolumeClaim struct {
+	Name string `yaml:"name"`
+	Size string `yaml:"size"`
 }
 
 type Image struct {

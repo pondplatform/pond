@@ -47,6 +47,16 @@ persistence:
   size: 10Gi
 ```
 
+## Storage for service volumes
+
+Services that declare [`volumes`](../services/volumes.md) get one `ReadWriteOnce` PersistentVolumeClaim per volume, from the cluster's **default** StorageClass. Make sure the default is durable, and allows volume expansion if services should be able to grow their volumes. Pond doesn't back volumes up; that is the cluster's job.
+
+Pond doesn't limit the replicas of a service with volumes, and every replica mounts the same claim. What happens to replicas on other nodes depends on the kind of storage. With block storage they never start (`Multi-Attach`). With node-local storage they are all scheduled onto the node holding the data. With network file storage they usually run anywhere. Tell your teams which kind each environment uses, since they need it to judge whether [several replicas](../services/volumes.md#more-than-one-replica) are safe.
+
+Claims are never deleted by Pond. They stay when a volume is removed from `pond.yml`, so a team can add it back and keep its data. Delete a claim by hand once the data is no longer needed.
+
+When upgrading Pond, **upgrade the agents before the server**: an agent from before volumes can't create the claims, and deploys of services with volumes fail until it is upgraded.
+
 ## Health and readiness
 
 The server exposes health endpoints on the management port (`9090` by default):

@@ -23,7 +23,7 @@ name: my-service
 image: ghcr.io/example/my-service
 
 deployment:
-  replicas: 2
+  replicas: 1          # with volumes, read the warnings in volumes.md before raising this
   management:
     livenessProbe:
       httpGet:
@@ -76,10 +76,14 @@ configs:
       DB_PASSWORD: "{{db.password}}"
       DB_NAME: "{{db.database}}"
 
+volumes:
+  uploads:
+    type: shared-single-node
+    mountPath: /app/uploads
+    size: 10Gi
+
 overrides:
   production:
-    deployment:
-      replicas: 3
     env:
       LOG_LEVEL: warn
 ```
@@ -102,13 +106,14 @@ overrides:
 | `dependencies` | map | no | External services your app needs (databases, HTTP services). |
 | `env` | map | no | Environment variables injected into the container. |
 | `configs` | map | no | Config files rendered and mounted into the container. |
+| `volumes` | map | no | Directories that keep their contents across restarts and redeploys. |
 | `overrides` | map | no | Environment-specific overrides. Keys are environment names. |
 
 ### `deployment`
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `replicas` | integer | `1` | Number of pod replicas. |
+| `replicas` | integer | `1` | Number of pod replicas. With `volumes`, every replica reads and writes the same files: read [More than one replica](volumes.md#more-than-one-replica) before going above `1`. |
 | `management` | object | none | Health probes and metrics endpoint. See below. |
 
 #### `deployment.management`
@@ -235,6 +240,30 @@ configs:
     values:
       KEY: "static or {{templated}} value"
 ```
+
+### `volumes`
+
+A map of directories that keep their contents across restarts and redeploys. See [Volumes](volumes.md) for how a service with volumes is deployed.
+
+```yaml
+volumes:
+  <name>:
+    type: shared-single-node
+    mountPath: /path/in/container
+    size: 10Gi
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | string | yes | Which copies of the service mount the volume, and from where. Only `shared-single-node` so far: one volume that every copy of the service mounts, attached to one node at a time. |
+| `mountPath` | string | yes | Absolute path of the directory inside the container. Volumes may be nested, and config files may be mounted inside a volume, but a volume can't be mounted at or below a config file. |
+| `size` | string | yes | How much data you expect: a whole number of `Mi`, `Gi` or `Ti`. It can grow, but never shrink. |
+
+The name identifies the data, so renaming a volume gives the service a new, empty one. Names are lowercase letters, digits and `-`, at most 59 characters.
+
+Every copy of the service mounts a `shared-single-node` volume. Each deploy stops every running copy before starting a new one, so deploys have a short downtime, and **a release that doesn't start leaves the service down**. Volumes can't be overridden per environment.
+
+> **Warning:** Pond doesn't limit `deployment.replicas` for a service with volumes, but every replica reads and writes the same files at the same time. Most apps corrupt their data that way, and replicas on other nodes may not start at all. Read [What `shared-single-node` means](volumes.md#what-shared-single-node-means) before running more than one.
 
 ### `overrides`
 

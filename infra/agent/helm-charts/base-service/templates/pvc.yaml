@@ -1,0 +1,19 @@
+{{- range .Values.persistentVolumeClaims }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "base-service.fullname" $ }}-{{ .name }}
+  labels:
+    {{- include "base-service.labels" $ | nindent 4 }}
+  {{- /* The data outlives the release: dropping the volume from the values, or
+         uninstalling, leaves the claim behind, and re-adding the name adopts it. */}}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .size }}
+{{- end }}

@@ -3,8 +3,11 @@ package config
 import (
 	"fmt"
 	"maps"
+	"math"
+	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/pondplatform/pond/shared/server/api"
@@ -24,6 +27,10 @@ const maxServiceNameLen = 53
 
 const maxHostnameLen = 253
 
+// maxVolumeNameLen leaves room for the "vol-" prefix of the pod volume name,
+// which Kubernetes caps at 63 characters.
+const maxVolumeNameLen = 59
+
 var (
 	dns1123Label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
@@ -39,7 +46,16 @@ var (
 	// renderer's pattern only matches word characters, so a name outside that
 	// set can never be referenced.
 	dependencyNamePattern = regexp.MustCompile(`^\w+$`)
+
+	volumeSizePattern = regexp.MustCompile(`^([1-9][0-9]*)(Mi|Gi|Ti)$`)
 )
+
+var volumeSizeUnits = map[string]int64{"Mi": 1 << 20, "Gi": 1 << 30, "Ti": 1 << 40}
+
+// volumeSharedSingleNode is one ReadWriteOnce volume for the whole service,
+// mounted by every copy of it from the one node it is attached to. It is the
+// only volume type so far.
+const volumeSharedSingleNode = "shared-single-node"
 
 // configFormats are the formats config files can be rendered as. Kept in step
 // with the encoder in the Helm values generator.
@@ -96,6 +112,7 @@ func Validate(cfg *serviceconfig.ServiceConfig) error {
 	validateGateway(&errs, cfg.Gateway)
 	validateEnv(&errs, cfg.Env)
 	validateConfigs(&errs, cfg.Configs)
+	validateVolumes(&errs, cfg)
 	validateDependencies(&errs, cfg.Dependencies)
 
 	if errs.HasErrors() {
@@ -395,6 +412,88 @@ func validateConfigs(errs *api.ValidationErrors, configs map[string]serviceconfi
 			mountedBy[spec.MountPath] = name
 		}
 	}
+}
+
+func validateVolumes(errs *api.ValidationErrors, cfg *serviceconfig.ServiceConfig) {
+	if len(cfg.Volumes) == 0 {
+		return
+	}
+
+	// Replicas are deliberately not capped: whether several copies may write
+	// the same files is the app's call, and docs/services/volumes.md warns.
+	configNames := slices.Sorted(maps.Keys(cfg.Configs))
+	mountedBy := make(map[string]string, len(cfg.Volumes))
+	for _, name := range slices.Sorted(maps.Keys(cfg.Volumes)) {
+		spec := cfg.Volumes[name]
+		field := fmt.Sprintf("volumes[%q]", name)
+
+		switch {
+		case name == "":
+			errs.Add(validationComponent, field, "must not be empty")
+		case len(name) > maxVolumeNameLen:
+			errs.Add(validationComponent, field, fmt.Sprintf("must be at most %d characters, got %d", maxVolumeNameLen, len(name)))
+		case !dns1123Label.MatchString(name):
+			errs.Add(validationComponent, field, fmt.Sprintf("must be lowercase alphanumeric characters or %q, starting and ending with an alphanumeric character, got %q", "-", name))
+		}
+
+		switch spec.Type {
+		case volumeSharedSingleNode:
+		case "":
+			errs.Add(validationComponent, field+".type", fmt.Sprintf("is required: %q, one volume that every copy of the service mounts from a single node, is the only type so far", volumeSharedSingleNode))
+		default:
+			errs.Add(validationComponent, field+".type", fmt.Sprintf("must be %q, the only type so far, got %q", volumeSharedSingleNode, spec.Type))
+		}
+
+		// Volumes may nest inside each other, and config files may sit inside a
+		// volume. Only a volume over a config file is rejected: it would replace
+		// the file with a directory.
+		mountField := field + ".mountPath"
+		switch p := spec.MountPath; {
+		case p == "":
+			errs.Add(validationComponent, mountField, "must not be empty")
+		case !strings.HasPrefix(p, "/"):
+			errs.Add(validationComponent, mountField, fmt.Sprintf("must be an absolute path, got %q", p))
+		case p == "/":
+			errs.Add(validationComponent, mountField, "must not be the root directory")
+		case path.Clean(p) != p:
+			errs.Add(validationComponent, mountField, fmt.Sprintf("must not end with %q or contain %q, %q or %q segments, got %q", "/", "//", ".", "..", p))
+		case mountedBy[p] != "":
+			errs.Add(validationComponent, mountField, fmt.Sprintf("%q is already mounted by volumes[%q]", p, mountedBy[p]))
+		default:
+			mountedBy[p] = name
+			for _, cfgName := range configNames {
+				file := cfg.Configs[cfgName].MountPath
+				if !strings.HasPrefix(file, "/") {
+					continue
+				}
+				if p == file || strings.HasPrefix(p, file+"/") {
+					errs.Add(validationComponent, mountField, fmt.Sprintf("must not be at or under configs[%q], which mounts a file at %q", cfgName, file))
+				}
+			}
+		}
+
+		if spec.Size == "" {
+			errs.Add(validationComponent, field+".size", `is required, e.g. "10Gi": a volume can't shrink, so Pond doesn't guess`)
+		} else if _, err := VolumeSizeBytes(spec.Size); err != nil {
+			errs.Add(validationComponent, field+".size", err.Error())
+		}
+	}
+}
+
+// VolumeSizeBytes converts a volume size such as "10Gi" to bytes, so sizes
+// written in different units compare correctly. Its errors are worded as
+// validation messages for the size field.
+func VolumeSizeBytes(size string) (int64, error) {
+	m := volumeSizePattern.FindStringSubmatch(size)
+	if m == nil {
+		return 0, fmt.Errorf(`must be a whole number of Mi, Gi or Ti, e.g. "10Gi", got %q`, size)
+	}
+	unit := volumeSizeUnits[m[2]]
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil || n > math.MaxInt64/unit {
+		return 0, fmt.Errorf("is too large, got %q", size)
+	}
+	return n * unit, nil
 }
 
 func validateDependencies(errs *api.ValidationErrors, deps map[string]serviceconfig.DependencyDeclaration) {

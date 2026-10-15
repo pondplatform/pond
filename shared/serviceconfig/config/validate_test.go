@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/pondplatform/pond/shared/server/api"
@@ -98,6 +99,9 @@ func TestValidate_FullConfigIsValid(t *testing.T) {
 	cfg.Dependencies = map[string]serviceconfig.DependencyDeclaration{"db": {Type: "postgres"}}
 	cfg.Configs = map[string]serviceconfig.ConfigFileSpec{
 		".env": {Format: ".env", MountPath: "/app/.env", Values: map[string]any{"DB_HOST": "{{db.host}}"}},
+	}
+	cfg.Volumes = map[string]serviceconfig.VolumeSpec{
+		"data": {Type: "shared-single-node", MountPath: "/var/lib/my-service", Size: "10Gi"},
 	}
 
 	if err := Validate(cfg); err != nil {
@@ -567,6 +571,279 @@ func TestValidate_EnvConfigsAndDependencies(t *testing.T) {
 			tc.mutate(cfg)
 			wantFields(t, cfg, tc.wantFields...)
 		})
+	}
+}
+
+func TestValidate_Volumes(t *testing.T) {
+	vol := func(mountPath, size string) serviceconfig.VolumeSpec {
+		return serviceconfig.VolumeSpec{Type: "shared-single-node", MountPath: mountPath, Size: size}
+	}
+	one := func(name string, spec serviceconfig.VolumeSpec) func(*serviceconfig.ServiceConfig) {
+		return func(c *serviceconfig.ServiceConfig) {
+			c.Volumes = map[string]serviceconfig.VolumeSpec{name: spec}
+		}
+	}
+
+	tests := []struct {
+		name       string
+		mutate     func(*serviceconfig.ServiceConfig)
+		wantFields []string
+	}{
+		{
+			name:   "a single volume is valid",
+			mutate: one("data", vol("/data", "1Gi")),
+		},
+		{
+			// Nextcloud splits its web root and its data directory this way.
+			name: "a volume inside another volume is valid",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				c.Volumes = map[string]serviceconfig.VolumeSpec{
+					"html": vol("/var/www/html", "1Gi"),
+					"data": vol("/var/www/html/data", "50Gi"),
+				}
+			},
+		},
+		{
+			// Home Assistant reads its config file from the directory it keeps state in.
+			name: "a config file inside a volume is valid",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				c.Configs = map[string]serviceconfig.ConfigFileSpec{
+					"configuration.yaml": {Format: "yaml", MountPath: "/config/configuration.yaml"},
+				}
+				c.Volumes = map[string]serviceconfig.VolumeSpec{"config": vol("/config", "1Gi")}
+			},
+		},
+		{
+			name:   "the longest name that fits the pod volume name",
+			mutate: one(strings.Repeat("a", 59), vol("/data", "1Gi")),
+		},
+		{
+			name:       "name too long for the pod volume name",
+			mutate:     one(strings.Repeat("a", 60), vol("/data", "1Gi")),
+			wantFields: []string{`volumes["` + strings.Repeat("a", 60) + `"]`},
+		},
+		{
+			name:       "name is not a DNS label",
+			mutate:     one("my_data", vol("/data", "1Gi")),
+			wantFields: []string{`volumes["my_data"]`},
+		},
+		{
+			name:       "empty name",
+			mutate:     one("", vol("/data", "1Gi")),
+			wantFields: []string{`volumes[""]`},
+		},
+		{
+			// The type states how copies of the service share the volume, so it
+			// is never implied.
+			name:       "type missing",
+			mutate:     one("data", serviceconfig.VolumeSpec{MountPath: "/data", Size: "1Gi"}),
+			wantFields: []string{`volumes["data"].type`},
+		},
+		{
+			name:       "type not supported yet",
+			mutate:     one("data", serviceconfig.VolumeSpec{Type: "per-replica", MountPath: "/data", Size: "1Gi"}),
+			wantFields: []string{`volumes["data"].type`},
+		},
+		{
+			// "shared" alone would hide that the volume is tied to one node.
+			name:       "type without its node scope",
+			mutate:     one("data", serviceconfig.VolumeSpec{Type: "shared", MountPath: "/data", Size: "1Gi"}),
+			wantFields: []string{`volumes["data"].type`},
+		},
+		{
+			name:       "type is case-sensitive",
+			mutate:     one("data", serviceconfig.VolumeSpec{Type: "Shared-Single-Node", MountPath: "/data", Size: "1Gi"}),
+			wantFields: []string{`volumes["data"].type`},
+		},
+		{
+			name:       "mount path and size missing",
+			mutate:     one("data", vol("", "")),
+			wantFields: []string{`volumes["data"].mountPath`, `volumes["data"].size`},
+		},
+		{
+			name:       "relative mount path",
+			mutate:     one("data", vol("data", "1Gi")),
+			wantFields: []string{`volumes["data"].mountPath`},
+		},
+		{
+			name:       "root directory",
+			mutate:     one("data", vol("/", "1Gi")),
+			wantFields: []string{`volumes["data"].mountPath`},
+		},
+		{
+			name:       "trailing slash",
+			mutate:     one("data", vol("/data/", "1Gi")),
+			wantFields: []string{`volumes["data"].mountPath`},
+		},
+		{
+			name:       "double slash",
+			mutate:     one("data", vol("/var//data", "1Gi")),
+			wantFields: []string{`volumes["data"].mountPath`},
+		},
+		{
+			name:       "parent segment",
+			mutate:     one("data", vol("/var/lib/../data", "1Gi")),
+			wantFields: []string{`volumes["data"].mountPath`},
+		},
+		{
+			name:       "dot segment",
+			mutate:     one("data", vol("/var/./data", "1Gi")),
+			wantFields: []string{`volumes["data"].mountPath`},
+		},
+		{
+			name: "two volumes at the same path",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				c.Volumes = map[string]serviceconfig.VolumeSpec{
+					"a": vol("/data", "1Gi"),
+					"b": vol("/data", "1Gi"),
+				}
+			},
+			wantFields: []string{`volumes["b"].mountPath`},
+		},
+		{
+			name: "volume at a config file's path",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				c.Configs = map[string]serviceconfig.ConfigFileSpec{
+					"app.yaml": {Format: "yaml", MountPath: "/etc/app.yaml"},
+				}
+				c.Volumes = map[string]serviceconfig.VolumeSpec{"data": vol("/etc/app.yaml", "1Gi")}
+			},
+			wantFields: []string{`volumes["data"].mountPath`},
+		},
+		{
+			name: "volume under a config file's path",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				c.Configs = map[string]serviceconfig.ConfigFileSpec{
+					"app.yaml": {Format: "yaml", MountPath: "/etc/app.yaml"},
+				}
+				c.Volumes = map[string]serviceconfig.VolumeSpec{"data": vol("/etc/app.yaml/data", "1Gi")}
+			},
+			wantFields: []string{`volumes["data"].mountPath`},
+		},
+		{
+			// A shared prefix is not nesting: /etc/app.yaml.d is a sibling of the file.
+			name: "volume beside a config file with a shared prefix",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				c.Configs = map[string]serviceconfig.ConfigFileSpec{
+					"app.yaml": {Format: "yaml", MountPath: "/etc/app.yaml"},
+				}
+				c.Volumes = map[string]serviceconfig.VolumeSpec{"data": vol("/etc/app.yaml.d", "1Gi")}
+			},
+		},
+		{
+			// The config's own error is enough; it must not also match every volume.
+			name: "config without a mount path does not shadow volumes",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				c.Configs = map[string]serviceconfig.ConfigFileSpec{"app.yaml": {Format: "yaml"}}
+				c.Volumes = map[string]serviceconfig.VolumeSpec{"data": vol("/data", "1Gi")}
+			},
+			wantFields: []string{`configs["app.yaml"].mountPath`},
+		},
+		{
+			name:   "size in mebibytes",
+			mutate: one("data", vol("/data", "512Mi")),
+		},
+		{
+			name:   "size in tebibytes",
+			mutate: one("data", vol("/data", "2Ti")),
+		},
+		{
+			name:   "the largest size that fits in bytes",
+			mutate: one("data", vol("/data", "8388607Ti")),
+		},
+		{
+			name:       "size too large to count in bytes",
+			mutate:     one("data", vol("/data", "8388608Ti")),
+			wantFields: []string{`volumes["data"].size`},
+		},
+		{
+			name:       "size too large to parse",
+			mutate:     one("data", vol("/data", "99999999999999999999Gi")),
+			wantFields: []string{`volumes["data"].size`},
+		},
+		{
+			name:       "decimal unit",
+			mutate:     one("data", vol("/data", "10G")),
+			wantFields: []string{`volumes["data"].size`},
+		},
+		{
+			name:       "lowercase unit",
+			mutate:     one("data", vol("/data", "10gi")),
+			wantFields: []string{`volumes["data"].size`},
+		},
+		{
+			name:       "kibibytes",
+			mutate:     one("data", vol("/data", "1024Ki")),
+			wantFields: []string{`volumes["data"].size`},
+		},
+		{
+			name:       "fraction",
+			mutate:     one("data", vol("/data", "1.5Gi")),
+			wantFields: []string{`volumes["data"].size`},
+		},
+		{
+			name:       "zero",
+			mutate:     one("data", vol("/data", "0Gi")),
+			wantFields: []string{`volumes["data"].size`},
+		},
+		{
+			name:       "leading zero",
+			mutate:     one("data", vol("/data", "010Gi")),
+			wantFields: []string{`volumes["data"].size`},
+		},
+		{
+			name:       "bare number",
+			mutate:     one("data", vol("/data", "10")),
+			wantFields: []string{`volumes["data"].size`},
+		},
+		{
+			// Whether copies may write the same files is the app's call; the
+			// volumes docs carry the warnings.
+			name: "several replicas share the volume",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				one("data", vol("/data", "1Gi"))(c)
+				c.Deployment = &serviceconfig.DeploymentSpec{Replicas: serviceconfig.Ptr(int32(3))}
+			},
+		},
+		{
+			name: "zero replicas pauses the service",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				one("data", vol("/data", "1Gi"))(c)
+				c.Deployment = &serviceconfig.DeploymentSpec{Replicas: serviceconfig.Ptr(int32(0))}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validConfig()
+			tc.mutate(cfg)
+
+			if len(tc.wantFields) == 0 {
+				if err := Validate(cfg); err != nil {
+					t.Errorf("Expected valid config, got: %v", err)
+				}
+				return
+			}
+			wantFields(t, cfg, tc.wantFields...)
+		})
+	}
+}
+
+// Shrink checks compare bytes, so the same size in another unit is not smaller.
+func TestVolumeSizeBytes(t *testing.T) {
+	tests := map[string]int64{
+		"1Mi":    1 << 20,
+		"1024Mi": 1 << 30,
+		"1Gi":    1 << 30,
+		"10Gi":   10 << 30,
+		"1Ti":    1 << 40,
+	}
+	for size, want := range tests {
+		got, err := VolumeSizeBytes(size)
+		if err != nil || got != want {
+			t.Errorf("VolumeSizeBytes(%q) = %d, %v; want %d", size, got, err, want)
+		}
 	}
 }
 

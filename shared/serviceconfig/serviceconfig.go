@@ -18,6 +18,23 @@ type ServiceConfig struct {
 	Dependencies map[string]DependencyDeclaration `json:"dependencies,omitempty" yaml:"dependencies"`
 	Env          map[string]string                `json:"env,omitempty"          yaml:"env"`
 	Configs      map[string]ConfigFileSpec        `json:"configs,omitempty"      yaml:"configs"`
+
+	// Volumes has no counterpart in Override: a service needs the same storage
+	// in every environment.
+	Volumes map[string]VolumeSpec `json:"volumes,omitempty" yaml:"volumes"`
+}
+
+// VolumeSpec is a directory that survives restarts and redeploys. Its map key
+// identifies the data, so renaming a volume gives the service a new, empty one.
+type VolumeSpec struct {
+	// Type says which copies of the service mount the volume, and from where.
+	// It is required, so pond.yml states that behaviour rather than inheriting
+	// it. "shared-single-node" is the only type: one volume that every copy of
+	// the service mounts, attachable to one node at a time.
+	Type      string `json:"type"      yaml:"type"`
+	MountPath string `json:"mountPath" yaml:"mountPath"`
+	// Size is a whole number of Mi, Gi or Ti. It can grow but never shrink.
+	Size string `json:"size" yaml:"size"`
 }
 
 type DeploymentSpec struct {

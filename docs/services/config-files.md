@@ -15,6 +15,25 @@ configs:
 
 Pond renders the file from `values`, formats it according to `format`, and mounts it at `mountPath` inside the container. `mountPath` is the full, absolute path of the file (including the file name), and each config must use a different `mountPath`. The `<name>` key only identifies the config.
 
+A config file is mounted read-only and rendered again on every deploy. It can sit inside a [volume](volumes.md)'s directory, for an app that reads its config from the same directory it keeps its data in:
+
+```yaml
+configs:
+  configuration.yaml:
+    format: yaml
+    mountPath: /config/configuration.yaml
+    values:
+      default_config: {}
+
+volumes:
+  config:
+    type: shared-single-node
+    mountPath: /config
+    size: 1Gi
+```
+
+The file covers that one path in the volume and leaves the rest of the volume writable. The container runtime leaves an empty placeholder at that path in the volume, which stays if you remove the config later. A volume can't be mounted at a config file's path or below it.
+
 ---
 
 ## Formats

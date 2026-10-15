@@ -5,6 +5,13 @@
 # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
 replicaCount: 1
 
+# RollingUpdate or Recreate. Recreate stops every old pod before starting a new
+# one, so two versions never write the same volume. The RollingUpdate parameters are
+# rendered by the template rather than set here: helm merges maps, so a default
+# here would leak into a Recreate strategy, which Kubernetes rejects.
+strategy:
+  type: RollingUpdate
+
 # This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
 image:
   repository: nginx
@@ -131,6 +138,12 @@ volumeMounts: []
   # - name: foo
   #   mountPath: "/etc/foo"
   #   readOnly: true
+
+# PersistentVolumeClaims to create, each named <fullname>-<name>. They are only
+# created here; mount them through volumes and volumeMounts.
+persistentVolumeClaims: []
+  # - name: data
+  #   size: 10Gi
 
 nodeSelector: {}
 

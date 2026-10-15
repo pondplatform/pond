@@ -65,6 +65,24 @@ helm-lint:
 	helm template ci infra/agent/helm-charts/base-service \
 		--set 'readinessProbe.httpGet.path=/health/ready' \
 		--set 'readinessProbe.httpGet.port=8080' >/dev/null
+	@# RollingUpdate renders its parameters so helm owns them and a later switch
+	@# to Recreate removes them; Kubernetes rejects them on a Recreate strategy.
+	helm template ci infra/agent/helm-charts/base-service | grep -q 'maxUnavailable: 25%'
+	! helm template ci infra/agent/helm-charts/base-service --set strategy.type=Recreate | grep -q rollingUpdate
+	! helm template ci infra/agent/helm-charts/base-service | grep -q PersistentVolumeClaim
+	helm lint infra/agent/helm-charts/base-service --set strategy.type=Recreate \
+		--set 'persistentVolumeClaims[0].name=data' --set 'persistentVolumeClaims[0].size=1Gi'
+	@# A claim is named after the release, survives removal, and leaves the
+	@# storage class to the cluster default.
+	helm template ci infra/agent/helm-charts/base-service \
+		--set 'persistentVolumeClaims[0].name=data' --set 'persistentVolumeClaims[0].size=1Gi' \
+		| grep -A8 'kind: PersistentVolumeClaim' | grep -q 'name: ci-base-service-data'
+	helm template ci infra/agent/helm-charts/base-service \
+		--set 'persistentVolumeClaims[0].name=data' --set 'persistentVolumeClaims[0].size=1Gi' \
+		| grep -q 'helm.sh/resource-policy: keep'
+	! helm template ci infra/agent/helm-charts/base-service \
+		--set 'persistentVolumeClaims[0].name=data' --set 'persistentVolumeClaims[0].size=1Gi' \
+		| grep -q storageClassName
 
 # ---- E2E targets ----
 
@@ -79,3 +97,4 @@ e2e-teardown:
 e2e: e2e-setup
 	./test/end-to-end/deploy-postgres.sh
 	./test/end-to-end/deploy-gateway.sh
+	./test/end-to-end/deploy-volumes.sh

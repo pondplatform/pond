@@ -48,6 +48,7 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 
 	vals := &HelmValues{
 		ReplicaCount: replicaCount,
+		Strategy:     HelmStrategy{Type: "RollingUpdate"},
 		Image: Image{
 			Repository: repository,
 			Tag:        tag,
@@ -124,7 +125,40 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 		})
 	}
 
+	addVolumes(vals, cfg)
+
 	return vals, nil
+}
+
+// volumeGroupID owns new volume files so images that run as a non-root user
+// can write to them. 1000 is the first user most base images create.
+const volumeGroupID = 1000
+
+func addVolumes(vals *HelmValues, cfg *serviceconfig.ServiceConfig) {
+	if len(cfg.Volumes) == 0 {
+		return
+	}
+
+	// Every old pod stops before a new one starts, so the old and the new
+	// version never write the same files at once, and a ReadWriteOnce claim is
+	// free to follow the pods to another node.
+	vals.Strategy.Type = "Recreate"
+	vals.PodSecurityContext = &HelmPodSecurityContext{
+		FSGroup: serviceconfig.Ptr(int64(volumeGroupID)),
+		// Only chown when the volume's root doesn't match, rather than walking
+		// every file on each start.
+		FSGroupChangePolicy: "OnRootMismatch",
+	}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Volumes)) {
+		volume := cfg.Volumes[name]
+		podVolume := "vol-" + name
+		vals.PersistentVolumeClaims = append(vals.PersistentVolumeClaims, HelmPersistentVolumeClaim{Name: name, Size: volume.Size})
+		vals.Volumes = append(vals.Volumes, HelmVolume{
+			Name:                  podVolume,
+			PersistentVolumeClaim: HelmPersistentVolumeClaimRef{ClaimName: vals.FullnameOverride + "-" + name},
+		})
+		vals.VolumeMounts = append(vals.VolumeMounts, HelmVolumeMount{Name: podVolume, MountPath: volume.MountPath})
+	}
 }
 
 func encodeConfigFile(format string, values map[string]any) (string, error) {

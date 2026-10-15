@@ -8,6 +8,16 @@ spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  {{- /* Rendered even for the Kubernetes default so helm owns rollingUpdate:
+         a later switch to Recreate can then remove it, where a defaulted
+         rollingUpdate nobody owns would stay and fail validation. */}}
+  strategy:
+    type: {{ .Values.strategy.type }}
+    {{- if eq .Values.strategy.type "RollingUpdate" }}
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    {{- end }}
   selector:
     matchLabels:
       {{- include "base-service.selectorLabels" . | nindent 6 }}

@@ -13,6 +13,7 @@
 - [pond.yml Reference](services/pond-yml.md)
 - [Dependencies](services/dependencies.md)
 - [Config Files](services/config-files.md)
+- [Volumes](services/volumes.md)
 - [Environment Overrides](services/environments.md)
 
 # CLI Reference

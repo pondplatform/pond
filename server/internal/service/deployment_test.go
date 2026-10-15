@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -199,6 +200,78 @@ func TestSubmit_WritesNothingWhenValidationFails(t *testing.T) {
 	undeclared := map[string]api.DependencyInput{"db": {Managed: true}, "cache": {Managed: true}}
 	if _, err := s.Submit(context.Background(), submitRequest(postgresDep, undeclared)); err == nil {
 		t.Fatal("expected a validation error")
+	}
+}
+
+func TestSubmit_VolumesNeverShrink(t *testing.T) {
+	data := func(size string) map[string]serviceconfig.VolumeSpec {
+		return map[string]serviceconfig.VolumeSpec{"data": {Type: "shared-single-node", MountPath: "/data", Size: size}}
+	}
+	succeeded := func(volumes map[string]serviceconfig.VolumeSpec) []db.Deployment {
+		return []db.Deployment{{
+			Status:                db.DeploymentSucceeded,
+			ServiceConfigSnapshot: serviceconfig.ServiceConfig{Volumes: volumes},
+		}}
+	}
+
+	cases := map[string]struct {
+		lastSucceeded []db.Deployment
+		volumes       map[string]serviceconfig.VolumeSpec
+		wantRejected  bool
+	}{
+		"smaller than in the last succeeded deployment": {succeeded(data("10Gi")), data("5Gi"), true},
+		"the same size in another unit":                 {succeeded(data("1Gi")), data("1024Mi"), false},
+		"grown":                                         {succeeded(data("1Gi")), data("2Gi"), false},
+		"a volume the last deployment didn't have":      {succeeded(nil), data("1Gi"), false},
+		"the first deployment":                          {nil, data("1Gi"), false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc := &db.Service{ID: uuid.New(), ProjectID: testProjectID, Name: "my-service"}
+			env := &db.Environment{ID: uuid.New(), Name: "staging"}
+			created := false
+			deployments := &testutil.MockDeploymentInfoStore{
+				ListByServiceFilteredFn: func(_ context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *api.DeploymentStatus, limit int, cursor string) ([]db.Deployment, error) {
+					// Only this environment's succeeded deployments count, so a
+					// failed grow can be reverted.
+					if serviceID != svc.ID || environmentID == nil || *environmentID != env.ID ||
+						status == nil || *status != api.DeploymentStatusSucceeded || limit != 1 || cursor != "" {
+						t.Errorf("unexpected lookup: service %s, environment %v, status %v, limit %d, cursor %q", serviceID, environmentID, status, limit, cursor)
+					}
+					return tc.lastSucceeded, nil
+				},
+				CreateFn: func(context.Context, *db.Deployment) error {
+					created = true
+					return nil
+				},
+			}
+			s := newTestService(deployments)
+			s.repos.Services.(*testutil.MockServiceRepository).GetByNameFn = func(context.Context, uuid.UUID, string) (*db.Service, error) {
+				return svc, nil
+			}
+			envs := s.repos.Envs.(*testutil.MockEnvironmentRepository)
+			envs.GetByNameFn = func(context.Context, uuid.UUID, string) (*db.Environment, error) { return env, nil }
+			envs.GetByIDFn = func(context.Context, uuid.UUID) (*db.Environment, error) { return env, nil }
+
+			req := submitRequest(nil, nil)
+			req.OverridableConfig.ServiceConfig.Volumes = tc.volumes
+			_, err := s.Submit(context.Background(), req)
+
+			if !tc.wantRejected {
+				if err != nil || !created {
+					t.Fatalf("expected the deployment to be created, got %v", err)
+				}
+				return
+			}
+			want := []api.ValidationError{{Component: "config", Field: `volumes["data"].size`,
+				Message: "must be at least 10Gi, its size in the last successful deployment: a volume can grow but never shrink, got 5Gi"}}
+			if got := validationErrors(t, err); !slices.Equal(got, want) {
+				t.Errorf("expected %+v, got %+v", want, got)
+			}
+			if created {
+				t.Error("no deployment should be created when a volume shrinks")
+			}
+		})
 	}
 }
 
