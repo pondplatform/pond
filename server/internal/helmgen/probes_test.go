@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/shared/serviceconfig"
 	"gopkg.in/yaml.v3"
@@ -31,7 +32,7 @@ func TestGenerator_Generate_OmitsProbesWhenUnset(t *testing.T) {
 		Service: &serviceconfig.ServiceSpec{Port: serviceconfig.Ptr(int32(8080))},
 	}
 
-	vals, err := g.Generate(cfg, &domain.Environment{}, "")
+	vals, err := g.Generate(cfg, &domain.Environment{}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -57,7 +58,7 @@ func TestGenerator_Generate_OmitsProbesWhenManagementEmpty(t *testing.T) {
 
 	cfg := managementConfig("web", &serviceconfig.ManagementConfig{}, serviceconfig.Ptr(int32(8080)))
 
-	vals, err := g.Generate(cfg, &domain.Environment{}, "")
+	vals, err := g.Generate(cfg, &domain.Environment{}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestGenerator_Generate_ReadinessOnlyLeavesLivenessUnset(t *testing.T) {
 		},
 	}, serviceconfig.Ptr(int32(8080)))
 
-	vals, err := g.Generate(cfg, &domain.Environment{}, "")
+	vals, err := g.Generate(cfg, &domain.Environment{}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -118,7 +119,7 @@ func TestGenerator_Generate_ProbeFieldsRoundTrip(t *testing.T) {
 		},
 	}, serviceconfig.Ptr(int32(8080)))
 
-	vals, err := g.Generate(cfg, &domain.Environment{}, "")
+	vals, err := g.Generate(cfg, &domain.Environment{}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -157,7 +158,7 @@ func TestGenerator_Generate_MetricsAnnotationsUseServicePort(t *testing.T) {
 		Metrics: &serviceconfig.MetricsConfig{Endpoint: "/metrics"},
 	}, serviceconfig.Ptr(int32(8080)))
 
-	vals, err := g.Generate(cfg, &domain.Environment{}, "")
+	vals, err := g.Generate(cfg, &domain.Environment{}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}

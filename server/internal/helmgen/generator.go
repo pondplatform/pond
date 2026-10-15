@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/google/uuid"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/shared/serviceconfig"
 	"gopkg.in/yaml.v3"
@@ -30,7 +31,11 @@ func splitRepositoryTag(image string) (string, string) {
 	return split[0], tag
 }
 
-func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment, imageTag string) (*HelmValues, error) {
+// deploymentIDAnnotation differs on every deployment, so each one changes the
+// pod template and rolls the pods even when nothing else changed.
+const deploymentIDAnnotation = "pond/deployment-id"
+
+func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Environment, imageTag string, deploymentID uuid.UUID) (*HelmValues, error) {
 	repository, tag := splitRepositoryTag(cfg.Image)
 	// The tag the deployment was submitted with is the one the user asked to
 	// deploy, so it overrides a tag pinned in the image reference.
@@ -61,7 +66,8 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 			Type: "ClusterIP",
 			Port: servicePort,
 		},
-		Env: cfg.Env,
+		Env:            cfg.Env,
+		PodAnnotations: map[string]string{deploymentIDAnnotation: deploymentID.String()},
 	}
 
 	for _, arg := range cfg.Command {
@@ -94,9 +100,6 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 		vals.ReadinessProbe = probeValues(mgmt.ReadinessProbe, servicePort)
 
 		if mgmt.Metrics != nil && mgmt.Metrics.Endpoint != "" {
-			if vals.PodAnnotations == nil {
-				vals.PodAnnotations = make(map[string]string)
-			}
 			metricsPort, _ := resolveProbePort(mgmt.Metrics.Port, servicePort)
 			vals.PodAnnotations["prometheus.io/scrape"] = "true"
 			vals.PodAnnotations["prometheus.io/port"] = fmt.Sprintf("%d", metricsPort)
@@ -158,9 +161,6 @@ func addConfigChecksum(vals *HelmValues) {
 		Env     map[string]string
 		Configs []HelmConfig
 	}{vals.Env, vals.Configs})
-	if vals.PodAnnotations == nil {
-		vals.PodAnnotations = make(map[string]string)
-	}
 	vals.PodAnnotations["checksum/config"] = fmt.Sprintf("%x", sha256.Sum256(data))
 }
 

@@ -239,6 +239,9 @@ func TestAdvance_TheRolloutRendersEnvAndVariables(t *testing.T) {
 	if values.PodAnnotations["checksum/config"] == "" {
 		t.Errorf("expected a checksum annotation so the pods roll, got %v", values.PodAnnotations)
 	}
+	if got := values.PodAnnotations["pond/deployment-id"]; got != f.deployment.ID.String() {
+		t.Errorf("expected the deployment ID %s as an annotation so every deployment rolls the pods, got %q", f.deployment.ID, got)
+	}
 }
 
 func TestAdvance_AnUnrenderableEnvFailsTheDeployment(t *testing.T) {

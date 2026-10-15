@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	domain "github.com/pondplatform/pond/server/internal/model/db"
 	"github.com/pondplatform/pond/shared/serviceconfig"
 	"gopkg.in/yaml.v3"
@@ -33,7 +34,7 @@ func TestGenerator_Generate_ConfigFiles(t *testing.T) {
 		DefaultIngressBaseHost: "example.com",
 	}
 
-	vals, err := g.Generate(cfg, env, "")
+	vals, err := g.Generate(cfg, env, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -75,7 +76,7 @@ func TestGenerator_Generate_ConfigFilesInNameOrder(t *testing.T) {
 	}
 
 	for range 20 {
-		vals, err := g.Generate(cfg, &domain.Environment{}, "")
+		vals, err := g.Generate(cfg, &domain.Environment{}, "", uuid.Nil)
 		if err != nil {
 			t.Fatalf("Generate failed: %v", err)
 		}
@@ -106,7 +107,7 @@ func TestGenerator_Generate_GatewayHTTPRouteDerivesHostname(t *testing.T) {
 		DefaultIngressBaseHost: "pond.local",
 	}
 
-	vals, err := g.Generate(cfg, env, "")
+	vals, err := g.Generate(cfg, env, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestGenerator_Generate_GatewayHTTPRouteExplicitHostnameAndRules(t *testing.
 		DefaultIngressBaseHost: "pond.local",
 	}
 
-	vals, err := g.Generate(cfg, env, "")
+	vals, err := g.Generate(cfg, env, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -182,7 +183,7 @@ func TestGenerator_Generate_GatewayDisabledByDefault(t *testing.T) {
 
 	vals, err := g.Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{
 		DefaultIngressBaseHost: "pond.local",
-	}, "")
+	}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -236,7 +237,7 @@ func TestGenerator_Generate_ConfigChecksum(t *testing.T) {
 				"b.json": {Format: "json", MountPath: "/etc/b.json", Values: map[string]any{"x": 1, "y": 2}},
 			}
 		}
-		vals, err := NewGenerator().Generate(cfg, &domain.Environment{}, "")
+		vals, err := NewGenerator().Generate(cfg, &domain.Environment{}, "", uuid.Nil)
 		if err != nil {
 			t.Fatalf("Generate failed: %v", err)
 		}
@@ -266,12 +267,33 @@ func TestGenerator_Generate_ConfigChecksum(t *testing.T) {
 	}
 }
 
+// A redeploy of an unchanged config must still roll the pods, so each
+// deployment's ID alone has to change the pod template.
+func TestGenerator_Generate_DeploymentIDAnnotation(t *testing.T) {
+	annotation := func(id uuid.UUID) string {
+		t.Helper()
+		vals, err := NewGenerator().Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{}, "", id)
+		if err != nil {
+			t.Fatalf("Generate failed: %v", err)
+		}
+		return vals.PodAnnotations["pond/deployment-id"]
+	}
+
+	first, second := uuid.New(), uuid.New()
+	if got := annotation(first); got != first.String() {
+		t.Errorf("expected the deployment ID %s, got %q", first, got)
+	}
+	if annotation(first) == annotation(second) {
+		t.Error("expected another deployment to change the annotation")
+	}
+}
+
 // Regression guard: an unset replica count must be omitted from the values so
 // the chart default of 1 applies, rather than pinning the deployment to zero.
 func TestGenerator_Generate_OmitsUnsetReplicaCountAndPort(t *testing.T) {
 	g := NewGenerator()
 
-	vals, err := g.Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{}, "")
+	vals, err := g.Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -302,7 +324,7 @@ func TestGenerator_Generate_ReplicasFromDeployment(t *testing.T) {
 		},
 	}
 
-	vals, err := g.Generate(cfg, &domain.Environment{}, "")
+	vals, err := g.Generate(cfg, &domain.Environment{}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -323,7 +345,7 @@ func TestGenerator_Generate_Volumes(t *testing.T) {
 		},
 	}
 
-	vals, err := g.Generate(cfg, &domain.Environment{}, "")
+	vals, err := g.Generate(cfg, &domain.Environment{}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -364,7 +386,7 @@ func TestGenerator_Generate_Volumes(t *testing.T) {
 func TestGenerator_Generate_NoVolumes(t *testing.T) {
 	g := NewGenerator()
 
-	vals, err := g.Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{}, "")
+	vals, err := g.Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -392,7 +414,7 @@ func TestGenerator_Generate_Command(t *testing.T) {
 		Name:    "worker",
 		Command: []string{"sh", "-c", `echo "pid $$, home $HOME, $(SECRET)" && exec worker`, "$"},
 	}
-	vals, err := g.Generate(cfg, &domain.Environment{}, "")
+	vals, err := g.Generate(cfg, &domain.Environment{}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -410,7 +432,7 @@ func TestGenerator_Generate_Command(t *testing.T) {
 
 // Without a command the chart renders no args, so the image's CMD runs.
 func TestGenerator_Generate_NoCommand(t *testing.T) {
-	vals, err := NewGenerator().Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{}, "")
+	vals, err := NewGenerator().Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{}, "", uuid.Nil)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -447,6 +469,7 @@ func TestGenerator_Generate_ImageTag(t *testing.T) {
 				&serviceconfig.ServiceConfig{Name: "api", Image: tt.image},
 				&domain.Environment{},
 				tt.imageTag,
+				uuid.Nil,
 			)
 			if err != nil {
 				t.Fatalf("Generate failed: %v", err)

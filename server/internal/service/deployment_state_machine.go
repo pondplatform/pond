@@ -288,7 +288,7 @@ func helmUpgradePayload(deployment db.Deployment, env db.Environment, outputs ma
 	if err != nil {
 		return nil, err
 	}
-	values, err := helmValuesYAML(helmGen, &cfg, &env, deployment.ImageTag)
+	values, err := helmValuesYAML(helmGen, &cfg, &env, deployment.ImageTag, deployment.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -304,8 +304,8 @@ func helmUpgradePayload(deployment db.Deployment, env db.Environment, outputs ma
 	return payload, nil
 }
 
-func helmValuesYAML(helmGen helmgen.HelmValuesGenerator, cfg *serviceconfig.ServiceConfig, env *db.Environment, imageTag string) ([]byte, error) {
-	values, err := helmGen.Generate(cfg, env, imageTag)
+func helmValuesYAML(helmGen helmgen.HelmValuesGenerator, cfg *serviceconfig.ServiceConfig, env *db.Environment, imageTag string, deploymentID uuid.UUID) ([]byte, error) {
+	values, err := helmGen.Generate(cfg, env, imageTag, deploymentID)
 	if err != nil {
 		return nil, fmt.Errorf("generate helm values: %w", err)
 	}

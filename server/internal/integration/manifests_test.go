@@ -39,6 +39,24 @@ rules:
 	expectField(t, objs, "Deployment/gateway-demo", "spec.replicas", `1`)
 }
 
+// TestManifests_RedeployRollsThePods checks that deploying an unchanged
+// pond.yml again still changes the pod template, so Kubernetes rolls the pods.
+func TestManifests_RedeployRollsThePods(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	h := NewTestHarness(t, testConnStr)
+	scenario := BuildScenario(ctx, t, h)
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, DefaultBehavior)
+
+	const deploymentID = "spec.template.metadata.annotations.pond/deployment-id"
+	first := deploySucceeds(ctx, t, h, fa, SubmitFileRequest(t, scenario, "command/pond.yml")).field(t, "Deployment/command-demo", deploymentID)
+	second := deploySucceeds(ctx, t, h, fa, SubmitFileRequest(t, scenario, "command/pond.yml")).field(t, "Deployment/command-demo", deploymentID)
+	if first == nil || first == second {
+		t.Errorf("expected each deployment to set its own pod annotation, got %v then %v", first, second)
+	}
+}
+
 // TestManifests_VolumeAddedAndRemoved checks a volume's claim and mount, and
 // that removing it switches the rollout back while the claim is left to
 // helm's keep policy.
