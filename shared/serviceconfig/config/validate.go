@@ -100,6 +100,12 @@ func Validate(cfg *serviceconfig.ServiceConfig) error {
 		errs.Add(validationComponent, "image", "is required unless build is set")
 	}
 
+	// Kubernetes runs the image's CMD when the argument list is empty, so an
+	// empty list can't mean "no arguments" as it does in Compose.
+	if cfg.Command != nil && len(cfg.Command) == 0 {
+		errs.Add(validationComponent, "command", "must not be empty: the image's default command can be replaced but not cleared, so leave command out to keep it")
+	}
+
 	var servicePort *int32
 	if cfg.Service != nil {
 		servicePort = cfg.Service.Port

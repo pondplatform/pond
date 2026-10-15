@@ -63,6 +63,10 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 		Env: cfg.Env,
 	}
 
+	for _, arg := range cfg.Command {
+		vals.Args = append(vals.Args, argEscaper.Replace(arg))
+	}
+
 	gatewayEnabled := cfg.Gateway != nil && cfg.Gateway.HTTP != nil &&
 		cfg.Gateway.HTTP.Enabled != nil && *cfg.Gateway.HTTP.Enabled
 
@@ -129,6 +133,10 @@ func (g *generator) Generate(cfg *serviceconfig.ServiceConfig, env *domain.Envir
 
 	return vals, nil
 }
+
+// argEscaper doubles every $ so arguments reach the app verbatim: Kubernetes
+// expands $(VAR) in container args and reduces $$ to $.
+var argEscaper = strings.NewReplacer("$", "$$")
 
 // volumeGroupID owns new volume files so images that run as a non-root user
 // can write to them. 1000 is the first user most base images create.

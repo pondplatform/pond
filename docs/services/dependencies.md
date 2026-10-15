@@ -35,7 +35,7 @@ A PostgreSQL database.
 | `{{<name>.host}}` | Database host |
 | `{{<name>.port}}` | Database port |
 | `{{<name>.username}}` | Database username |
-| `{{<name>.password}}` | Database password |
+| `{{<name>.password}}` | Database password. Sensitive, so not allowed in [`command`](pond-yml.md#command). |
 | `{{<name>.database}}` | Database name |
 
 **Example:**

@@ -103,6 +103,8 @@ String values support `{{variable}}` syntax at any depth, including inside neste
 | `{{deployment.replicas}}` | The `deployment.replicas` value from your `pond.yml` |
 | `{{env.<KEY>}}` | An environment variable declared in the `env` block |
 
+The same variables work in [`command`](pond-yml.md#command), except sensitive dependency outputs such as `{{db.password}}`.
+
 ---
 
 ## Full example

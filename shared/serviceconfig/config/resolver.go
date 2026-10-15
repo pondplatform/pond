@@ -27,6 +27,11 @@ func (r *resolver) Resolve(base *serviceconfig.OverridableConfig, envName string
 		return &cfg, nil
 	}
 
+	// Arguments are positional, so the override replaces the whole list.
+	if override.Command != nil {
+		cfg.Command = override.Command
+	}
+
 	// Apply deployment override: copy struct before mutating to avoid sharing with base.
 	if override.Deployment != nil {
 		deploymentCopy := serviceconfig.DeploymentSpec{}

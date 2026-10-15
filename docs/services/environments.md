@@ -8,7 +8,7 @@ When you deploy to a named environment (e.g. `production`), Pond looks for a mat
 
 - **Struct fields** (`deployment`, `service`, `gateway`): individual fields are overridden; unset fields keep their base value.
 - **Maps** (`env`, `dependencies`, `configs`): entries from the override are merged key-by-key. Override keys win; unrelated base keys are kept.
-- **Lists** (`gateway.http.rules`): replaced wholesale, never appended. Routing rules are order-sensitive, so keeping the base rules in front would let them shadow the override. An explicit `rules: []` resets to the default catch-all route.
+- **Lists** (`command`, `gateway.http.rules`): replaced wholesale, never appended. Arguments are positional, and routing rules are order-sensitive, so keeping the base rules in front would let them shadow the override. An explicit `rules: []` resets to the default catch-all route.
 
 ## Example
 
@@ -54,6 +54,7 @@ When deploying to `staging`:
 
 | Key | Type |
 |---|---|
+| `command` | list — replaced as a whole |
 | `deployment` | `DeploymentSpec` — `replicas`, `management` |
 | `service` | `ServiceSpec` — `port` |
 | `gateway` | `GatewayConfig` — `http.enabled`, `http.hostname`, `http.rules` |

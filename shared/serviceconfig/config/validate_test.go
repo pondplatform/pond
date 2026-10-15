@@ -103,9 +103,41 @@ func TestValidate_FullConfigIsValid(t *testing.T) {
 	cfg.Volumes = map[string]serviceconfig.VolumeSpec{
 		"data": {Type: "shared-single-node", MountPath: "/var/lib/my-service", Size: "10Gi"},
 	}
+	cfg.Command = []string{"serve", "--port", "{{service.port}}"}
 
 	if err := Validate(cfg); err != nil {
 		t.Errorf("Expected valid config, got: %v", err)
+	}
+}
+
+func TestValidate_Command(t *testing.T) {
+	tests := []struct {
+		name       string
+		command    []string
+		wantFields []string
+	}{
+		{name: "unset keeps the image's default command", command: nil},
+		{name: "one argument", command: []string{"start"}},
+		{name: "an empty argument is still an argument", command: []string{"serve", "--prefix", ""}},
+		{
+			// Compose reads an empty list as "no arguments", which can't be honoured.
+			name:       "empty list",
+			command:    []string{},
+			wantFields: []string{"command"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Command = tc.command
+			if len(tc.wantFields) == 0 {
+				if err := Validate(cfg); err != nil {
+					t.Errorf("Expected valid config, got: %v", err)
+				}
+				return
+			}
+			wantFields(t, cfg, tc.wantFields...)
+		})
 	}
 }
 

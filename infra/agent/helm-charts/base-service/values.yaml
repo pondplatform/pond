@@ -20,6 +20,10 @@ image:
   # Overrides the image tag whose default is the chart appVersion.
   tag: "0.0.1"
 
+# Container args: they replace the image's CMD and keep its ENTRYPOINT. Empty
+# runs the image's CMD. Kubernetes expands $(VAR) in them, so write $$ for a $.
+args: []
+
 # This is for the secrets for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
 imagePullSecrets: []
 # This is to override the chart name.

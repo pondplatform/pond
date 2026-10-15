@@ -44,6 +44,7 @@ func (s *deploymentService) validateSubmission(ctx context.Context, req api.Subm
 	}
 	addUndeclaredInputErrors(&errs, svcConfig.Dependencies, req.Dependencies)
 	addTemplateReferenceErrors(&errs, svcConfig)
+	s.addCommandReferenceErrors(&errs, svcConfig)
 
 	if errs.HasErrors() {
 		return nil, nil, &errs
@@ -86,22 +87,73 @@ func addUndeclaredInputErrors(errs *api.ValidationErrors, declared map[string]se
 	}
 }
 
-// addTemplateReferenceErrors rejects a {{var}} in a config file that could
-// never resolve: one that names neither a declared dependency nor a value the
-// service config itself provides. A dependency's outputs are only known once
-// it is provisioned, so references into them are checked at rollout.
+// templateSite is a field the renderer substitutes into, named as validation
+// errors report it, with the {{var}}s it references.
+type templateSite struct {
+	field string
+	refs  []string
+}
+
+func templateSites(cfg *serviceconfig.ServiceConfig) []templateSite {
+	var sites []templateSite
+	for _, file := range slices.Sorted(maps.Keys(cfg.Configs)) {
+		sites = append(sites, templateSite{file, templateReferences(cfg.Configs[file].Values)})
+	}
+	for i, arg := range cfg.Command {
+		sites = append(sites, templateSite{commandField(i), templateReferences(arg)})
+	}
+	return sites
+}
+
+func commandField(i int) string { return fmt.Sprintf("command[%d]", i) }
+
+// addTemplateReferenceErrors rejects a {{var}} that could never resolve: one
+// that names neither a declared dependency nor a value the service config
+// itself provides. A dependency's outputs are only known once it is
+// provisioned, so references into them are checked at rollout.
 func addTemplateReferenceErrors(errs *api.ValidationErrors, cfg *serviceconfig.ServiceConfig) {
 	own := buildLookupTable(nil, cfg)
-	for _, file := range slices.Sorted(maps.Keys(cfg.Configs)) {
-		for _, ref := range templateReferences(cfg.Configs[file].Values) {
+	for _, site := range templateSites(cfg) {
+		for _, ref := range site.refs {
 			if _, ok := own[ref]; ok {
 				continue
 			}
 			if _, ok := cfg.Dependencies[strings.SplitN(ref, ".", 2)[0]]; ok && strings.Contains(ref, ".") {
 				continue
 			}
-			errs.Add("config", file, fmt.Sprintf(
+			errs.Add("config", site.field, fmt.Sprintf(
 				"template variable {{%s}} names no declared dependency and no known value (service.port, deployment.replicas, env.<NAME>)", ref))
+		}
+	}
+}
+
+// addCommandReferenceErrors only lets command reference a dependency output
+// its type declares as not sensitive: arguments are visible to anyone who can
+// read the workload, and an undeclared key, such as an extra value in an
+// unmanaged input, may well be a secret.
+func (s *deploymentService) addCommandReferenceErrors(errs *api.ValidationErrors, cfg *serviceconfig.ServiceConfig) {
+	own := buildLookupTable(nil, cfg)
+	for i, arg := range cfg.Command {
+		for _, ref := range templateReferences(arg) {
+			name, key, ok := strings.Cut(ref, ".")
+			dependency, declared := cfg.Dependencies[name]
+			if _, isOwn := own[ref]; isOwn || !ok || !declared {
+				continue
+			}
+			spec, err := s.specs.Get(dependency.Type)
+			if err != nil {
+				continue
+			}
+			output := slices.IndexFunc(spec.OutputFields, func(f db.FieldSpec) bool { return f.Name == key })
+			switch {
+			case output < 0:
+				errs.Add("config", commandField(i), fmt.Sprintf(
+					"template variable {{%s}}: %s declares no %q output, so it may be sensitive, and arguments are visible to anyone who can read the workload; pass it in a config file instead",
+					ref, dependency.Type, key))
+			case spec.OutputFields[output].Sensitive:
+				errs.Add("config", commandField(i), fmt.Sprintf(
+					"template variable {{%s}} is sensitive, and arguments are visible to anyone who can read the workload; pass it in a config file instead", ref))
+			}
 		}
 	}
 }
@@ -111,15 +163,15 @@ func addTemplateReferenceErrors(errs *api.ValidationErrors, cfg *serviceconfig.S
 // never render.
 func verifyUnmanagedReferences(cfg *serviceconfig.ServiceConfig, inputs map[string]api.DependencyInput) error {
 	var errs api.ValidationErrors
-	for _, file := range slices.Sorted(maps.Keys(cfg.Configs)) {
-		for _, ref := range templateReferences(cfg.Configs[file].Values) {
+	for _, site := range templateSites(cfg) {
+		for _, ref := range site.refs {
 			name, key, ok := strings.Cut(ref, ".")
 			input, declared := inputs[name]
 			if !ok || !declared || input.Managed {
 				continue
 			}
 			if _, has := input.Values[key]; !has {
-				errs.Add("config", file, fmt.Sprintf("template variable {{%s}}: the input of unmanaged dependency %q has no %q", ref, name, key))
+				errs.Add("config", site.field, fmt.Sprintf("template variable {{%s}}: the input of unmanaged dependency %q has no %q", ref, name, key))
 			}
 		}
 	}

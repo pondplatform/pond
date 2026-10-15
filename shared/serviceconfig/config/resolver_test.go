@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"maps"
+	"slices"
 	"testing"
 
 	"github.com/pondplatform/pond/shared/serviceconfig"
@@ -232,6 +233,37 @@ func TestResolve_OverridesDoNotLeakIntoLaterEnvironments(t *testing.T) {
 	}
 	if _, ok := prod.Configs["debug.env"]; ok {
 		t.Error("staging config leaked into production")
+	}
+}
+
+func TestResolve_CommandReplacedAsAWhole(t *testing.T) {
+	base := &serviceconfig.OverridableConfig{
+		ServiceConfig: serviceconfig.ServiceConfig{
+			Name:    "api",
+			Command: []string{"serve", "--port", "8080", "--workers", "4"},
+		},
+		Overrides: map[string]serviceconfig.Override{
+			"staging":    {Command: []string{"serve", "--debug"}},
+			"production": {Env: map[string]string{"LOG_LEVEL": "warn"}},
+		},
+	}
+	resolver := config.NewResolver()
+
+	for env, want := range map[string][]string{
+		// Arguments are positional: merging the lists would leave "8080" after --debug.
+		"staging":    {"serve", "--debug"},
+		"production": {"serve", "--port", "8080", "--workers", "4"},
+	} {
+		cfg, err := resolver.Resolve(base, env)
+		if err != nil {
+			t.Fatalf("Resolve %s failed: %v", env, err)
+		}
+		if !slices.Equal(cfg.Command, want) {
+			t.Errorf("%s: want %q, got %q", env, want, cfg.Command)
+		}
+	}
+	if len(base.Command) != 5 {
+		t.Errorf("base command was mutated: %q", base.Command)
 	}
 }
 

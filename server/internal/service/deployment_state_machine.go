@@ -282,7 +282,7 @@ func helmUpgradePayload(deployment db.Deployment, env db.Environment, outputs ma
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := renderConfigs(deployment.ServiceConfigSnapshot, contexts)
+	cfg, err := renderTemplates(deployment.ServiceConfigSnapshot, contexts)
 	if err != nil {
 		return nil, err
 	}
@@ -314,8 +314,22 @@ func helmValuesYAML(helmGen helmgen.HelmValuesGenerator, cfg *serviceconfig.Serv
 	return out, nil
 }
 
-// renderConfigs substitutes dependency outputs into every config file's values.
-func renderConfigs(cfg serviceconfig.ServiceConfig, contexts map[string]map[string]any) (serviceconfig.ServiceConfig, error) {
+// renderTemplates substitutes dependency outputs into every config file's
+// values and into the command.
+func renderTemplates(cfg serviceconfig.ServiceConfig, contexts map[string]map[string]any) (serviceconfig.ServiceConfig, error) {
+	if cfg.Command != nil {
+		lookup := buildLookupTable(contexts, &cfg)
+		command := make([]string, len(cfg.Command))
+		for i, arg := range cfg.Command {
+			rendered, err := renderString(arg, lookup)
+			if err != nil {
+				return cfg, fmt.Errorf("render command[%d]: %w", i, err)
+			}
+			command[i] = rendered
+		}
+		cfg.Command = command
+	}
+
 	if len(cfg.Configs) == 0 {
 		return cfg, nil
 	}

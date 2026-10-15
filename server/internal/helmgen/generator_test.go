@@ -314,6 +314,44 @@ func TestGenerator_Generate_NoVolumes(t *testing.T) {
 	}
 }
 
+func TestGenerator_Generate_Command(t *testing.T) {
+	g := NewGenerator()
+
+	cfg := &serviceconfig.ServiceConfig{
+		Name:    "worker",
+		Command: []string{"sh", "-c", `echo "pid $$, home $HOME, $(SECRET)" && exec worker`, "$"},
+	}
+	vals, err := g.Generate(cfg, &domain.Environment{}, "")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Kubernetes would expand $(SECRET) from the container's env and reduce $$
+	// to $; doubled, each $ reaches the shell as written.
+	want := []string{"sh", "-c", `echo "pid $$$$, home $$HOME, $$(SECRET)" && exec worker`, "$$"}
+	if !slices.Equal(vals.Args, want) {
+		t.Errorf("args: want %q, got %q", want, vals.Args)
+	}
+	if cfg.Command[3] != "$" {
+		t.Errorf("the config's command was modified: %q", cfg.Command)
+	}
+}
+
+// Without a command the chart renders no args, so the image's CMD runs.
+func TestGenerator_Generate_NoCommand(t *testing.T) {
+	vals, err := NewGenerator().Generate(&serviceconfig.ServiceConfig{Name: "web"}, &domain.Environment{}, "")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	out, err := yaml.Marshal(vals)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	if strings.Contains(string(out), "args:") {
+		t.Errorf("args should not appear in the values file:\n%s", out)
+	}
+}
+
 func TestGenerator_Generate_ImageTag(t *testing.T) {
 	g := NewGenerator()
 

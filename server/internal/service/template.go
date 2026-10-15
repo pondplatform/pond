@@ -95,7 +95,7 @@ func renderString(s string, lookup map[string]string) (string, error) {
 
 // templateReferences returns every {{var}} the renderer would substitute in
 // values, sorted and without duplicates.
-func templateReferences(values map[string]any) []string {
+func templateReferences(values any) []string {
 	refs := make(map[string]struct{})
 	var walk func(v any)
 	walk = func(v any) {

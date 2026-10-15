@@ -11,6 +11,11 @@ type ServiceConfig struct {
 	Image   string `json:"image,omitempty"   yaml:"image"`
 	Build   string `json:"build,omitempty"   yaml:"build"`
 
+	// Command replaces the image's CMD and keeps its ENTRYPOINT. omitzero rather
+	// than omitempty, so an empty list reaches the server and is rejected
+	// instead of arriving as unset.
+	Command []string `json:"command,omitzero" yaml:"command"`
+
 	Deployment *DeploymentSpec `json:"deployment,omitempty" yaml:"deployment"`
 	Service    *ServiceSpec    `json:"service,omitempty"    yaml:"service"`
 	Gateway    *GatewayConfig  `json:"gateway,omitempty"    yaml:"gateway"`
@@ -190,6 +195,7 @@ type OverridableConfig struct {
 }
 
 type Override struct {
+	Command      []string                         `yaml:"command"      json:"command,omitzero"`
 	Deployment   *DeploymentSpec                  `yaml:"deployment"   json:"deployment,omitempty"`
 	Service      *ServiceSpec                     `yaml:"service"      json:"service,omitempty"`
 	Gateway      *GatewayConfig                   `yaml:"gateway"      json:"gateway,omitempty"`

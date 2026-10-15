@@ -80,6 +80,11 @@ func withConfigValues(req api.SubmitRequest, values map[string]any) api.SubmitRe
 	return req
 }
 
+func withCommand(req api.SubmitRequest, args ...string) api.SubmitRequest {
+	req.OverridableConfig.ServiceConfig.Command = args
+	return req
+}
+
 func validationErrors(t *testing.T, err error) []api.ValidationError {
 	t.Helper()
 	var ve *api.ValidationErrors
@@ -128,6 +133,22 @@ func TestValidateSubmission_Rejects(t *testing.T) {
 			want: []api.ValidationError{{Component: "config", Field: "app.env",
 				Message: "template variable {{cache.url}} names no declared dependency and no known value (service.port, deployment.replicas, env.<NAME>)"}},
 		},
+		"template variable naming nothing in the command": {
+			req: withCommand(submitRequest(postgresDep, nil), "serve", "--cache={{cache.url}}"),
+			want: []api.ValidationError{{Component: "config", Field: "command[1]",
+				Message: "template variable {{cache.url}} names no declared dependency and no known value (service.port, deployment.replicas, env.<NAME>)"}},
+		},
+		"sensitive output in the command": {
+			req: withCommand(submitRequest(postgresDep, nil), "serve", "--db", "postgres://{{db.username}}:{{db.password}}@{{db.host}}"),
+			want: []api.ValidationError{{Component: "config", Field: "command[2]",
+				Message: "template variable {{db.password}} is sensitive, and arguments are visible to anyone who can read the workload; pass it in a config file instead"}},
+		},
+		// An unmanaged input may carry any key, and nothing says whether it is a secret.
+		"undeclared output in the command": {
+			req: withCommand(submitRequest(map[string]serviceconfig.DependencyDeclaration{"api": {Type: "http-service"}}, nil), "--token={{api.token}}"),
+			want: []api.ValidationError{{Component: "config", Field: "command[0]",
+				Message: `template variable {{api.token}}: http-service declares no "token" output, so it may be sensitive, and arguments are visible to anyone who can read the workload; pass it in a config file instead`}},
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -152,6 +173,18 @@ func TestValidateSubmission_AcceptsReferencesToOwnValues(t *testing.T) {
 		"PORT":  "{{service.port}}",
 		"LEVEL": "{{env.LOG_LEVEL}}",
 	})
+	req.OverridableConfig.ServiceConfig.Service = &serviceconfig.ServiceSpec{Port: serviceconfig.Ptr(int32(8080))}
+	req.OverridableConfig.ServiceConfig.Env = map[string]string{"LOG_LEVEL": "debug"}
+	if _, _, err := s.validateSubmission(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateSubmission_AcceptsNonSensitiveReferencesInTheCommand(t *testing.T) {
+	s := newTestService(&testutil.MockDeploymentInfoStore{})
+	deps := map[string]serviceconfig.DependencyDeclaration{"db": {Type: "postgres"}, "api": {Type: "http-service"}}
+	req := withCommand(submitRequest(deps, nil),
+		"serve", "--port", "{{service.port}}", "--db={{db.host}}:{{db.port}}", "--api", "{{api.url}}", "--log-level", "{{env.LOG_LEVEL}}")
 	req.OverridableConfig.ServiceConfig.Service = &serviceconfig.ServiceSpec{Port: serviceconfig.Ptr(int32(8080))}
 	req.OverridableConfig.ServiceConfig.Env = map[string]string{"LOG_LEVEL": "debug"}
 	if _, _, err := s.validateSubmission(context.Background(), req); err != nil {
@@ -288,5 +321,15 @@ func TestVerifyUnmanagedReferences(t *testing.T) {
 	got := validationErrors(t, verifyUnmanagedReferences(&cfg, inputs))
 	if len(got) != 1 || !strings.Contains(got[0].Message, "{{api.token}}") {
 		t.Errorf("expected only api.token rejected; a managed dependency's outputs are not known yet. Got %+v", got)
+	}
+}
+
+func TestVerifyUnmanagedReferences_InTheCommand(t *testing.T) {
+	cfg := withCommand(submitRequest(nil, nil), "serve", "--api={{api.url}}").OverridableConfig.ServiceConfig
+	inputs := map[string]api.DependencyInput{"api": {Managed: false, Values: map[string]any{"host": "api"}}}
+	want := []api.ValidationError{{Component: "config", Field: "command[1]",
+		Message: `template variable {{api.url}}: the input of unmanaged dependency "api" has no "url"`}}
+	if got := validationErrors(t, verifyUnmanagedReferences(&cfg, inputs)); !slices.Equal(got, want) {
+		t.Errorf("expected %+v, got %+v", want, got)
 	}
 }

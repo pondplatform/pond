@@ -69,6 +69,10 @@ helm-lint:
 	@# to Recreate removes them; Kubernetes rejects them on a Recreate strategy.
 	helm template ci infra/agent/helm-charts/base-service | grep -q 'maxUnavailable: 25%'
 	! helm template ci infra/agent/helm-charts/base-service --set strategy.type=Recreate | grep -q rollingUpdate
+	@# Without args the image's CMD runs; numbers stay strings, which Kubernetes requires.
+	! helm template ci infra/agent/helm-charts/base-service -s templates/deployment.yaml | grep -q 'args:'
+	helm template ci infra/agent/helm-charts/base-service -s templates/deployment.yaml \
+		--set 'args[0]=serve' --set-string 'args[1]=8080' | grep -A2 'args:' | grep -q '"8080"'
 	! helm template ci infra/agent/helm-charts/base-service | grep -q PersistentVolumeClaim
 	helm lint infra/agent/helm-charts/base-service --set strategy.type=Recreate \
 		--set 'persistentVolumeClaims[0].name=data' --set 'persistentVolumeClaims[0].size=1Gi'
@@ -98,3 +102,4 @@ e2e: e2e-setup
 	./test/end-to-end/deploy-postgres.sh
 	./test/end-to-end/deploy-gateway.sh
 	./test/end-to-end/deploy-volumes.sh
+	./test/end-to-end/deploy-command.sh

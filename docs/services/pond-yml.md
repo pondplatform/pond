@@ -21,6 +21,7 @@ service:
 version: 1
 name: my-service
 image: ghcr.io/example/my-service
+command: [serve, --port, "{{service.port}}"]
 
 deployment:
   replicas: 1          # with volumes, read the warnings in volumes.md before raising this
@@ -100,6 +101,7 @@ overrides:
 | `name` | string | yes | Service name. Used as the Helm release name, so it must be lowercase alphanumeric or `-`, start and end alphanumeric, and be at most 53 characters. |
 | `image` | string | yes* | Docker image reference (without tag). Required unless `build` is set. |
 | `build` | string | no | Path to a Dockerfile relative to `pond.yml`. Used to tell Pond which image to build; the built image is pushed and referenced automatically. |
+| `command` | list of strings | no | Replaces the image's default command (`CMD`); the image's entrypoint stays. |
 | `deployment` | object | no | Workload settings: replica count, health probes and metrics. |
 | `service` | object | no | Service port settings. |
 | `gateway` | object | no | How the service is exposed to incoming HTTP traffic. |
@@ -108,6 +110,26 @@ overrides:
 | `configs` | map | no | Config files rendered and mounted into the container. |
 | `volumes` | map | no | Directories that keep their contents across restarts and redeploys. |
 | `overrides` | map | no | Environment-specific overrides. Keys are environment names. |
+
+### `command`
+
+The arguments the container starts with. They replace the image's default command (its `CMD`) and are passed to the image's entrypoint, which stays: an image whose entrypoint prepares something before starting the app keeps doing so. Pond has no field to replace the entrypoint.
+
+```yaml
+command: [start, --optimized]
+```
+
+Each item is one argument, passed as written. There is no shell, so `$VAR`, `*` and quotes inside an argument reach the app unchanged. For shell features, run a shell, which works when the image's entrypoint runs whatever command it is given, as most official images' do:
+
+```yaml
+command: [sh, -c, 'exec app --id "$HOSTNAME"']
+```
+
+Arguments can contain the [template variables](config-files.md#template-variables) config files use, such as `{{service.port}}` or `{{db.host}}`, rendered at deploy time. Arguments are visible to anyone who can read the workload, so a dependency output is only allowed if its type declares it as not sensitive. `{{db.password}}` is rejected, and so is any key an unmanaged dependency's input adds beyond the declared outputs. Pass those in a config file instead.
+
+A string such as `command: serve --port 8080` is rejected, because splitting it would need shell quoting rules. An empty list is rejected too: the image's default command can be replaced but not cleared, so leave `command` out to keep it.
+
+An override replaces the whole list; see [Environment Overrides](environments.md).
 
 ### `deployment`
 

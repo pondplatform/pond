@@ -8,6 +8,7 @@ type HelmValues struct {
 	ReplicaCount     *int              `yaml:"replicaCount,omitempty"`
 	Strategy         HelmStrategy      `yaml:"strategy"`
 	Image            Image             `yaml:"image"`
+	Args             []string          `yaml:"args,omitempty"`
 	NameOverride     string            `yaml:"nameOverride"`
 	FullnameOverride string            `yaml:"fullnameOverride"`
 	Service          HelmService       `yaml:"service"`

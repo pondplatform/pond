@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -190,6 +191,38 @@ func TestAdvance_DependenciesReadyStartsTheRollout(t *testing.T) {
 	}
 	if file, _ := base64.StdEncoding.DecodeString(values.Configs[0].Data); !strings.Contains(string(file), "db.internal") {
 		t.Errorf("expected the dependency's output in the rendered config, got %q", file)
+	}
+}
+
+func TestAdvance_TheRolloutRendersTheCommand(t *testing.T) {
+	f := newMachineFixture(nil).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal","port":5432}`, "")
+	f.deployment.ServiceConfigSnapshot.Command = []string{"serve", "--db={{db.host}}:{{db.port}}"}
+	w := f.advance(t)
+
+	if len(w.created) != 1 {
+		t.Fatalf("expected a helm command, got saved=%+v created=%+v", w.saved, w.created)
+	}
+	var payload wire.HelmUpgradePayload
+	if err := json.Unmarshal(w.created[0].Payload, &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	var values struct {
+		Args []string `yaml:"args"`
+	}
+	if err := yaml.Unmarshal(payload.Values, &values); err != nil {
+		t.Fatalf("decode helm values %s: %v", payload.Values, err)
+	}
+	if want := []string{"serve", "--db=db.internal:5432"}; !slices.Equal(values.Args, want) {
+		t.Errorf("expected args %q, got %q", want, values.Args)
+	}
+}
+
+func TestAdvance_AnUnrenderableCommandFailsTheDeployment(t *testing.T) {
+	f := newMachineFixture(nil).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal"}`, "")
+	f.deployment.ServiceConfigSnapshot.Command = []string{"serve", "--user={{db.username}}"}
+	w := f.advance(t)
+	if w.saved == nil || w.saved.Status != db.DeploymentFailed || !strings.Contains(reasonOf(w.saved), "command[1]") || len(w.created) != 0 {
+		t.Errorf("expected failed naming command[1] and no command, got saved=%+v created=%+v", w.saved, w.created)
 	}
 }
 
