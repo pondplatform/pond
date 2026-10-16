@@ -13,6 +13,8 @@ type Environment struct {
 	Name                   string     `json:"name"`
 	Namespace              string     `json:"namespace"`
 	DefaultIngressBaseHost string     `json:"defaultIngressBaseHost"`
+	GatewayPort            *int32     `json:"gatewayPort"`
+	GatewayTLS             bool       `json:"gatewayTls"`
 	ClusterID              uuid.UUID  `json:"clusterId"`
 	CreatedAt              time.Time  `json:"createdAt"`
 }

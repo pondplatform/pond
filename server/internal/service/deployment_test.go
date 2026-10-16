@@ -106,7 +106,7 @@ func withGatewayRule(req api.SubmitRequest, hostname *string, rules ...serviceco
 	return req
 }
 
-const unknownReference = "names no known value (service.name, service.port, deployment.replicas, environment.name, gateway.hostname, gateway.url, variables.<name>, dependencies.<name>.<output>)"
+const unknownReference = "names no known value (service.name, service.port, deployment.replicas, environment.name, gateway.hostname, gateway.port, gateway.url, variables.<name>, dependencies.<name>.<output>)"
 
 const visibleArguments = ", and arguments are visible to anyone who can read the workload; pass it in env or a config file instead"
 
@@ -213,6 +213,13 @@ func TestValidateSubmission_Rejects(t *testing.T) {
 			req: withCommand(submitRequest(postgresDep, nil), "serve", "--db", "postgres://{{dependencies.db.username}}:{{dependencies.db.password}}@{{dependencies.db.host}}"),
 			want: []api.ValidationError{{Component: "config", Field: "command[2]",
 				Message: "template variable {{dependencies.db.password}} is sensitive" + visibleArguments}},
+		},
+		"variable of another service in the command": {
+			req: withCommand(submitRequest(map[string]serviceconfig.DependencyDeclaration{
+				"api": {Type: "service", Config: map[string]any{"service": "backend"}},
+			}, nil), "--key={{dependencies.api.variables.API_KEY}}"),
+			want: []api.ValidationError{{Component: "config", Field: "command[0]",
+				Message: "template variable {{dependencies.api.variables.API_KEY}} is a variable of another service, which may be secret" + visibleArguments}},
 		},
 		// An unmanaged input may carry any key, and nothing says whether it is a secret.
 		"undeclared output in the command": {

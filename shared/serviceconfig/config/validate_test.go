@@ -635,6 +635,21 @@ func TestValidate_EnvConfigsAndDependencies(t *testing.T) {
 			wantFields: []string{`dependencies["db"].type`},
 		},
 		{
+			name: "service dependencies without, with a malformed or with extra config",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				c.Dependencies = map[string]serviceconfig.DependencyDeclaration{
+					"missing":   {Type: "service"},
+					"malformed": {Type: "service", Config: map[string]any{"service": "Backend_1"}},
+					"extra":     {Type: "service", Config: map[string]any{"service": "backend", "port": 80}},
+				}
+			},
+			wantFields: []string{
+				`dependencies["extra"].config.port`,
+				`dependencies["malformed"].config.service`,
+				`dependencies["missing"].config.service`,
+			},
+		},
+		{
 			// Templates reference variables as {{variables.<name>}}, which can't
 			// express a dash or a dot.
 			name: "variable names outside the template charset",
@@ -649,6 +664,18 @@ func TestValidate_EnvConfigsAndDependencies(t *testing.T) {
 			},
 			wantFields: []string{`variables[""]`, `variables["MY-KEY"]`, `variables["my.key"]`},
 		},
+		{
+			name: "variable visibility other than public or private",
+			mutate: func(c *serviceconfig.ServiceConfig) {
+				c.Variables = map[string]serviceconfig.VariableDeclaration{
+					"SHARED":  {Visibility: "public"},
+					"OWN":     {Visibility: "private"},
+					"DEFAULT": {},
+					"TYPO":    {Visibility: "Public"},
+				}
+			},
+			wantFields: []string{`variables["TYPO"].visibility`},
+		},
 	}
 
 	for _, tc := range tests {
@@ -657,6 +684,16 @@ func TestValidate_EnvConfigsAndDependencies(t *testing.T) {
 			tc.mutate(cfg)
 			wantFields(t, cfg, tc.wantFields...)
 		})
+	}
+}
+
+func TestValidate_ServiceDependency(t *testing.T) {
+	cfg := validConfig()
+	cfg.Dependencies = map[string]serviceconfig.DependencyDeclaration{
+		"api": {Type: "service", Config: map[string]any{"service": "backend"}},
+	}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("expected a service dependency naming a service to be valid, got %v", err)
 	}
 }
 

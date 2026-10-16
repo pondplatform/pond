@@ -10,7 +10,7 @@ import (
 	"github.com/pondplatform/pond/shared/serviceconfig"
 )
 
-var testEnv = db.Environment{ID: uuid.New(), ClusterID: uuid.New(), Name: "staging", Namespace: "staging"}
+var testEnv = db.Environment{ID: uuid.New(), ClusterID: uuid.New(), Name: "staging", Namespace: "staging", GatewayTLS: true}
 
 func planTestDeployment(deps map[string]string, configValues map[string]any) db.Deployment {
 	declared := make(map[string]serviceconfig.DependencyDeclaration, len(deps))

@@ -1,0 +1,17 @@
+version: 1
+name: dep-consumer
+# nginx:alpine has busybox wget, which the end-to-end test uses to call the provider.
+image: nginx
+service:
+  port: 80
+dependencies:
+  provider:
+    type: service
+    config:
+      service: dep-provider
+env:
+  PROVIDER_HOST: "{{dependencies.provider.host}}"
+  PROVIDER_PORT: "{{dependencies.provider.port}}"
+  PROVIDER_URL: "{{dependencies.provider.url}}"
+  PROVIDER_PUBLIC_HOST: "{{dependencies.provider.gateway.hostname}}"
+  PROVIDER_PUBLIC_URL: "{{dependencies.provider.gateway.url}}"

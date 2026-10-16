@@ -110,7 +110,7 @@ overrides:
 | `deployment` | object | no | Workload settings: replica count, health probes and metrics. |
 | `service` | object | no | Service port settings. |
 | `gateway` | object | no | How the service is exposed to incoming HTTP traffic. Values can contain templates. |
-| `dependencies` | map | no | External services your app needs (databases, HTTP services). |
+| `dependencies` | map | no | What your app needs: databases, HTTP services, or other Pond services. See [Dependencies](dependencies.md). |
 | `env` | map | no | Environment variables injected into the container. Values can contain templates. |
 | `variables` | map | no | Values given with each deploy rather than in `pond.yml`, such as secrets. |
 | `configs` | map | no | Config files rendered and mounted into the container. |
@@ -309,12 +309,13 @@ variables:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `secret` | boolean | `false` | Whether the value is a secret. A secret variable can't be used in `command` or `gateway`, which anyone who can read the workload sees. |
+| `visibility` | `public` or `private` | `private` | Whether services that [depend on this one](dependencies.md#service) can import the value, as `{{dependencies.<name>.variables.<variable>}}`. A secret can be public too; it stays a secret where it's imported. |
 
 - **Every declared variable needs a value in every deploy's input.** A missing value, or a value for a variable `pond.yml` doesn't declare, is rejected before anything is deployed. Values from earlier deployments are not reused.
 - **Values are strings.** In a YAML input file a value keeps the text you wrote, so `PIN: 0123` stays `0123`. In JSON, write every value as a string.
 - **Names** may contain letters, digits and underscores.
 - **There are no overrides.** Each environment already has its own input file, `pond-input-<env>.yml`.
-- **Storage:** Pond keeps the values with the deployment on the server, in plaintext, as it does an unmanaged dependency's input. They are not returned by the API or written to the server log.
+- **Storage:** Pond keeps the values with the deployment on the server, in plaintext, as it does an unmanaged dependency's input, and a public value also with each deployment that imports it. They are not returned by the API or written to the server log.
 
 ### `configs`
 

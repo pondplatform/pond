@@ -101,7 +101,8 @@ String values support `{{variable}}` syntax at any depth, including inside neste
 | `{{deployment.replicas}}` | `deployment.replicas` | `deployment.replicas` is set |
 | `{{environment.name}}` | The name of the environment being deployed to | always |
 | `{{gateway.hostname}}` | `gateway.http.hostname` as rendered, or else `<name>.<environment base host>` | the gateway is enabled, and it has a hostname that isn't a `*.` wildcard |
-| `{{gateway.url}}` | `https://<gateway.hostname>` | the same as `{{gateway.hostname}}` |
+| `{{gateway.port}}` | The port the environment's gateway listens on: its `gatewayPort`, or 443 with TLS and 80 without | the same as `{{gateway.hostname}}` |
+| `{{gateway.url}}` | `https://<gateway.hostname>`, or `http://` when the environment's gateway has no TLS, with `:<port>` when the port isn't the scheme's default | the same as `{{gateway.hostname}}` |
 | `{{variables.<name>}}` | The input's value for a [variable](pond-yml.md#variables) | the variable is declared |
 | `{{dependencies.<name>.<output>}}` | An output of a [dependency](dependencies.md), such as `{{dependencies.db.host}}` | the dependency is declared |
 
@@ -110,7 +111,7 @@ Templates work in four places:
 - **`configs`:** every string value.
 - **[`env`](pond-yml.md#env):** every value.
 - **[`command`](pond-yml.md#command):** every argument, except values that may be secret: a dependency output marked sensitive, such as `{{dependencies.db.password}}`, any output the dependency's type doesn't declare, and a variable declared `secret: true`. Anyone who can read the workload sees its arguments, so pass these in `env` or a config file instead.
-- **[`gateway`](pond-yml.md#templates-in-the-gateway):** every string, from the hostname to a header value, except the values that may be secret, as in `command`, and `{{gateway.hostname}}` and `{{gateway.url}}`, which come from the rendered gateway.
+- **[`gateway`](pond-yml.md#templates-in-the-gateway):** every string, from the hostname to a header value, except the values that may be secret, as in `command`, and `{{gateway.hostname}}`, `{{gateway.port}}` and `{{gateway.url}}`, which come from the rendered gateway.
 
 A template can't read `env`, so there is no `{{env.<NAME>}}`. To use the same value in `env` and in a config file, declare it as a variable.
 

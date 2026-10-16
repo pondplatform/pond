@@ -246,8 +246,10 @@ else
   exit 1
 fi
 
-# gateway.http.hostname derives from the base host, so patch it in — an
-# environment left over from an earlier run would not have it.
+# gateway.http.hostname derives from the base host, and {{gateway.url}} from
+# the gateway's scheme and port, so patch them in — an environment left over
+# from an earlier run would not have them. The data plane answers plain http
+# on the cluster's :80.
 ENV_LIST=$(curl_api "GET /projects/$PROJECT_ID/environments" \
   "$SERVER_URL/api/v1/projects/$PROJECT_ID/environments" \
   -H "Authorization: Bearer $POND_TOKEN")
@@ -257,8 +259,8 @@ curl_api "PATCH /environments/$ENV_ID" \
   -X PATCH "$SERVER_URL/api/v1/environments/$ENV_ID" \
   -H "Authorization: Bearer $POND_TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"defaultIngressBaseHost\":\"$INGRESS_BASE_HOST\"}" >/dev/null
-info "Ingress base host: $INGRESS_BASE_HOST"
+  -d "{\"defaultIngressBaseHost\":\"$INGRESS_BASE_HOST\",\"gatewayTls\":false,\"gatewayPort\":0}" >/dev/null
+info "Ingress base host: $INGRESS_BASE_HOST (plain http on port 80)"
 
 # ── 10. Gateway for exposed services ──────────────────────────────────────────
 # No CRDs and no controller are installed here — the cluster is expected to

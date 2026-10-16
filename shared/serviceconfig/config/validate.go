@@ -538,6 +538,24 @@ func validateDependencies(errs *api.ValidationErrors, deps map[string]servicecon
 		if deps[name].Type == "" {
 			errs.Add(validationComponent, field+".type", "must not be empty")
 		}
+		if deps[name].Type == serviceconfig.DependencyTypeService {
+			validateServiceDependency(errs, field, deps[name])
+		}
+	}
+}
+
+func validateServiceDependency(errs *api.ValidationErrors, field string, dep serviceconfig.DependencyDeclaration) {
+	target := dep.ServiceName()
+	switch {
+	case target == "":
+		errs.Add(validationComponent, field+".config.service", "must name the service to depend on")
+	case !dns1123Label.MatchString(target):
+		errs.Add(validationComponent, field+".config.service", fmt.Sprintf("must be a service name, got %q", target))
+	}
+	for _, key := range slices.Sorted(maps.Keys(dep.Config)) {
+		if key != "service" {
+			errs.Add(validationComponent, field+".config."+key, "is not a setting of a service dependency; only service is")
+		}
 	}
 }
 
@@ -545,6 +563,11 @@ func validateVariables(errs *api.ValidationErrors, variables map[string]servicec
 	for _, name := range slices.Sorted(maps.Keys(variables)) {
 		if !dependencyNamePattern.MatchString(name) {
 			errs.Add(validationComponent, fmt.Sprintf("variables[%q]", name), "must be letters, digits or underscores so templates can reference it as {{variables.<name>}}")
+		}
+		switch visibility := variables[name].Visibility; visibility {
+		case "", serviceconfig.VariablePublic, serviceconfig.VariablePrivate:
+		default:
+			errs.Add(validationComponent, fmt.Sprintf("variables[%q].visibility", name), fmt.Sprintf("must be %q or %q, got %q", serviceconfig.VariablePublic, serviceconfig.VariablePrivate, visibility))
 		}
 	}
 }

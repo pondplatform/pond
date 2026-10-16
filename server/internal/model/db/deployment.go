@@ -32,6 +32,9 @@ type Deployment struct {
 	Error                 *string                     `json:"error,omitempty"`
 	// Variables include secret values, so they are never encoded.
 	Variables map[string]string `json:"-"`
+	// Exports are the values other services may import, set at rollout; nil
+	// before then and for deployments that predate them.
+	Exports map[string]string `json:"-"`
 	// Started and Stopping are computed, not stored. Started: an agent has
 	// picked up one of the deployment's commands. Stopping: an agent is still
 	// running one, though the deployment may already have ended.

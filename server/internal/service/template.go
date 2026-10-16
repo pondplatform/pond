@@ -36,16 +36,29 @@ func newTemplateContext(cfg *serviceconfig.ServiceConfig, env *db.Environment, v
 	return ctx
 }
 
-// withGateway adds {{gateway.hostname}} and {{gateway.url}} for the hostname
-// cfg's route matches, so cfg's gateway must be rendered already.
+// withGateway adds {{gateway.hostname}}, {{gateway.port}} and {{gateway.url}}
+// for the hostname cfg's route matches, so cfg's gateway must be rendered already.
 func (c templateContext) withGateway(cfg *serviceconfig.ServiceConfig, env *db.Environment) templateContext {
 	merged := maps.Clone(c)
-	// A wildcard route matches many hostnames, so none of them is the service's.
-	if hostname := helmgen.GatewayHostname(cfg, env); hostname != "" && !strings.HasPrefix(hostname, "*.") {
-		merged["gateway.hostname"] = hostname
-		merged["gateway.url"] = "https://" + hostname
+	for key, value := range gatewayValues(cfg, env) {
+		merged["gateway."+key] = value
 	}
 	return merged
+}
+
+// gatewayValues are the hostname, port and url of cfg's route, or nil when it
+// has none.
+func gatewayValues(cfg *serviceconfig.ServiceConfig, env *db.Environment) map[string]string {
+	hostname := helmgen.GatewayHostname(cfg, env)
+	// A wildcard route matches many hostnames, so none of them is the service's.
+	if hostname == "" || strings.HasPrefix(hostname, "*.") {
+		return nil
+	}
+	return map[string]string{
+		"hostname": hostname,
+		"port":     fmt.Sprintf("%d", helmgen.GatewayPort(env)),
+		"url":      helmgen.GatewayURL(hostname, env),
+	}
 }
 
 // withDependencies adds each dependency's outputs as {{dependencies.<name>.<key>}}.

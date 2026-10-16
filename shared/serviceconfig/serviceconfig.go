@@ -42,6 +42,18 @@ type VariableDeclaration struct {
 	// Secret keeps the value out of command and the gateway, which anyone who
 	// can read the workload sees.
 	Secret bool `json:"secret,omitempty" yaml:"secret"`
+	// Visibility public lets services that depend on this one import the value
+	// as {{dependencies.<name>.variables.<variable>}}. Unset means private.
+	Visibility string `json:"visibility,omitempty" yaml:"visibility"`
+}
+
+const (
+	VariablePublic  = "public"
+	VariablePrivate = "private"
+)
+
+func (v VariableDeclaration) Public() bool {
+	return v.Visibility == VariablePublic
 }
 
 // VolumeSpec is a directory that survives restarts and redeploys. Its map key
@@ -200,6 +212,17 @@ type ConfigFileSpec struct {
 type DependencyDeclaration struct {
 	Type   string         `json:"type,omitempty"   yaml:"type"`
 	Config map[string]any `json:"config,omitempty" yaml:"config"`
+}
+
+// DependencyTypeService depends on another service of the same project,
+// named by config.service, and imports its addresses.
+const DependencyTypeService = "service"
+
+// ServiceName is the service a dependency of type service names, or "" if
+// config.service is unset or not a string.
+func (d DependencyDeclaration) ServiceName() string {
+	name, _ := d.Config["service"].(string)
+	return name
 }
 
 // OverridableConfig is the raw form of a pond.yml: a base ServiceConfig

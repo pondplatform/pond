@@ -20,6 +20,7 @@ type DeploymentInfoStore interface {
 	Create(ctx context.Context, d *domain.Deployment) error
 	// SaveDeployment writes status, error and completed_at.
 	SaveDeployment(ctx context.Context, d *domain.Deployment) error
+	SetExports(ctx context.Context, id uuid.UUID, exports map[string]string) error
 
 	// Command operations
 	CreateCommand(ctx context.Context, cmd *domain.Command) error

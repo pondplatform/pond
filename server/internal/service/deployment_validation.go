@@ -203,7 +203,7 @@ func referenceProblem(cfg *serviceconfig.ServiceConfig, known templateContext, r
 	if _, ok := cfg.Dependencies[namespace]; ok && rest != "" {
 		return fmt.Sprintf("names no known value: did you mean {{%s%s}}?", dependencyRefPrefix, ref)
 	}
-	return "names no known value (service.name, service.port, deployment.replicas, environment.name, gateway.hostname, gateway.url, variables.<name>, dependencies.<name>.<output>)"
+	return "names no known value (service.name, service.port, deployment.replicas, environment.name, gateway.hostname, gateway.port, gateway.url, variables.<name>, dependencies.<name>.<output>)"
 }
 
 // gatewayProblem says why the service has no gateway values, or returns "" if it has them.
@@ -260,6 +260,11 @@ func (s *deploymentService) refSensitive(cfg *serviceconfig.ServiceConfig, ref s
 	if !ok || !declared {
 		return ""
 	}
+	// Whether an imported variable is secret is only known once the service it
+	// comes from is looked up, so every one is treated as if it were.
+	if dependency.Type == serviceconfig.DependencyTypeService && strings.HasPrefix(key, importedVariablePrefix) {
+		return "is a variable of another service, which may be secret"
+	}
 	spec, err := s.specs.Get(dependency.Type)
 	if err != nil {
 		return ""
@@ -286,9 +291,18 @@ func verifyUnmanagedReferences(cfg *serviceconfig.ServiceConfig, inputs map[stri
 			if !ok || !declared || input.Managed {
 				continue
 			}
-			if _, has := input.Values[key]; !has {
-				errs.Add("config", site.field, fmt.Sprintf("template variable {{%s}}: the input of unmanaged dependency %q has no %q", ref, name, key))
+			if _, has := input.Values[key]; has {
+				continue
 			}
+			if dependency := cfg.Dependencies[name]; dependency.Type == serviceconfig.DependencyTypeService {
+				if variable, ok := strings.CutPrefix(key, importedVariablePrefix); ok {
+					errs.Add("config", site.field, fmt.Sprintf("template variable {{%s}}: service %q has no public variable %q (declare it with visibility: public, and deploy it again)", ref, dependency.ServiceName(), variable))
+					continue
+				}
+				errs.Add("config", site.field, fmt.Sprintf("template variable {{%s}}: service %q exports no %q (gateway values need a gateway route with a single hostname)", ref, dependency.ServiceName(), key))
+				continue
+			}
+			errs.Add("config", site.field, fmt.Sprintf("template variable {{%s}}: the input of unmanaged dependency %q has no %q", ref, name, key))
 		}
 	}
 	if errs.HasErrors() {

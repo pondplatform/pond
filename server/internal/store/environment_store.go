@@ -18,48 +18,51 @@ func NewEnvironmentStore(db DBTX) *EnvironmentStore {
 	return &EnvironmentStore{db: db}
 }
 
-func (s *EnvironmentStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Environment, error) {
+const environmentColumns = "id, project_id, parent_environment_id, name, namespace, default_ingress_base_host, gateway_port, gateway_tls, cluster_id, created_at"
+
+func scanEnvironment(row rowScanner) (*domain.Environment, error) {
 	var env domain.Environment
-	var parentID sql.NullString
-	err := s.db.QueryRowContext(ctx,
-		"SELECT id, project_id, parent_environment_id, name, namespace, default_ingress_base_host, cluster_id, created_at FROM environments WHERE id = $1", id,
-	).Scan(&env.ID, &env.ProjectID, &parentID, &env.Name, &env.Namespace, &env.DefaultIngressBaseHost, &env.ClusterID, &env.CreatedAt)
+	var parentID uuid.NullUUID
+	var gatewayPort sql.NullInt32
+	if err := row.Scan(&env.ID, &env.ProjectID, &parentID, &env.Name, &env.Namespace, &env.DefaultIngressBaseHost, &gatewayPort, &env.GatewayTLS, &env.ClusterID, &env.CreatedAt); err != nil {
+		return nil, err
+	}
+	if parentID.Valid {
+		env.ParentEnvironmentID = &parentID.UUID
+	}
+	if gatewayPort.Valid {
+		env.GatewayPort = &gatewayPort.Int32
+	}
+	return &env, nil
+}
+
+func (s *EnvironmentStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Environment, error) {
+	env, err := scanEnvironment(s.db.QueryRowContext(ctx,
+		"SELECT "+environmentColumns+" FROM environments WHERE id = $1", id))
 	if err == sql.ErrNoRows {
 		return nil, api.NotFound("environment %s not found", id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get environment: %w", err)
 	}
-	if parentID.Valid {
-		id, _ := uuid.Parse(parentID.String)
-		env.ParentEnvironmentID = &id
-	}
-	return &env, nil
+	return env, nil
 }
 
 func (s *EnvironmentStore) GetByName(ctx context.Context, projectID uuid.UUID, name string) (*domain.Environment, error) {
-	var env domain.Environment
-	var parentID sql.NullString
-	err := s.db.QueryRowContext(ctx,
-		"SELECT id, project_id, parent_environment_id, name, namespace, default_ingress_base_host, cluster_id, created_at FROM environments WHERE project_id = $1 AND name = $2",
-		projectID, name,
-	).Scan(&env.ID, &env.ProjectID, &parentID, &env.Name, &env.Namespace, &env.DefaultIngressBaseHost, &env.ClusterID, &env.CreatedAt)
+	env, err := scanEnvironment(s.db.QueryRowContext(ctx,
+		"SELECT "+environmentColumns+" FROM environments WHERE project_id = $1 AND name = $2", projectID, name))
 	if err == sql.ErrNoRows {
 		return nil, api.NotFound("environment %q not found in project %s", name, projectID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get environment: %w", err)
 	}
-	if parentID.Valid {
-		id, _ := uuid.Parse(parentID.String)
-		env.ParentEnvironmentID = &id
-	}
-	return &env, nil
+	return env, nil
 }
 
 func (s *EnvironmentStore) ListByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Environment, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, project_id, parent_environment_id, name, namespace, default_ingress_base_host, cluster_id, created_at FROM environments WHERE project_id = $1", projectID,
+		"SELECT "+environmentColumns+" FROM environments WHERE project_id = $1", projectID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list environments: %w", err)
@@ -68,24 +71,19 @@ func (s *EnvironmentStore) ListByProject(ctx context.Context, projectID uuid.UUI
 
 	var envs []domain.Environment
 	for rows.Next() {
-		var env domain.Environment
-		var parentID sql.NullString
-		if err := rows.Scan(&env.ID, &env.ProjectID, &parentID, &env.Name, &env.Namespace, &env.DefaultIngressBaseHost, &env.ClusterID, &env.CreatedAt); err != nil {
+		env, err := scanEnvironment(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan environment: %w", err)
 		}
-		if parentID.Valid {
-			id, _ := uuid.Parse(parentID.String)
-			env.ParentEnvironmentID = &id
-		}
-		envs = append(envs, env)
+		envs = append(envs, *env)
 	}
 	return envs, rows.Err()
 }
 
 func (s *EnvironmentStore) Create(ctx context.Context, env *domain.Environment) error {
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO environments (id, project_id, parent_environment_id, name, namespace, default_ingress_base_host, cluster_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-		env.ID, env.ProjectID, env.ParentEnvironmentID, env.Name, env.Namespace, env.DefaultIngressBaseHost, env.ClusterID, env.CreatedAt,
+		"INSERT INTO environments ("+environmentColumns+") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+		env.ID, env.ProjectID, env.ParentEnvironmentID, env.Name, env.Namespace, env.DefaultIngressBaseHost, env.GatewayPort, env.GatewayTLS, env.ClusterID, env.CreatedAt,
 	)
 	if pgCode(err) == pgUniqueViolation {
 		return api.AlreadyExists("environment %q already exists in project %s", env.Name, env.ProjectID)
@@ -98,8 +96,8 @@ func (s *EnvironmentStore) Create(ctx context.Context, env *domain.Environment) 
 
 func (s *EnvironmentStore) Update(ctx context.Context, env *domain.Environment) error {
 	_, err := s.db.ExecContext(ctx,
-		"UPDATE environments SET parent_environment_id = $1, namespace = $2, default_ingress_base_host = $3, cluster_id = $4 WHERE id = $5",
-		env.ParentEnvironmentID, env.Namespace, env.DefaultIngressBaseHost, env.ClusterID, env.ID,
+		"UPDATE environments SET parent_environment_id = $1, namespace = $2, default_ingress_base_host = $3, gateway_port = $4, gateway_tls = $5, cluster_id = $6 WHERE id = $7",
+		env.ParentEnvironmentID, env.Namespace, env.DefaultIngressBaseHost, env.GatewayPort, env.GatewayTLS, env.ClusterID, env.ID,
 	)
 	if pgCode(err) == pgForeignKeyViolation {
 		return api.InvalidInput("environment %s references a parent environment or cluster that does not exist", env.ID)

@@ -38,15 +38,15 @@ const (
 		string(domain.CommandStatusDispatched) + `')`
 )
 
-const deploymentColumns = `d.id, d.service_id, d.environment_id, d.image_tag, d.service_config_snapshot, d.variables,
+const deploymentColumns = `d.id, d.service_id, d.environment_id, d.image_tag, d.service_config_snapshot, d.variables, d.exports,
 	d.status, d.triggered_by, d.created_at, d.completed_at, d.error, ` + startedSQL + `, ` + stoppingSQL
 
 func scanDeployment(row rowScanner) (*domain.Deployment, error) {
 	var d domain.Deployment
-	var configJSON, variablesJSON []byte
+	var configJSON, variablesJSON, exportsJSON []byte
 	var triggeredBy sql.NullString
 	if err := row.Scan(
-		&d.ID, &d.ServiceID, &d.EnvironmentID, &d.ImageTag, &configJSON, &variablesJSON,
+		&d.ID, &d.ServiceID, &d.EnvironmentID, &d.ImageTag, &configJSON, &variablesJSON, &exportsJSON,
 		&d.Status, &triggeredBy, &d.CreatedAt, &d.CompletedAt, &d.Error, &d.Started, &d.Stopping,
 	); err != nil {
 		return nil, err
@@ -57,6 +57,11 @@ func scanDeployment(row rowScanner) (*domain.Deployment, error) {
 	}
 	if err := json.Unmarshal(variablesJSON, &d.Variables); err != nil {
 		return nil, fmt.Errorf("unmarshal variables: %w", err)
+	}
+	if exportsJSON != nil {
+		if err := json.Unmarshal(exportsJSON, &d.Exports); err != nil {
+			return nil, fmt.Errorf("unmarshal exports: %w", err)
+		}
 	}
 	return &d, nil
 }
@@ -171,6 +176,15 @@ func (s *deploymentInfoStore) SaveDeployment(ctx context.Context, d *domain.Depl
 	)
 	if err != nil {
 		return fmt.Errorf("save deployment: %w", err)
+	}
+	return nil
+}
+
+func (s *deploymentInfoStore) SetExports(ctx context.Context, id uuid.UUID, exports map[string]string) error {
+	// A map of strings always encodes.
+	exportsJSON, _ := json.Marshal(exports)
+	if _, err := s.db.ExecContext(ctx, `UPDATE deployments SET exports = $2 WHERE id = $1`, id, exportsJSON); err != nil {
+		return fmt.Errorf("set deployment exports: %w", err)
 	}
 	return nil
 }

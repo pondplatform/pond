@@ -20,6 +20,7 @@ type MockDeploymentInfoStore struct {
 	ListByServiceFilteredFn      func(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *api.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
 	CreateFn                     func(ctx context.Context, d *domain.Deployment) error
 	SaveDeploymentFn             func(ctx context.Context, d *domain.Deployment) error
+	SetExportsFn                 func(ctx context.Context, id uuid.UUID, exports map[string]string) error
 	CreateCommandFn              func(ctx context.Context, cmd *domain.Command) error
 	GetCommandFn                 func(ctx context.Context, id uuid.UUID) (*domain.Command, error)
 	UpdateCommandFn              func(ctx context.Context, cmd *domain.Command) error
@@ -60,6 +61,12 @@ func (m *MockDeploymentInfoStore) Create(ctx context.Context, d *domain.Deployme
 func (m *MockDeploymentInfoStore) SaveDeployment(ctx context.Context, d *domain.Deployment) error {
 	if m.SaveDeploymentFn != nil {
 		return m.SaveDeploymentFn(ctx, d)
+	}
+	return nil
+}
+func (m *MockDeploymentInfoStore) SetExports(ctx context.Context, id uuid.UUID, exports map[string]string) error {
+	if m.SetExportsFn != nil {
+		return m.SetExportsFn(ctx, id, exports)
 	}
 	return nil
 }

@@ -80,7 +80,11 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		if err != nil {
 			return err
 		}
-		inputs, err := resolveInputs(svcConfig.Dependencies, req.Dependencies)
+		requested, err := resolveServiceDependencies(ctx, tx, req.ProjectID, env, svcConfig, req.Dependencies)
+		if err != nil {
+			return err
+		}
+		inputs, err := resolveInputs(svcConfig.Dependencies, requested)
 		if err != nil {
 			return err
 		}

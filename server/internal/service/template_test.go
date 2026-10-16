@@ -83,7 +83,7 @@ func TestWithGateway(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := &serviceconfig.ServiceConfig{Name: "web", Gateway: tc.gateway}
 			base := templateContext{"service.name": "web"}
-			got := base.withGateway(cfg, &db.Environment{DefaultIngressBaseHost: tc.baseHost})
+			got := base.withGateway(cfg, &db.Environment{DefaultIngressBaseHost: tc.baseHost, GatewayTLS: true})
 			if len(base) != 1 {
 				t.Errorf("the receiver was modified: %v", base)
 			}
@@ -156,7 +156,7 @@ func TestRenderServiceConfig(t *testing.T) {
 		"dependencies.db.host":  "db.internal",
 	}
 
-	got, err := renderServiceConfig(cfg, &db.Environment{}, ctx)
+	got, err := renderServiceConfig(cfg, &db.Environment{GatewayTLS: true}, ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestRenderServiceConfig_Gateway(t *testing.T) {
 	}
 	ctx := templateContext{"environment.name": "staging", "variables.CUSTOMER": "acme", "dependencies.api.url": "http://api"}
 
-	got, err := renderServiceConfig(cfg, &db.Environment{}, ctx)
+	got, err := renderServiceConfig(cfg, &db.Environment{GatewayTLS: true}, ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

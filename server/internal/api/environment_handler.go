@@ -35,6 +35,8 @@ func toEnvironmentResponse(e *domain.Environment) api.Environment {
 		Name:                   e.Name,
 		Namespace:              e.Namespace,
 		DefaultIngressBaseHost: e.DefaultIngressBaseHost,
+		GatewayPort:            e.GatewayPort,
+		GatewayTLS:             e.GatewayTLS,
 		ClusterID:              e.ClusterID,
 		CreatedAt:              e.CreatedAt,
 	}
@@ -75,6 +77,8 @@ func (h *EnvironmentHandler) create(ctx context.Context, projectID uuid.UUID, re
 		Name:                   req.Name,
 		Namespace:              req.Namespace,
 		DefaultIngressBaseHost: req.DefaultIngressBaseHost,
+		GatewayPort:            req.GatewayPort,
+		GatewayTLS:             req.GatewayTLS == nil || *req.GatewayTLS,
 		ClusterID:              req.ClusterID,
 		CreatedAt:              time.Now().UTC(),
 	}
@@ -194,6 +198,17 @@ func (h *EnvironmentHandler) update(ctx context.Context, id uuid.UUID, req api.U
 
 	if req.DefaultIngressBaseHost != nil {
 		env.DefaultIngressBaseHost = *req.DefaultIngressBaseHost
+	}
+
+	if req.GatewayPort != nil {
+		env.GatewayPort = req.GatewayPort
+		if *req.GatewayPort == 0 {
+			env.GatewayPort = nil
+		}
+	}
+
+	if req.GatewayTLS != nil {
+		env.GatewayTLS = *req.GatewayTLS
 	}
 
 	if req.ParentEnvironmentID != nil {

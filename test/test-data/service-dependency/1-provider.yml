@@ -1,0 +1,14 @@
+version: 1
+name: dep-provider
+# whoami answers any request, so the consumer can show the address it imported
+# reaches this service.
+image: traefik/whoami
+service:
+  # Not the chart's default 80, so the imported port is visibly this one.
+  port: 8080
+command:
+  - --port
+  - "{{service.port}}"
+gateway:
+  http:
+    enabled: true

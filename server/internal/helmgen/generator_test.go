@@ -225,6 +225,32 @@ func TestGatewayHostname(t *testing.T) {
 	}
 }
 
+func TestGatewayURL(t *testing.T) {
+	port := func(p int32) *int32 { return &p }
+	tests := []struct {
+		name     string
+		env      domain.Environment
+		wantPort int32
+		wantURL  string
+	}{
+		{"tls on the default port", domain.Environment{GatewayTLS: true}, 443, "https://web.example.com"},
+		{"plain on the default port", domain.Environment{}, 80, "http://web.example.com"},
+		{"tls on another port", domain.Environment{GatewayTLS: true, GatewayPort: port(8443)}, 8443, "https://web.example.com:8443"},
+		{"plain on another port", domain.Environment{GatewayPort: port(8080)}, 8080, "http://web.example.com:8080"},
+		{"plain on 443 keeps the port", domain.Environment{GatewayPort: port(443)}, 443, "http://web.example.com:443"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := GatewayPort(&tt.env); got != tt.wantPort {
+				t.Errorf("port: expected %d, got %d", tt.wantPort, got)
+			}
+			if got := GatewayURL("web.example.com", &tt.env); got != tt.wantURL {
+				t.Errorf("url: expected %q, got %q", tt.wantURL, got)
+			}
+		})
+	}
+}
+
 // Env and config files reach the pod from Secrets, so only the checksum
 // annotation tells Kubernetes the pod template changed.
 func TestGenerator_Generate_ConfigChecksum(t *testing.T) {

@@ -150,6 +150,31 @@ func GatewayHostname(cfg *serviceconfig.ServiceConfig, env *domain.Environment) 
 	return ""
 }
 
+// GatewayPort is the port the environment's gateway listens on: the one set
+// on the environment, else the default of its scheme.
+func GatewayPort(env *domain.Environment) int32 {
+	switch {
+	case env.GatewayPort != nil:
+		return *env.GatewayPort
+	case env.GatewayTLS:
+		return 443
+	}
+	return 80
+}
+
+// GatewayURL is the URL hostname is reached at through the environment's
+// gateway; the port is left out when it is the scheme's default.
+func GatewayURL(hostname string, env *domain.Environment) string {
+	scheme, defaultPort := "http", int32(80)
+	if env.GatewayTLS {
+		scheme, defaultPort = "https", 443
+	}
+	if port := GatewayPort(env); port != defaultPort {
+		return fmt.Sprintf("%s://%s:%d", scheme, hostname, port)
+	}
+	return scheme + "://" + hostname
+}
+
 // addConfigChecksum rolls the pods when env or a config file changes: a
 // changed Secret alone never reaches a running pod, least of all via subPath.
 func addConfigChecksum(vals *HelmValues) {

@@ -20,6 +20,12 @@ Services that set `gateway.http.enabled` are exposed with a Gateway API `HTTPRou
 
 TLS is terminated by the Gateway listener rather than per service, so that listener needs a certificate covering the environment's ingress base host — typically a wildcard for `*.<base host>`, since Pond derives each service's hostname as `<name>.<base host>`. If you want HTTP traffic redirected to HTTPS, configure that on the Gateway; there is no per-route equivalent.
 
+Pond doesn't read the Gateway, so tell it how clients reach the listener: an environment's `gatewayTls` (default `true`) and `gatewayPort` (default 443 with TLS, 80 without) decide the scheme and port of `{{gateway.url}}`, and of the `gateway.*` values other services [import](../services/dependencies.md#service). Set them when creating the environment, or later with `PATCH /api/v1/environments/<id>`; a `gatewayPort` of `0` resets it to the default.
+
+```json
+{ "gatewayTls": false, "gatewayPort": 8080 }
+```
+
 ## External PostgreSQL
 
 The server keeps all of its state in PostgreSQL, including the queue of commands waiting for an agent. The server Helm chart bundles a single-replica PostgreSQL deployment **with no persistent volume** — it is development-grade and will lose data on pod restart.

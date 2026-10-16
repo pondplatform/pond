@@ -111,6 +111,7 @@ type writes struct {
 	created   []*db.Command
 	cancelled [][]db.CommandStatus
 	running   bool
+	exports   map[string]string
 }
 
 func (f *machineFixture) repos(w *writes) store.Repos {
@@ -129,6 +130,10 @@ func (f *machineFixture) repos(w *writes) store.Repos {
 			},
 			CreateCommandFn: func(_ context.Context, cmd *db.Command) error {
 				w.created = append(w.created, cmd)
+				return nil
+			},
+			SetExportsFn: func(_ context.Context, _ uuid.UUID, exports map[string]string) error {
+				w.exports = exports
 				return nil
 			},
 			UpdateCommandsByDeploymentFn: func(_ context.Context, _ uuid.UUID, _ db.CommandStatus, from ...db.CommandStatus) error {
@@ -199,6 +204,24 @@ func TestAdvance_DependenciesReadyStartsTheRollout(t *testing.T) {
 	}
 	if file, _ := base64.StdEncoding.DecodeString(values.Configs[0].Data); !strings.Contains(string(file), "db.internal") {
 		t.Errorf("expected the dependency's output in the rendered config, got %q", file)
+	}
+}
+
+// Exports are rendered, so a service depending on this one never sees, nor
+// could resolve, the templates of this one's own dependencies.
+func TestAdvance_TheRolloutRecordsRenderedExports(t *testing.T) {
+	f := newMachineFixture(nil).withTofu(db.CommandStatusSucceeded, `{"host":"db.internal"}`, "")
+	f.deployment.ServiceConfigSnapshot.Gateway = gateway(serviceconfig.Ptr("{{dependencies.db.host}}.example.com"))
+	w := f.advance(t)
+
+	if len(w.created) != 1 {
+		t.Fatalf("expected a helm command, got saved=%+v created=%+v", w.saved, w.created)
+	}
+	if got := w.exports["gateway.url"]; got != "https://db.internal.example.com" {
+		t.Errorf("expected the rendered gateway url in the exports, got %v", w.exports)
+	}
+	if got := w.exports["host"]; got != f.deployment.ServiceConfigSnapshot.Name+".staging.svc.cluster.local" {
+		t.Errorf("expected the in-cluster host in the exports, got %v", w.exports)
 	}
 }
 

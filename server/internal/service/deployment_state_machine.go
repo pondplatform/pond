@@ -147,16 +147,20 @@ func (m *stateMachine) cancel(ctx context.Context, tx store.Repos, d *db.Deploym
 }
 
 // startRollout queues the helm.upgrade, rendered from the dependencies'
-// outputs.
+// outputs, and records the exports other services may import.
 func (m *stateMachine) startRollout(ctx context.Context, tx store.Repos, d *db.Deployment, dependencies []db.DependencyDeployment, commands []*db.Command) error {
 	env, err := tx.Envs.GetByID(ctx, d.EnvironmentID)
 	if err != nil {
 		return fmt.Errorf("get environment: %w", err)
 	}
-	payload, err := helmUpgradePayload(*d, *env, dependencyOutputs(dependencies, commands), m.helmGen)
+	payload, exports, err := helmUpgradePayload(*d, *env, dependencyOutputs(dependencies, commands), m.helmGen)
 	if err != nil {
 		return m.end(ctx, tx, d, db.DeploymentFailed, err.Error())
 	}
+	if err := tx.Deployments.SetExports(ctx, d.ID, exports); err != nil {
+		return err
+	}
+	d.Exports = exports
 	return tx.Deployments.CreateCommand(ctx, newCommand(env.ClusterID, d.ID, db.CommandTypeHelmUpgrade, payload))
 }
 
@@ -278,24 +282,24 @@ func dependencyOutputs(dependencies []db.DependencyDeployment, commands []*db.Co
 	return outputs
 }
 
-func helmUpgradePayload(deployment db.Deployment, env db.Environment, outputs map[string]json.RawMessage, helmGen helmgen.HelmValuesGenerator) (json.RawMessage, error) {
+func helmUpgradePayload(deployment db.Deployment, env db.Environment, outputs map[string]json.RawMessage, helmGen helmgen.HelmValuesGenerator) (json.RawMessage, map[string]string, error) {
 	contexts, err := buildContexts(outputs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	snapshot := deployment.ServiceConfigSnapshot
 	templates := newTemplateContext(&snapshot, &env, deployment.Variables).withDependencies(contexts)
 	cfg, err := renderServiceConfig(snapshot, &env, templates)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// The submit could only check what was known then, not a dependency's outputs.
 	if err := config.ValidateGateway(cfg.Gateway); err != nil {
-		return nil, fmt.Errorf("rendered gateway: %w", err)
+		return nil, nil, fmt.Errorf("rendered gateway: %w", err)
 	}
 	values, err := helmValuesYAML(helmGen, &cfg, &env, deployment.ImageTag, deployment.ID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	payload, err := wire.MarshalPayload(wire.HelmUpgradePayload{
 		ReleaseName: cfg.Name,
@@ -304,9 +308,9 @@ func helmUpgradePayload(deployment db.Deployment, env db.Environment, outputs ma
 		Values:      values,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("marshal helm upgrade payload: %w", err)
+		return nil, nil, fmt.Errorf("marshal helm upgrade payload: %w", err)
 	}
-	return payload, nil
+	return payload, computeExports(&cfg, &env, deployment.Variables), nil
 }
 
 func helmValuesYAML(helmGen helmgen.HelmValuesGenerator, cfg *serviceconfig.ServiceConfig, env *db.Environment, imageTag string, deploymentID uuid.UUID) ([]byte, error) {
