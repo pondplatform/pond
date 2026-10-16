@@ -321,7 +321,7 @@ func followSnapshot(status api.DeploymentStatus, cmdStatus api.CommandStatus, cm
 }
 
 func TestStatusFollowStreamsLogsUntilDone(t *testing.T) {
-	commands.SetFollowPollInterval(t, time.Millisecond)
+	commands.SetPollInterval(t, time.Millisecond)
 	c := &followClient{fakeClient: newFakeClient(), polls: []followPoll{
 		followSnapshot(api.DeploymentStatusRunning, api.CommandStatusQueued, ""),
 		followSnapshot(api.DeploymentStatusRunning, api.CommandStatusDispatched, "", "pulling image"),
@@ -358,7 +358,7 @@ func TestStatusFollowStreamsLogsUntilDone(t *testing.T) {
 }
 
 func TestStatusFollowFailedDeploymentReturnsError(t *testing.T) {
-	commands.SetFollowPollInterval(t, time.Millisecond)
+	commands.SetPollInterval(t, time.Millisecond)
 	failed := followSnapshot(api.DeploymentStatusFailed, api.CommandStatusFailed, "helm exited 1", "boom")
 	reason := "command deploy failed"
 	failed.deployment.Error = &reason

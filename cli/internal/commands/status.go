@@ -289,7 +289,7 @@ func printDeploymentSummary(out io.Writer, d *api.Deployment) {
 	}
 }
 
-var followPollInterval = 2 * time.Second
+var pollInterval = 2 * time.Second
 
 // followDeployment prints the deployment, then polls it and prints each
 // command's status changes and new log lines until the deployment finishes.
@@ -311,7 +311,7 @@ func followDeployment(ctx context.Context, out io.Writer, c client.ServerClient,
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(followPollInterval):
+		case <-time.After(pollInterval):
 		}
 		var err error
 		if d, err = c.GetDeployment(ctx, d.ID); err != nil {

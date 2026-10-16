@@ -153,7 +153,30 @@ pond deploy [flags]
 | `-i, --input` | `pond-input-<env>.yml` or `.json`, if present | Path to a JSON or YAML file with input for dependencies and variables; see [Dependencies](../services/dependencies.md) for the format |
 | `--wait` | `false` | Block until the deployment reaches a terminal state |
 
-Without `--wait`, the command prints the deployment ID and exits. With `--wait`, it polls every 2 seconds and exits when the deployment succeeds, fails or is cancelled.
+Without `--wait`, the command prints the deployment ID and exits. With `--wait`, it polls every 2 seconds and exits when the deployment succeeds, fails or is cancelled. A failed deployment exits non-zero, with the failure reason and the logs of the failed step.
+
+While waiting, it shows what is being deployed and which step it is on. A deployment has one step per managed dependency, then the rollout. Each step that finishes stays on screen with how long it took:
+
+```
+Deployment submitted: 3f2a… (status: pending)
+Deploying api (ghcr.io/acme/api:v1.2.3) to prod
+✓ Provisioned db (postgres)  42s
+⠹ [2/2] Rolling out api · 12s · Executing command helm upgrade ...
+```
+
+On a terminal, the last line is redrawn in place. It shows the current step, how long it has been running and its latest log line. When stdout is not a terminal, `CI` is set or `TERM=dumb`, as in CI/CD pipelines, the output is plain lines without escape codes. There is one line each time the step changes, and a line every 30 seconds while it doesn't, with the time and the latest log line:
+
+```
+[1/2] Provisioning db (postgres): waiting for an agent
+[1/2] Provisioning db (postgres)
+[1/2] Provisioning db (postgres) · 30s · aws_db_instance.this: Still creating... [30s elapsed]
+✓ Provisioned db (postgres)  42s
+[2/2] Rolling out api
+✓ Rolled out api  35s
+Deployment succeeded in 1m28s
+```
+
+`waiting for an agent` means no agent of the environment's cluster has picked the step up yet.
 
 Every dependency declared in `pond.yml` needs input on every deployment; input from earlier deployments is not reused. If `--input` leaves out a declared dependency, or names a dependency that is not declared, the server rejects the request and creates nothing.
 

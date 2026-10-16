@@ -87,10 +87,16 @@ func NewDeployCmd() *cobra.Command {
 				return fmt.Errorf("submit deployment: %w", err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Deployment submitted: %s (status: %s)\n", d.ID, d.Status)
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Deployment submitted: %s (status: %s)\n", d.ID, d.Status)
 
 			if wait {
-				return waitForDeployment(cmd.Context(), cmd.OutOrStdout(), sc, d.ID)
+				image := tag
+				if overridable.Image != "" {
+					image = overridable.Image + ":" + tag
+				}
+				fmt.Fprintf(out, "Deploying %s (%s) to %s\n", overridable.Name, image, resolved.Env)
+				return waitForDeployment(cmd.Context(), out, sc, d.ID, overridable.Name)
 			}
 			return nil
 		},
@@ -105,31 +111,62 @@ func NewDeployCmd() *cobra.Command {
 	return cmd
 }
 
-func waitForDeployment(ctx context.Context, out io.Writer, c client.ServerClient, id uuid.UUID) error {
+// waitForDeployment polls the deployment until it ends, showing each step
+// as it finishes and what the deployment is doing in between.
+func waitForDeployment(ctx context.Context, out io.Writer, c client.ServerClient, id uuid.UUID, service string) error {
+	p := newProgress(out)
+	defer p.Stop()
+
+	reported := map[uuid.UUID]bool{}
 	for {
 		d, err := c.GetDeployment(ctx, id)
 		if err != nil {
 			return fmt.Errorf("get deployment status: %w", err)
 		}
 
-		switch d.Status {
-		case "succeeded":
-			fmt.Fprintln(out, "Deployment succeeded!")
-			return nil
-		case "failed":
-			printDeploymentStatus(ctx, out, c, d)
-			return fmt.Errorf("deployment failed")
-		case "cancelled":
-			return fmt.Errorf("deployment cancelled")
-		default:
-			fmt.Fprintf(out, "Status: %s, waiting...\n", d.Status)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(2 * time.Second):
+		steps := newDeploySteps(d, service)
+		for _, cmd := range d.Commands {
+			if commandDone(cmd.Status) && !reported[cmd.ID] {
+				reported[cmd.ID] = true
+				p.Println(steps.finished(cmd))
 			}
 		}
+
+		if deploymentDone(d.Status) {
+			p.Stop()
+			return reportOutcome(ctx, out, c, d)
+		}
+
+		text, tailID := steps.current(d)
+		p.Update(text, logTail(ctx, c, tailID))
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
 	}
+}
+
+func reportOutcome(ctx context.Context, out io.Writer, c client.ServerClient, d *api.Deployment) error {
+	took := ""
+	if d.CompletedAt != nil {
+		took = " in " + formatDuration(d.CompletedAt.Sub(d.CreatedAt))
+	}
+	switch d.Status {
+	case api.DeploymentStatusSucceeded:
+		fmt.Fprintf(out, "Deployment succeeded%s\n", took)
+		return nil
+	case api.DeploymentStatusFailed:
+		fmt.Fprintln(out)
+		printDeploymentStatus(ctx, out, c, d)
+		if d.Error != nil && *d.Error != "" {
+			return fmt.Errorf("deployment failed: %s", *d.Error)
+		}
+		return errors.New("deployment failed")
+	}
+	fmt.Fprintf(out, "Deployment cancelled%s\n", took)
+	return errors.New("deployment cancelled")
 }
 
 func defaultInputPath(dir, env string) (string, error) {
