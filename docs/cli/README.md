@@ -138,6 +138,37 @@ Removes a context from the config file.
 
 ---
 
+## pond init
+
+Create a `pond.yml` for a new service, and the input file `pond deploy` reads for the environment.
+
+```sh
+pond init --image <image> [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--image` | _(required)_ | Docker image reference, without tag |
+| `--name` | the directory name | Service name. Without it, the name of the pond file's directory is lowercased, and every run of characters other than `a-z` and `0-9` becomes `-`, so `My_App` gives `my-app` |
+| `--port` | `8080` | Container port the application listens on |
+| `-f, --pond-file` | `./pond.yml` | Path of the `pond.yml` to create |
+
+The `pond.yml` has the required fields and `service.port`, followed by commented-out `gateway`, `env` and `dependencies` blocks to start from. The input file, `pond-input-<env>.yml` next to the pond file, is all comments: it sends no input until you uncomment a dependency or variable, and its commented `db` matches the one in `pond.yml`. See the [pond.yml reference](../services/pond-yml.md) for every field.
+
+The environment is resolved like any other command's: `--env`, then `POND_ENV`, then the active context. With none set, only `pond.yml` is created. `pond init` doesn't contact the server or start a port-forward.
+
+It never overwrites: if the `pond.yml`, `pond-input-<env>.yml` or `pond-input-<env>.json` already exists, it fails without writing anything. The values are checked like a deployed `pond.yml`'s, so a name that isn't a valid service name, or a directory name longer than 53 characters, fails too.
+
+```sh
+$ cd my-app
+$ pond init --image ghcr.io/acme/my-app --port 3000 --env production
+Created pond.yml
+Created pond-input-production.yml
+Next: pond deploy --tag <tag> --wait
+```
+
+---
+
 ## pond deploy
 
 Submit a deployment request.

@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -73,5 +76,43 @@ func TestRootCmdTakesItsConfigurationFromTheEnvironment(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), deploymentID.String()) {
 		t.Errorf("expected deployment %s in the listing, got:\n%s", deploymentID, out.String())
+	}
+}
+
+// init only writes local files, so it takes the environment from the usual
+// chain without starting the port-forward a context or the environment
+// configures. With no kubectl on PATH, starting one would print a warning.
+func TestInitResolvesTheEnvironmentWithoutStartingAPortForward(t *testing.T) {
+	l, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	freePort := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+
+	t.Setenv(pondconfig.EnvEnvironment, "staging")
+	t.Setenv(pondconfig.EnvConfig, filepath.Join(t.TempDir(), "never-created"))
+	t.Setenv(pondconfig.EnvContext, "")
+	t.Setenv(pondconfig.EnvKubeContext, "pond")
+	t.Setenv(pondconfig.EnvKubeNamespace, "pond")
+	t.Setenv(pondconfig.EnvKubeService, "")
+	t.Setenv(pondconfig.EnvForwardPort, strconv.Itoa(freePort))
+	t.Setenv("PATH", t.TempDir())
+
+	dir := t.TempDir()
+	root := NewRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"init", "--image", "ghcr.io/acme/api", "-f", filepath.Join(dir, "pond.yml")})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("init: %v\n%s", err, out.String())
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "pond-input-staging.yml")); err != nil {
+		t.Errorf("expected the input file for the environment from %s: %v", pondconfig.EnvEnvironment, err)
+	}
+	if strings.Contains(out.String(), "port-forward") {
+		t.Errorf("expected no port-forward to be started, got:\n%s", out.String())
 	}
 }

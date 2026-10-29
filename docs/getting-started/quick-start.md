@@ -162,7 +162,7 @@ pond deployment status
 
 ## Next steps
 
-- **Deploy your own app:** write a `pond.yml` for your image. See the [pond.yml reference](../services/pond-yml.md).
+- **Deploy your own app:** run `pond init --image <your image>` in its directory, then see the [pond.yml reference](../services/pond-yml.md).
 - **Something bigger:** [Lemmy](https://github.com/pondplatform/sample-apps/tree/main/lemmy) runs three services on one hostname, with a volume and shared secrets.
 - **More samples:** [sample-apps](https://github.com/pondplatform/sample-apps) has Umami, n8n, Keycloak, Nextcloud, Forgejo and others.
 - Read more about [dependencies](../services/dependencies.md), [config files](../services/config-files.md) and [per-environment settings](../services/environments.md).
