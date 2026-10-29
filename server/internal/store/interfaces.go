@@ -20,9 +20,12 @@ type DeploymentInfoStore interface {
 	// ListLatestByProject returns the latest deployment of every service of
 	// the project in every environment it was deployed to.
 	ListLatestByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Deployment, error)
-	// ListUnfinishedByService returns the service's deployments that are in
-	// progress, or whose agent is still running one of their commands.
-	ListUnfinishedByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error)
+	// ListInProgressByService returns the service's deployments that are in
+	// progress, at most one per environment, oldest first.
+	ListInProgressByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error)
+	// Create inserts the deployment. It returns api.ErrConflict when the
+	// deployment is in progress and another of its service in its environment
+	// already is.
 	Create(ctx context.Context, d *domain.Deployment) error
 	// SaveDeployment writes status, error and completed_at.
 	SaveDeployment(ctx context.Context, d *domain.Deployment) error

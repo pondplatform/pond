@@ -304,9 +304,9 @@ func TestServiceDelete_RetriesOnlyWhatFailed(t *testing.T) {
 	assertServiceStatus(ctx, t, h, scenario.ProjectID, "api", shared.ServiceStatusDeleted)
 }
 
-// TestServiceDelete_RefusedWhileWorkIsUnfinished checks that a delete waits
+// TestServiceDelete_RefusedWhileWorkIsInProgress checks that a delete waits
 // for no deployment, and a deploy for no delete: each is refused with 409.
-func TestServiceDelete_RefusedWhileWorkIsUnfinished(t *testing.T) {
+func TestServiceDelete_RefusedWhileWorkIsInProgress(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -329,7 +329,7 @@ func TestServiceDelete_RefusedWhileWorkIsUnfinished(t *testing.T) {
 	running := submitDeployment(ctx, t, h, req)
 	svc := serviceNamed(ctx, t, h, scenario.ProjectID, "api")
 	code, _, body := deleteService(ctx, t, h, svc.ID, false)
-	if code != http.StatusConflict || !strings.Contains(body, "deployment "+running.String()) || !strings.Contains(body, "wait for it or cancel it") {
+	if code != http.StatusConflict || !strings.Contains(body, "deployment "+running.String()) || !strings.Contains(body, "is in progress: wait for it to finish, or cancel it") {
 		t.Fatalf("expected 409 naming the running deployment, got %d: %s", code, body)
 	}
 	releaseRollout()

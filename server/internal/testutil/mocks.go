@@ -19,7 +19,7 @@ type MockDeploymentInfoStore struct {
 	LockDeploymentFn             func(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
 	ListByServiceFilteredFn      func(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *api.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
 	ListLatestByProjectFn        func(ctx context.Context, projectID uuid.UUID) ([]domain.Deployment, error)
-	ListUnfinishedByServiceFn    func(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error)
+	ListInProgressByServiceFn    func(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error)
 	CreateFn                     func(ctx context.Context, d *domain.Deployment) error
 	SaveDeploymentFn             func(ctx context.Context, d *domain.Deployment) error
 	SetExportsFn                 func(ctx context.Context, id uuid.UUID, exports map[string]string) error
@@ -62,9 +62,9 @@ func (m *MockDeploymentInfoStore) ListLatestByProject(ctx context.Context, proje
 	}
 	return nil, nil
 }
-func (m *MockDeploymentInfoStore) ListUnfinishedByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error) {
-	if m.ListUnfinishedByServiceFn != nil {
-		return m.ListUnfinishedByServiceFn(ctx, serviceID)
+func (m *MockDeploymentInfoStore) ListInProgressByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error) {
+	if m.ListInProgressByServiceFn != nil {
+		return m.ListInProgressByServiceFn(ctx, serviceID)
 	}
 	return nil, nil
 }

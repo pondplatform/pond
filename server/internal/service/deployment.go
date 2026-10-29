@@ -80,7 +80,7 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		if err != nil {
 			return err
 		}
-		if err := refuseWhileDeleting(ctx, tx, svc); err != nil {
+		if err := refuseWhileInProgress(ctx, tx, svc, &env.ID); err != nil {
 			return err
 		}
 		requested, err := resolveServiceDependencies(ctx, tx, req.ProjectID, env, svcConfig, req.Dependencies)
@@ -144,25 +144,35 @@ func getOrCreateService(ctx context.Context, services store.ServiceRepository, r
 	return svc, nil
 }
 
-// refuseWhileDeleting takes the service's lock, which a delete holds while it
-// starts, and refuses a deploy while one of its deletes is unfinished.
-func refuseWhileDeleting(ctx context.Context, tx store.Repos, svc *db.Service) error {
+// refuseWhileInProgress takes the service's lock, which every deploy and
+// delete of it holds while it starts, and refuses new work while one of its
+// deployments is in progress: in environment envID, or in any environment
+// when envID is nil. A service has at most one deployment in progress per
+// environment, so the one that runs is always the latest.
+//
+// A cancelled deployment whose command the agent still runs doesn't count:
+// the agent runs one command at a time, so the new deployment's commands
+// wait behind it.
+func refuseWhileInProgress(ctx context.Context, tx store.Repos, svc *db.Service, envID *uuid.UUID) error {
 	if err := tx.Services.Lock(ctx, svc.ID); err != nil {
 		return err
 	}
-	unfinished, err := tx.Deployments.ListUnfinishedByService(ctx, svc.ID)
+	inProgress, err := tx.Deployments.ListInProgressByService(ctx, svc.ID)
 	if err != nil {
-		return fmt.Errorf("list unfinished deployments of service %q: %w", svc.Name, err)
+		return fmt.Errorf("list in-progress deployments of service %q: %w", svc.Name, err)
 	}
-	for _, d := range unfinished {
-		if d.Kind != db.DeploymentKindDelete {
+	for _, d := range inProgress {
+		if envID != nil && d.EnvironmentID != *envID {
 			continue
 		}
 		env, err := tx.Envs.GetByID(ctx, d.EnvironmentID)
 		if err != nil {
 			return fmt.Errorf("get environment: %w", err)
 		}
-		return api.Conflict("service %q is being deleted from environment %q: wait for delete %s to finish, or cancel it, then deploy again", svc.Name, env.Name, d.ID)
+		if d.Kind == db.DeploymentKindDelete {
+			return api.Conflict("service %q is being deleted from environment %q: wait for delete %s to finish, or cancel it, then try again", svc.Name, env.Name, d.ID)
+		}
+		return api.Conflict("deployment %s of service %q to environment %q is in progress: wait for it to finish, or cancel it, then try again", d.ID, svc.Name, env.Name)
 	}
 	return nil
 }

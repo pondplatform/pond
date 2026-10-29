@@ -209,6 +209,8 @@ Deployment succeeded in 1m28s
 
 `waiting for the agent` means the agent of the environment's cluster hasn't picked the step up yet. It runs one command at a time, so it may be busy with another deployment. See [How work runs](../README.md#how-work-runs).
 
+Only one deployment of a service runs in an environment at a time. While a deploy or delete of the service is in progress in the environment, the server refuses the deploy and creates nothing; the command exits non-zero, naming the deployment in progress. Wait for it to finish, or cancel it, and deploy again. Deploying to other environments is not affected.
+
 Every dependency declared in `pond.yml` needs input on every deployment; input from earlier deployments is not reused. If `--input` leaves out a declared dependency, or names a dependency that is not declared, the server rejects the request and creates nothing.
 
 Without `--input`, the command looks for `pond-input-<env>.yml` or `pond-input-<env>.json` in the directory of the pond file, where `<env>` is the resolved environment, and uses it if present. If both exist, the command fails; remove one or pass `--input`. Files ending in `.yml` or `.yaml` are read as YAML, everything else as JSON.
@@ -353,7 +355,7 @@ Without `--wait`, the command exits once the deletes are submitted. With `--wait
 
 The server refuses the delete, and nothing changes, when:
 
-- **Something is still running.** A deployment or delete of the service hasn't finished in some environment. Wait for it, or cancel it, and delete again.
+- **Something is in progress.** A deployment or delete of the service is in progress in some environment. Wait for it, or cancel it, and delete again.
 - **Another service depends on it.** A service with a [`service` dependency](../services/dependencies.md#service) on this one is deployed to one of its environments. Delete that one first, or remove the dependency from it and redeploy it.
 
 While a delete runs, deploying the service is refused.

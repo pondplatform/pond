@@ -79,12 +79,6 @@ func (d Deployment) TornDown() bool {
 	return d.Kind == DeploymentKindDelete && d.Status == DeploymentSucceeded
 }
 
-// Unfinished is true while the deployment is in progress, or an agent is still
-// running one of its commands after it ended.
-func (d Deployment) Unfinished() bool {
-	return d.Status == DeploymentInProgress || d.Stopping
-}
-
 // DependencyDeployment is a dependency as one deployment resolved it. It does
 // not change after submit: a managed dependency's progress and outputs are
 // those of its command, and an unmanaged one's outputs are its UserConfig.

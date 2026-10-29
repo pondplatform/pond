@@ -140,10 +140,10 @@ func (s *deploymentInfoStore) ListLatestByProject(ctx context.Context, projectID
 	)
 }
 
-func (s *deploymentInfoStore) ListUnfinishedByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error) {
+func (s *deploymentInfoStore) ListInProgressByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error) {
 	return s.listDeployments(ctx,
 		`SELECT `+deploymentColumns+` FROM deployments d
-		  WHERE d.service_id = $1 AND (d.status = $2 OR `+stoppingSQL+`)
+		  WHERE d.service_id = $1 AND d.status = $2
 		  ORDER BY d.created_at, d.id`,
 		serviceID, domain.DeploymentInProgress,
 	)
@@ -186,6 +186,11 @@ func (s *deploymentInfoStore) Create(ctx context.Context, d *domain.Deployment) 
 		d.ID, d.ServiceID, d.EnvironmentID, d.Kind, d.ImageTag, configJSON, variablesJSON,
 		d.Status, d.TriggeredBy, d.CreatedAt, d.CompletedAt,
 	)
+	// deployments_one_in_progress: callers check first, under the service's
+	// lock, with a friendlier message.
+	if pgCode(err) == pgUniqueViolation {
+		return api.Conflict("another deployment of service %s to environment %s is in progress", d.ServiceID, d.EnvironmentID)
+	}
 	if err != nil {
 		return fmt.Errorf("create deployment: %w", err)
 	}

@@ -20,37 +20,23 @@ import (
 // DeleteService tears the service down in every environment it is live in,
 // that is where its latest deployment is not a succeeded delete. It creates
 // and starts one delete deployment per environment, all in one transaction,
-// or none: a deployment of the service that has not finished, or a service
-// importing it in one of those environments, refuses the delete.
+// or none: a deployment of the service in progress in any environment, or a
+// service importing it in one of those environments, refuses the delete.
 func (s *deploymentService) DeleteService(ctx context.Context, serviceID uuid.UUID, req api.DeleteServiceRequest) ([]db.Deployment, error) {
 	var created []db.Deployment
 	err := s.tx.RunInTx(ctx, func(ctx context.Context, tx store.Repos) error {
-		// Running work is refused, never cancelled: cancelling would lock
-		// deployment rows while holding the service's.
-		if err := tx.Services.Lock(ctx, serviceID); err != nil {
-			return err
-		}
 		svc, err := tx.Services.GetByID(ctx, serviceID)
 		if err != nil {
+			return err
+		}
+		// Work in progress is refused, never cancelled: cancelling would lock
+		// deployment rows while holding the service's.
+		if err := refuseWhileInProgress(ctx, tx, svc, nil); err != nil {
 			return err
 		}
 		envNames, err := environmentNames(ctx, tx, svc.ProjectID)
 		if err != nil {
 			return err
-		}
-
-		unfinished, err := tx.Deployments.ListUnfinishedByService(ctx, serviceID)
-		if err != nil {
-			return fmt.Errorf("list unfinished deployments of service %q: %w", svc.Name, err)
-		}
-		if len(unfinished) > 0 {
-			d := unfinished[0]
-			what := "deployment"
-			if d.Kind == db.DeploymentKindDelete {
-				what = "delete"
-			}
-			return api.Conflict("%s %s of service %q in environment %q has not finished: wait for it or cancel it, then delete again",
-				what, d.ID, svc.Name, envNames[d.EnvironmentID])
 		}
 
 		latest, err := tx.Deployments.ListLatestByProject(ctx, svc.ProjectID)

@@ -36,6 +36,7 @@ CLI (pond)
 - **The agent runs one command at a time.** It asks for a command, runs it, reports the result, then asks again. Commands run in the order they were queued, across every deployment to the cluster. A deployment can wait while the agent works on another.
 - **A command doesn't survive its agent.** If the agent restarts or loses its connection while running a command, the command's outcome is unknown. When the agent connects again, the server fails the command with `the agent disconnected while running this command, so its outcome is unknown`, which fails its deployment. Deploy again.
 - **Don't run a second agent for a cluster.** When it connects, the server fails whatever the first one is running, and the two then run commands side by side.
+- **One deployment of a service per environment at a time.** While a deploy or delete of a service is in progress in an environment, another one there is refused with `409 Conflict`, and nothing is created. Wait for it to finish, or cancel it. A cancelled deployment stops blocking at once, even while the agent is still stopping its command: the next deployment's commands simply wait their turn. Other services, and the same service in other environments, are not affected.
 
 ## Navigation
 
