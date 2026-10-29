@@ -5,7 +5,17 @@ metadata:
   labels:
     app: pond-agent
 spec:
+  # A cluster has exactly one agent: the server runs the cluster's commands
+  # one at a time through it, and its tofu state is on a ReadWriteOnce volume.
   replicas: 1
+  # The old pod is shut down before the new one is created. This is not
+  # Recreate because Helm's server-side apply can't switch an installed
+  # Deployment to it.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: pond-agent

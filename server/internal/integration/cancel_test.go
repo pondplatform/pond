@@ -121,28 +121,33 @@ func TestCancel_CancelsQueuedCommandsAtOnce(t *testing.T) {
 	waitForAPIStatus(ctx, t, h, id, "cancelled", 2*time.Second)
 }
 
-// TestStateMachine_FailedDependencyStopsItsRunningSibling checks that when one
-// dependency fails, the agent provisioning another is told to stop.
-func TestStateMachine_FailedDependencyStopsItsRunningSibling(t *testing.T) {
+// TestStateMachine_FailedDependencyCancelsItsQueuedSibling checks that when
+// one dependency fails, another that the agent has not started on is
+// cancelled and never handed out.
+func TestStateMachine_FailedDependencyCancelsItsQueuedSibling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	h := NewTestHarness(t, testConnStr)
 	scenario := BuildScenario(ctx, t, h)
-	gate, _ := NewGate(t)
-	slow := h.StartFakeAgent(ctx, t, scenario.AgentToken, Behavior{Gate: gate})
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, FailingBehavior("tofu apply: exit status 1"))
 
 	req := SubmitRequest(scenario, ServiceConfigWithDeps("test-service", map[string]string{"db1": "postgres", "db2": "postgres"}), "v1.0.0")
 	req.Dependencies = map[string]shared.DependencyInput{"db1": {Managed: true}, "db2": {Managed: true}}
 	id := submitDeployment(ctx, t, h, req)
-	sibling := slow.WaitForCommands(ctx, t, 1)[0].ID
 
-	h.StartFakeAgent(ctx, t, scenario.AgentToken, FailingBehavior("tofu apply: exit status 1"))
-
-	waitForCancel(t, slow, sibling)
 	body := waitForTerminal(ctx, t, h, id, 5*time.Second)
 	if got := field(body, "status"); got != "failed" || !strings.Contains(field(body, "error"), "failed to provision: tofu apply: exit status 1") {
 		t.Fatalf("expected failed with the dependency's error, got %q %q\n%s", got, field(body, "error"), describeDeployment(h.DB, id))
 	}
-	waitForCommandStatus(t, h, id, sibling, "cancelled", 2*time.Second)
+	failed := fa.WaitForCommands(ctx, t, 1)[0].ID
+	time.Sleep(5 * fakeAgentPollInterval)
+	if got := fa.ReceivedCommands(); len(got) != 1 {
+		t.Fatalf("expected the agent to get only the failed tofu.apply, got %d commands", len(got))
+	}
+	for _, cmd := range commandsOf(t, h.DB, id) {
+		if cmd.ID != failed && cmd.Status != "cancelled" {
+			t.Errorf("expected the sibling cancelled, got %+v", cmd)
+		}
+	}
 }

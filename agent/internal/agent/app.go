@@ -36,6 +36,11 @@ func Run(ctx context.Context, cfg Config, exec CommandExecutor, log *slog.Logger
 // reports the result, and asks again. When the server has nothing, it waits
 // a poll interval before asking again. While a command runs, it keeps reading,
 // so the server can tell it to cancel.
+//
+// A running command never outlives the connection: when serve returns, it
+// cancels the command, and the agent exits. The server relies on that. When
+// the cluster's agent connects, the server fails every command it still has
+// as dispatched.
 func serve(ctx context.Context, conn AgentConnection, exec CommandExecutor, poll time.Duration, log *slog.Logger) error {
 	inbox := make(chan *wire.Envelope)
 	readErr := make(chan error, 1)

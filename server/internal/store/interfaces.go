@@ -38,6 +38,9 @@ type DeploymentInfoStore interface {
 	// ListCommandsByServiceEnv returns the commands of the given types of all
 	// the service's deployments in the environment, oldest first.
 	ListCommandsByServiceEnv(ctx context.Context, serviceID, environmentID uuid.UUID, types ...string) ([]*domain.Command, error)
+	// ListDispatchedByCluster returns the cluster's commands that an agent
+	// was handed and has not reported on, oldest first.
+	ListDispatchedByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
 	// ClaimNextCommand dispatches the cluster's oldest queued command, or
 	// returns nil when there is none.
 	ClaimNextCommand(ctx context.Context, clusterID uuid.UUID, at time.Time) (*domain.Command, error)

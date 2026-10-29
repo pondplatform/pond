@@ -302,9 +302,17 @@ func (s *deploymentInfoStore) ListCommandsByServiceEnv(ctx context.Context, serv
 	)
 }
 
+func (s *deploymentInfoStore) ListDispatchedByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error) {
+	return s.listCommands(ctx,
+		`SELECT `+commandColumns+` FROM commands WHERE cluster_id = $1 AND status = $2 ORDER BY created_at, id`,
+		clusterID, domain.CommandStatusDispatched,
+	)
+}
+
 func (s *deploymentInfoStore) ClaimNextCommand(ctx context.Context, clusterID uuid.UUID, at time.Time) (*domain.Command, error) {
-	// SKIP LOCKED lets several agents of a cluster claim side by side, each
-	// getting a different command.
+	// A cluster's one agent claims a command only after reporting the last,
+	// so its commands run one at a time. SKIP LOCKED only keeps a stray second
+	// connection from waiting on the first's claim.
 	cmd, err := scanCommand(s.db.QueryRowContext(ctx,
 		`UPDATE commands SET status = $2, updated_at = $3
 		  WHERE id = (SELECT id FROM commands

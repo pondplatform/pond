@@ -198,7 +198,7 @@ Deploying api (ghcr.io/acme/api:v1.2.3) to prod
 On a terminal, the last line is redrawn in place. It shows the current step, how long it has been running and its latest log line. When stdout is not a terminal, `CI` is set or `TERM=dumb`, as in CI/CD pipelines, the output is plain lines without escape codes. There is one line each time the step changes, and a line every 30 seconds while it doesn't, with the time and the latest log line:
 
 ```
-[1/2] Provisioning db (postgres): waiting for an agent
+[1/2] Provisioning db (postgres): waiting for the agent
 [1/2] Provisioning db (postgres)
 [1/2] Provisioning db (postgres) · 30s · aws_db_instance.this: Still creating... [30s elapsed]
 ✓ Provisioned db (postgres)  42s
@@ -207,7 +207,7 @@ On a terminal, the last line is redrawn in place. It shows the current step, how
 Deployment succeeded in 1m28s
 ```
 
-`waiting for an agent` means no agent of the environment's cluster has picked the step up yet.
+`waiting for the agent` means the agent of the environment's cluster hasn't picked the step up yet. It runs one command at a time, so it may be busy with another deployment. See [How work runs](../README.md#how-work-runs).
 
 Every dependency declared in `pond.yml` needs input on every deployment; input from earlier deployments is not reused. If `--input` leaves out a declared dependency, or names a dependency that is not declared, the server rejects the request and creates nothing.
 

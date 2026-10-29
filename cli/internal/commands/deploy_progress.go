@@ -254,7 +254,7 @@ func (s deploySteps) current(d *api.Deployment) (string, *uuid.UUID) {
 	case len(running) > 0:
 		text = s.join(running)
 	case len(queued) > 0:
-		text = s.join(queued) + ": waiting for an agent"
+		text = s.join(queued) + ": waiting for the agent"
 	default:
 		text = "Preparing rollout"
 	}

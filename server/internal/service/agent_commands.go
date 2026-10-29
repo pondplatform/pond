@@ -22,14 +22,37 @@ type CommandResult struct {
 	Error     string
 }
 
-// AgentCommands serves the agents: it hands out commands that are ready to
-// run, tells an agent when to stop one, and records what comes back.
+// AgentCommands serves each cluster's one agent: it hands out commands that
+// are ready to run, tells the agent when to stop one, and records what comes
+// back.
 type AgentCommands struct {
 	repos   store.Repos
 	tx      store.Transactor
 	machine *stateMachine
 	log     *slog.Logger
 	now     func() time.Time
+}
+
+// agentDisconnected is the error of a command its agent was running when the
+// connection ended.
+const agentDisconnected = "the agent disconnected while running this command, so its outcome is unknown"
+
+// Connected fails every command still dispatched on the cluster when its
+// agent connects. A cluster has one agent, and it never carries a command
+// across connections, so nothing runs them any more. Each goes through Record,
+// like a result from the agent.
+func (a *AgentCommands) Connected(ctx context.Context, clusterID uuid.UUID) error {
+	orphaned, err := a.repos.Deployments.ListDispatchedByCluster(ctx, clusterID)
+	if err != nil {
+		return fmt.Errorf("list dispatched commands: %w", err)
+	}
+	for _, cmd := range orphaned {
+		a.log.Warn("failing a command the agent was running when it disconnected", "command_id", cmd.ID, "cluster_id", clusterID)
+		if err := a.Record(ctx, clusterID, CommandResult{CommandID: cmd.ID, Error: agentDisconnected}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Next dispatches the cluster's next queued command, or returns nil when

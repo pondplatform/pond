@@ -54,7 +54,7 @@ type Deployment struct {
 
 // APIStatus is the status users see: pending until an agent starts on the
 // deployment, then running, then its outcome. A cancelled deployment shows as
-// cancelling until its agents have stopped what they were running.
+// cancelling until the agent has stopped what it was running.
 func (d Deployment) APIStatus() api.DeploymentStatus {
 	switch d.Status {
 	case DeploymentSucceeded:

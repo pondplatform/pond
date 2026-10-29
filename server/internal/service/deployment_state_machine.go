@@ -129,7 +129,7 @@ func (m *stateMachine) advance(ctx context.Context, tx store.Repos, d *db.Deploy
 	}
 	switch currentState(*d, dependencies, commands) {
 	case stateFinished, stateStopping, stateProvisioning, stateRollingOut:
-		return nil // waiting for agents, or nothing left to do
+		return nil // waiting for the agent, or nothing left to do
 	case stateDependenciesReady:
 		return m.startRollout(ctx, tx, d, dependencies, commands)
 	case stateDependencyFailed:

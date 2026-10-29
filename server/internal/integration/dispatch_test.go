@@ -4,6 +4,8 @@ package integration
 
 import (
 	"context"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,36 +54,8 @@ func TestDispatch_RunningOnceAnAgentPicksItUp(t *testing.T) {
 	}
 }
 
-// TestDispatch_TwoAgentsPullDifferentCommands checks that two agents of one
-// cluster never get the same command.
-func TestDispatch_TwoAgentsPullDifferentCommands(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	h := NewTestHarness(t, testConnStr)
-	scenario := BuildScenario(ctx, t, h)
-	gate, release := NewGate(t)
-	agentA := h.StartFakeAgent(ctx, t, scenario.AgentToken, Behavior{Gate: gate})
-	agentB := h.StartFakeAgent(ctx, t, scenario.AgentToken, Behavior{Gate: gate})
-
-	idA := submitDeployment(ctx, t, h, SubmitRequest(scenario, MinimalServiceConfig("service-a"), "v1.0.0"))
-	idB := submitDeployment(ctx, t, h, SubmitRequest(scenario, MinimalServiceConfig("service-b"), "v1.0.0"))
-	cmdA := agentA.WaitForCommands(ctx, t, 1)[0].ID
-	cmdB := agentB.WaitForCommands(ctx, t, 1)[0].ID
-	if cmdA == cmdB {
-		t.Fatalf("both agents got command %s", cmdA)
-	}
-
-	release()
-	for _, id := range []uuid.UUID{idA, idB} {
-		if got := field(waitForTerminal(ctx, t, h, id, 5*time.Second), "status"); got != "succeeded" {
-			t.Fatalf("deployment %s: expected succeeded, got %q\n%s", id, got, describeDeployment(h.DB, id))
-		}
-	}
-}
-
 // TestDispatch_RolloutWaitsForItsDependencies checks that the helm command is
-// not handed out, even to an idle agent, until every dependency is ready.
+// not queued until every dependency is ready.
 func TestDispatch_RolloutWaitsForItsDependencies(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -91,23 +65,74 @@ func TestDispatch_RolloutWaitsForItsDependencies(t *testing.T) {
 	gate, release := NewGate(t)
 	busy := TofuOutputBehavior(PostgresOutput)
 	busy.Gate = gate
-	provisioner := h.StartFakeAgent(ctx, t, scenario.AgentToken, busy)
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, busy)
 
 	req := SubmitRequest(scenario, ServiceConfigWithDep("test-service"), "v1.0.0")
 	req.Dependencies = managedPostgres
 	id := submitDeployment(ctx, t, h, req)
-	if got := provisioner.WaitForCommands(ctx, t, 1)[0].Type; got != wire.CommandTofuApply {
+	if got := fa.WaitForCommands(ctx, t, 1)[0].Type; got != wire.CommandTofuApply {
 		t.Fatalf("expected tofu.apply first, got %s", got)
 	}
-
-	idle := h.StartFakeAgent(ctx, t, scenario.AgentToken, DefaultBehavior)
-	time.Sleep(10 * fakeAgentPollInterval)
-	if got := idle.ReceivedCommands(); len(got) != 0 {
-		t.Fatalf("expected no command for the idle agent while the dependency is provisioned, got %s", got[0].Type)
+	if n := countCommands(t, h.DB, id, wire.CommandHelmUpgrade); n != 0 {
+		t.Fatalf("expected no helm.upgrade while the dependency is provisioned, got %d", n)
 	}
 
 	release()
 	if got := field(waitForTerminal(ctx, t, h, id, 5*time.Second), "status"); got != "succeeded" {
 		t.Fatalf("expected succeeded, got %q\n%s", got, describeDeployment(h.DB, id))
+	}
+}
+
+// TestAgent_ReconnectFailsWhatItWasRunning checks that when the cluster's
+// agent connects, a command it was running before is failed, and with it the
+// deployment.
+func TestAgent_ReconnectFailsWhatItWasRunning(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	h := NewTestHarness(t, testConnStr)
+	scenario := BuildScenario(ctx, t, h)
+	gate, _ := NewGate(t)
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, Behavior{Gate: gate})
+
+	id := submitDeployment(ctx, t, h, SubmitRequest(scenario, MinimalServiceConfig("test-service"), "v1.0.0"))
+	cmdID := fa.WaitForCommands(ctx, t, 1)[0].ID
+	fa.Stop()
+	h.StartFakeAgent(ctx, t, scenario.AgentToken, DefaultBehavior)
+
+	body := waitForTerminal(ctx, t, h, id, 5*time.Second)
+	if got := field(body, "status"); got != "failed" || !strings.Contains(field(body, "error"), "helm upgrade failed: the agent disconnected") {
+		t.Fatalf("expected failed because the agent disconnected, got %q %q\n%s", got, field(body, "error"), describeDeployment(h.DB, id))
+	}
+	if cmd := commandRow(t, h, id, cmdID); cmd.Status != "failed" {
+		t.Errorf("expected the command failed, got %+v", cmd)
+	}
+}
+
+// TestAgent_ReconnectEndsACancellingDeployment checks that a cancelled
+// deployment whose agent disconnected while running its command stops
+// showing as cancelling once the agent connects again.
+func TestAgent_ReconnectEndsACancellingDeployment(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	h := NewTestHarness(t, testConnStr)
+	scenario := BuildScenario(ctx, t, h)
+	gate, _ := NewGate(t)
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, Behavior{Gate: gate, IgnoreCancel: true})
+
+	id := submitDeployment(ctx, t, h, SubmitRequest(scenario, MinimalServiceConfig("test-service"), "v1.0.0"))
+	cmdID := fa.WaitForCommands(ctx, t, 1)[0].ID
+	if code, resp := cancelDeployment(ctx, t, h, id); code != http.StatusNoContent {
+		t.Fatalf("cancel: expected 204, got %d: %s", code, resp)
+	}
+	waitForCancel(t, fa, cmdID)
+	waitForAPIStatus(ctx, t, h, id, "cancelling", time.Second)
+	fa.Stop()
+	h.StartFakeAgent(ctx, t, scenario.AgentToken, DefaultBehavior)
+
+	waitForAPIStatus(ctx, t, h, id, "cancelled", 2*time.Second)
+	if cmd := commandRow(t, h, id, cmdID); cmd.Status != "cancelled" || !strings.Contains(cmd.Error, "the agent disconnected") {
+		t.Errorf("expected the command cancelled because the agent disconnected, got %+v", cmd)
 	}
 }

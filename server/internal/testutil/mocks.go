@@ -28,6 +28,7 @@ type MockDeploymentInfoStore struct {
 	UpdateCommandFn              func(ctx context.Context, cmd *domain.Command) error
 	ListCommandsByDeploymentFn   func(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error)
 	ListCommandsByServiceEnvFn   func(ctx context.Context, serviceID, environmentID uuid.UUID, types ...string) ([]*domain.Command, error)
+	ListDispatchedByClusterFn    func(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error)
 	ClaimNextCommandFn           func(ctx context.Context, clusterID uuid.UUID, at time.Time) (*domain.Command, error)
 	DeploymentStateOfCommandFn   func(ctx context.Context, commandID uuid.UUID) (domain.DeploymentState, error)
 	UpdateCommandsByDeploymentFn func(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error
@@ -112,6 +113,12 @@ func (m *MockDeploymentInfoStore) ListCommandsByDeployment(ctx context.Context, 
 func (m *MockDeploymentInfoStore) ListCommandsByServiceEnv(ctx context.Context, serviceID, environmentID uuid.UUID, types ...string) ([]*domain.Command, error) {
 	if m.ListCommandsByServiceEnvFn != nil {
 		return m.ListCommandsByServiceEnvFn(ctx, serviceID, environmentID, types...)
+	}
+	return nil, nil
+}
+func (m *MockDeploymentInfoStore) ListDispatchedByCluster(ctx context.Context, clusterID uuid.UUID) ([]*domain.Command, error) {
+	if m.ListDispatchedByClusterFn != nil {
+		return m.ListDispatchedByClusterFn(ctx, clusterID)
 	}
 	return nil, nil
 }
