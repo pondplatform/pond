@@ -57,8 +57,8 @@ resource "kubernetes_manifest" "postgres_cluster" {
 
       resources = {
         requests = {
-          memory = "200Mi"
-          cpu    = "500m"
+          memory = "50Mi"
+          cpu    = "10m"
         }
         limits = {
           memory = "2Gi"
