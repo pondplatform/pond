@@ -19,10 +19,3 @@
 # CLI Reference
 
 - [Commands](cli/README.md)
-
-# Operators
-
-- [Installation](operators/installation.md)
-- [Configuration](operators/configuration.md)
-- [Token Management](operators/tokens.md)
-- [Production Considerations](operators/production.md)

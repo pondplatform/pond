@@ -15,7 +15,7 @@ KUBE_CONTEXT=""
 NAMESPACE="pond"
 CONTEXT_NAME=""
 CLUSTER_NAME=""
-IMAGE_TAG="v0.2.1"
+IMAGE_TAG="v0.3.0-alpha3"
 CHART_VERSION=""        # empty = image tag without "v"
 FORWARD_PORT=""         # empty = random free local port
 ENVIRONMENTS=""
@@ -58,8 +58,8 @@ Options:
                               postgres  managed Postgres via CloudNativePG
                               gateway   HTTPS for exposed services
   --domain <domain>         gateway: domain that service hostnames live under
-  --hostnames <style>       gateway: env      <service>.<env>.<domain>
-                                     primary  first environment at <service>.<domain>
+  --hostnames <style>       gateway: primary  first environment at <service>.<domain> (default)
+                                     env      <service>.<env>.<domain>
   --tls <source>            gateway: where certificates come from
                               cloudflare     Let's Encrypt via Cloudflare DNS
                               self-signed    private CA created in the cluster
@@ -546,9 +546,9 @@ ask_hostnames() {
   local env_example="todo.${first}.${DOMAIN}${second:+, todo.${second}.${DOMAIN}}"
   local primary_example="todo.${DOMAIN}${second:+, todo.${second}.${DOMAIN}}"
   explain "" "How service URLs look, for a service named 'todo':"
-  choice=$(prompt_select "Hostname style" "env       ${env_example}" \
-    "env       ${env_example}" \
-    "primary   ${primary_example}")
+  choice=$(prompt_select "Hostname style" "primary   ${primary_example}" \
+    "primary   ${primary_example}" \
+    "env       ${env_example}")
   HOSTNAMES="${choice%% *}"
 }
 

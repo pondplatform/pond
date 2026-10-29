@@ -17,7 +17,7 @@ build-images: build-server-image build-agent-image
 build-cli:
 	go build -o ./build/pond ./cli/
 
-docs:
+docs: $(shell find docs -type f)
 	mdbook build
 
 
