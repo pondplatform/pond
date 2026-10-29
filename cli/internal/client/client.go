@@ -24,6 +24,9 @@ type ServerClient interface {
 	// ListDeployments returns deployments for a service, newest first. A nil
 	// environmentID lists deployments across all environments.
 	ListDeployments(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, limit int) ([]api.DeploymentListItem, error)
+	// DeleteService starts deleting the service from every environment it is
+	// live in, and returns the delete deployments; none when it is live nowhere.
+	DeleteService(ctx context.Context, serviceID uuid.UUID, req api.DeleteServiceRequest) ([]api.Deployment, error)
 }
 
 type httpClient struct {
@@ -114,6 +117,29 @@ func (c *httpClient) ListDeployments(ctx context.Context, serviceID uuid.UUID, e
 		path += "?" + q.Encode()
 	}
 	return getList[api.DeploymentListItem](ctx, c, path)
+}
+
+func (c *httpClient) DeleteService(ctx context.Context, serviceID uuid.UUID, req api.DeleteServiceRequest) ([]api.Deployment, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/services/%s/delete", serviceID), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		return nil, readError(resp)
+	}
+
+	var result api.DeleteServiceResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return result.Deployments, nil
 }
 
 func (c *httpClient) do(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {

@@ -109,6 +109,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(commands.NewInitCmd())
 	root.AddCommand(commands.NewDeployCmd())
 	root.AddCommand(commands.NewDeploymentCmd())
+	root.AddCommand(commands.NewServiceCmd())
 	root.AddCommand(commands.NewContextCmd(pondconfig.ConfigPath))
 
 	return root

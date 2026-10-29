@@ -68,16 +68,36 @@ func latestExports(ctx context.Context, repos store.Repos, projectID uuid.UUID, 
 	if err != nil {
 		return nil, "", fmt.Errorf("lookup service %q: %w", target, err)
 	}
+	latest, err := repos.Deployments.ListByServiceFiltered(ctx, svc.ID, &env.ID, nil, 1, "")
+	if err != nil {
+		return nil, "", fmt.Errorf("lookup deployments of service %q: %w", target, err)
+	}
+	if len(latest) > 0 && latest[0].Kind == db.DeploymentKindDelete {
+		return nil, deletedProblem(latest[0], target, env.Name), nil
+	}
 	succeeded := api.DeploymentStatusSucceeded
 	deployments, err := repos.Deployments.ListByServiceFiltered(ctx, svc.ID, &env.ID, &succeeded, 1, "")
 	if err != nil {
 		return nil, "", fmt.Errorf("lookup deployments of service %q: %w", target, err)
 	}
 	switch {
-	case len(deployments) == 0:
+	// A succeeded delete, then a deploy that has not succeeded yet.
+	case len(deployments) == 0, deployments[0].Kind == db.DeploymentKindDelete:
 		return nil, fmt.Sprintf("service %q has no successful deployment in environment %q: deploy it first", target, env.Name), nil
 	case deployments[0].Exports == nil:
 		return nil, fmt.Sprintf("service %q was last deployed before services could depend on it: redeploy it first", target), nil
 	}
 	return deployments[0].Exports, "", nil
+}
+
+// deletedProblem says why target can't be depended on when its latest
+// deployment in the environment, d, is a delete.
+func deletedProblem(d db.Deployment, target, env string) string {
+	switch d.Status {
+	case db.DeploymentInProgress:
+		return fmt.Sprintf("service %q is being deleted from environment %q", target, env)
+	case db.DeploymentSucceeded:
+		return fmt.Sprintf("service %q was deleted from environment %q: deploy it again first", target, env)
+	}
+	return fmt.Sprintf("the last delete of service %q in environment %q %s: deploy it again first", target, env, d.Status)
 }

@@ -37,11 +37,13 @@ const (
 	// stateDependenciesReady: every dependency has its outputs, and the
 	// rollout has not started.
 	stateDependenciesReady
-	// stateRollingOut: the helm.upgrade is queued or running.
+	// stateRollingOut: the helm.upgrade, or a delete's service.delete, is
+	// queued or running.
 	stateRollingOut
-	// stateRolloutFailed: the helm.upgrade failed.
+	// stateRolloutFailed: the helm.upgrade or service.delete failed.
 	stateRolloutFailed
-	// stateRolledOut: the helm.upgrade succeeded.
+	// stateRolledOut: the helm.upgrade or service.delete succeeded, or a
+	// delete had nothing to tear down.
 	stateRolledOut
 )
 
@@ -55,7 +57,13 @@ func currentState(d db.Deployment, dependencies []db.DependencyDeployment, comma
 		return stateFinished
 	}
 
-	if rollout := rolloutCommand(commands); rollout != nil {
+	rollout := rolloutCommand(commands)
+	if rollout == nil && d.Kind == db.DeploymentKindDelete {
+		// Nothing was left to tear down. Without this, a delete would fall
+		// through to dependenciesReady and roll the service out again.
+		return stateRolledOut
+	}
+	if rollout != nil {
 		switch rollout.Status {
 		case db.CommandStatusSucceeded:
 			return stateRolledOut
@@ -175,9 +183,13 @@ func (m *stateMachine) failDependency(ctx context.Context, tx store.Repos, d *db
 
 func (m *stateMachine) failRollout(ctx context.Context, tx store.Repos, d *db.Deployment, commands []*db.Command) error {
 	rollout := rolloutCommand(commands)
-	reason := commandFailure("helm upgrade failed", rollout)
+	what := "helm upgrade"
+	if rollout.Type == db.CommandTypeServiceDelete {
+		what = "teardown"
+	}
+	reason := commandFailure(what+" failed", rollout)
 	if rollout.Status == db.CommandStatusCancelled {
-		reason = "helm upgrade was cancelled"
+		reason = what + " was cancelled"
 	}
 	return m.end(ctx, tx, d, db.DeploymentFailed, reason)
 }
@@ -220,9 +232,11 @@ func load(ctx context.Context, tx store.Repos, deploymentID uuid.UUID) ([]db.Dep
 	return dependencies, commands, nil
 }
 
+// rolloutCommand is the command that finishes the deployment: a deploy's
+// helm.upgrade, or a delete's service.delete.
 func rolloutCommand(commands []*db.Command) *db.Command {
 	for _, cmd := range commands {
-		if cmd.Type == db.CommandTypeHelmUpgrade {
+		if cmd.Type == db.CommandTypeHelmUpgrade || cmd.Type == db.CommandTypeServiceDelete {
 			return cmd
 		}
 	}

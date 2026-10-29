@@ -113,3 +113,4 @@ e2e: e2e-setup
 	./test/end-to-end/deploy-volumes.sh
 	./test/end-to-end/deploy-command.sh
 	./test/end-to-end/deploy-service-dependency.sh
+	./test/end-to-end/delete-service.sh

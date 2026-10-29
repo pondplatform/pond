@@ -92,7 +92,7 @@ Some storage, `local-path` included, doesn't enforce the size at all. Treat it a
 
 Removing a volume from `pond.yml` stops mounting it, but **the data stays in the cluster**. Adding a volume with the same name back mounts the old data again. It keeps the size it had, so the cluster rejects a smaller size.
 
-Pond doesn't delete volume data. That will be an explicit action later; until then, it takes an operator.
+Pond doesn't delete volume data. That will be an explicit action later; until then, it takes an operator. Deleting the service with [`pond service delete`](../cli/README.md#pond-service-delete) keeps its volumes too: deploying a service under the same name mounts the old data again.
 
 ## Config files inside a volume
 

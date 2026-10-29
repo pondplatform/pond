@@ -24,6 +24,8 @@ type fakeClient struct {
 	deployments map[uuid.UUID][]api.DeploymentListItem // keyed by environment ID
 	detail      *api.Deployment
 	submitted   []api.SubmitRequest
+	deleted     []api.DeleteServiceRequest
+	deletes     []api.Deployment // what DeleteService returns
 }
 
 func (f *fakeClient) SubmitDeployment(_ context.Context, req api.SubmitRequest) (*api.Deployment, error) {
@@ -67,6 +69,11 @@ func (f *fakeClient) ListDeployments(_ context.Context, _ uuid.UUID, envID *uuid
 		items = items[:limit]
 	}
 	return items, nil
+}
+
+func (f *fakeClient) DeleteService(_ context.Context, _ uuid.UUID, req api.DeleteServiceRequest) ([]api.Deployment, error) {
+	f.deleted = append(f.deleted, req)
+	return f.deletes, nil
 }
 
 const (

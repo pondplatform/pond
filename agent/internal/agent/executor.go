@@ -37,6 +37,8 @@ func (e *executor) Execute(ctx context.Context, cmd *wire.CommandPayload, logSin
 		result, err = e.executeTofuApply(ctx, cmd, logSink)
 	case wire.CommandTofuOutput:
 		result, err = e.executeTofuOutput(ctx, cmd)
+	case wire.CommandServiceDelete:
+		result, err = e.executeServiceDelete(ctx, cmd, logSink)
 	default:
 		return &wire.ResultPayload{
 			CommandID: cmd.ID,
@@ -129,6 +131,37 @@ func (e *executor) executeTofuOutput(ctx context.Context, cmd *wire.CommandPaylo
 		CommandID: cmd.ID,
 		Success:   true,
 		Output:    outputJSON,
+	}, nil
+}
+
+// executeServiceDelete uninstalls the release before destroying anything, so
+// no pod of the service still uses a dependency when it goes.
+func (e *executor) executeServiceDelete(ctx context.Context, cmd *wire.CommandPayload, logSink func(wire.LogPayload)) (*wire.ResultPayload, error) {
+	var payload wire.ServiceDeletePayload
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
+		return nil, payloadError(cmd.Type, err)
+	}
+
+	lw := newLogWriter(cmd.ID, logSink)
+	defer lw.Close()
+
+	if payload.Release != nil {
+		if err := e.helmRunner.Uninstall(ctx, *payload.Release, lw); err != nil {
+			return nil, err
+		}
+	}
+	for _, dep := range payload.Dependencies {
+		if err := e.tofuRunner.Init(ctx, dep.WorkDir, lw); err != nil {
+			return nil, fmt.Errorf("destroy dependency %q: %w", dep.Name, err)
+		}
+		if err := e.tofuRunner.Destroy(ctx, dep.WorkDir, dep.StatePath, dep.Vars, lw); err != nil {
+			return nil, fmt.Errorf("destroy dependency %q: %w", dep.Name, err)
+		}
+	}
+
+	return &wire.ResultPayload{
+		CommandID: cmd.ID,
+		Success:   true,
 	}, nil
 }
 

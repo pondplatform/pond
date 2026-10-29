@@ -80,6 +80,9 @@ func (s *deploymentService) Submit(ctx context.Context, req api.SubmitRequest) (
 		if err != nil {
 			return err
 		}
+		if err := refuseWhileDeleting(ctx, tx, svc); err != nil {
+			return err
+		}
 		requested, err := resolveServiceDependencies(ctx, tx, req.ProjectID, env, svcConfig, req.Dependencies)
 		if err != nil {
 			return err
@@ -141,11 +144,35 @@ func getOrCreateService(ctx context.Context, services store.ServiceRepository, r
 	return svc, nil
 }
 
+// refuseWhileDeleting takes the service's lock, which a delete holds while it
+// starts, and refuses a deploy while one of its deletes is unfinished.
+func refuseWhileDeleting(ctx context.Context, tx store.Repos, svc *db.Service) error {
+	if err := tx.Services.Lock(ctx, svc.ID); err != nil {
+		return err
+	}
+	unfinished, err := tx.Deployments.ListUnfinishedByService(ctx, svc.ID)
+	if err != nil {
+		return fmt.Errorf("list unfinished deployments of service %q: %w", svc.Name, err)
+	}
+	for _, d := range unfinished {
+		if d.Kind != db.DeploymentKindDelete {
+			continue
+		}
+		env, err := tx.Envs.GetByID(ctx, d.EnvironmentID)
+		if err != nil {
+			return fmt.Errorf("get environment: %w", err)
+		}
+		return api.Conflict("service %q is being deleted from environment %q: wait for delete %s to finish, or cancel it, then deploy again", svc.Name, env.Name, d.ID)
+	}
+	return nil
+}
+
 func newDeployment(req api.SubmitRequest, serviceID, environmentID uuid.UUID, svcConfig serviceconfig.ServiceConfig, now time.Time) db.Deployment {
 	return db.Deployment{
 		ID:                    uuid.New(),
 		ServiceID:             serviceID,
 		EnvironmentID:         environmentID,
+		Kind:                  db.DeploymentKindDeploy,
 		ImageTag:              req.ImageTag,
 		ServiceConfigSnapshot: svcConfig,
 		Variables:             req.Variables,

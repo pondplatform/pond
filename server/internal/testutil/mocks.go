@@ -18,6 +18,8 @@ type MockDeploymentInfoStore struct {
 	GetByIDFn                    func(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
 	LockDeploymentFn             func(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
 	ListByServiceFilteredFn      func(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *api.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
+	ListLatestByProjectFn        func(ctx context.Context, projectID uuid.UUID) ([]domain.Deployment, error)
+	ListUnfinishedByServiceFn    func(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error)
 	CreateFn                     func(ctx context.Context, d *domain.Deployment) error
 	SaveDeploymentFn             func(ctx context.Context, d *domain.Deployment) error
 	SetExportsFn                 func(ctx context.Context, id uuid.UUID, exports map[string]string) error
@@ -25,6 +27,7 @@ type MockDeploymentInfoStore struct {
 	GetCommandFn                 func(ctx context.Context, id uuid.UUID) (*domain.Command, error)
 	UpdateCommandFn              func(ctx context.Context, cmd *domain.Command) error
 	ListCommandsByDeploymentFn   func(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error)
+	ListCommandsByServiceEnvFn   func(ctx context.Context, serviceID, environmentID uuid.UUID, types ...string) ([]*domain.Command, error)
 	ClaimNextCommandFn           func(ctx context.Context, clusterID uuid.UUID, at time.Time) (*domain.Command, error)
 	DeploymentStateOfCommandFn   func(ctx context.Context, commandID uuid.UUID) (domain.DeploymentState, error)
 	UpdateCommandsByDeploymentFn func(ctx context.Context, deploymentID uuid.UUID, to domain.CommandStatus, from ...domain.CommandStatus) error
@@ -49,6 +52,18 @@ func (m *MockDeploymentInfoStore) LockDeployment(ctx context.Context, id uuid.UU
 func (m *MockDeploymentInfoStore) ListByServiceFiltered(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *api.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error) {
 	if m.ListByServiceFilteredFn != nil {
 		return m.ListByServiceFilteredFn(ctx, serviceID, environmentID, status, limit, cursor)
+	}
+	return nil, nil
+}
+func (m *MockDeploymentInfoStore) ListLatestByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Deployment, error) {
+	if m.ListLatestByProjectFn != nil {
+		return m.ListLatestByProjectFn(ctx, projectID)
+	}
+	return nil, nil
+}
+func (m *MockDeploymentInfoStore) ListUnfinishedByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error) {
+	if m.ListUnfinishedByServiceFn != nil {
+		return m.ListUnfinishedByServiceFn(ctx, serviceID)
 	}
 	return nil, nil
 }
@@ -91,6 +106,12 @@ func (m *MockDeploymentInfoStore) UpdateCommand(ctx context.Context, cmd *domain
 func (m *MockDeploymentInfoStore) ListCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error) {
 	if m.ListCommandsByDeploymentFn != nil {
 		return m.ListCommandsByDeploymentFn(ctx, deploymentID)
+	}
+	return nil, nil
+}
+func (m *MockDeploymentInfoStore) ListCommandsByServiceEnv(ctx context.Context, serviceID, environmentID uuid.UUID, types ...string) ([]*domain.Command, error) {
+	if m.ListCommandsByServiceEnvFn != nil {
+		return m.ListCommandsByServiceEnvFn(ctx, serviceID, environmentID, types...)
 	}
 	return nil, nil
 }
@@ -143,6 +164,7 @@ type MockServiceRepository struct {
 	GetByIDFn       func(ctx context.Context, id uuid.UUID) (*domain.Service, error)
 	GetByNameFn     func(ctx context.Context, projectID uuid.UUID, name string) (*domain.Service, error)
 	ListByProjectFn func(ctx context.Context, projectID uuid.UUID) ([]domain.Service, error)
+	LockFn          func(ctx context.Context, id uuid.UUID) error
 	CreateFn        func(ctx context.Context, svc *domain.Service) error
 
 	SetCurrentDeploymentFn func(ctx context.Context, serviceID, deploymentID uuid.UUID) error
@@ -166,6 +188,12 @@ func (m *MockServiceRepository) ListByProject(ctx context.Context, projectID uui
 		return m.ListByProjectFn(ctx, projectID)
 	}
 	return nil, nil
+}
+func (m *MockServiceRepository) Lock(ctx context.Context, id uuid.UUID) error {
+	if m.LockFn != nil {
+		return m.LockFn(ctx, id)
+	}
+	return nil
 }
 func (m *MockServiceRepository) Create(ctx context.Context, svc *domain.Service) error {
 	if m.CreateFn != nil {

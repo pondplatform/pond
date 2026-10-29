@@ -29,6 +29,19 @@ func scanService(row rowScanner) (*domain.Service, error) {
 	return &svc, nil
 }
 
+// Lock takes the service's row lock for the rest of the transaction.
+func (s *ServiceStore) Lock(ctx context.Context, id uuid.UUID) error {
+	var locked uuid.UUID
+	err := s.db.QueryRowContext(ctx, "SELECT id FROM services WHERE id = $1 FOR UPDATE", id).Scan(&locked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return api.NotFound("service %s not found", id)
+	}
+	if err != nil {
+		return fmt.Errorf("lock service: %w", err)
+	}
+	return nil
+}
+
 func (s *ServiceStore) GetByID(ctx context.Context, id uuid.UUID) (*domain.Service, error) {
 	svc, err := scanService(s.db.QueryRowContext(ctx,
 		"SELECT "+serviceColumns+" FROM services WHERE id = $1", id,

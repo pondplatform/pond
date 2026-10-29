@@ -92,9 +92,9 @@ func runDeploymentList(ctx context.Context, out io.Writer, c client.ServerClient
 	}
 
 	if resolved.Env != "" {
-		fmt.Fprintf(out, "Service %s (environment: %s)\n\n", svc.Name, resolved.Env)
+		fmt.Fprintf(out, "%s (environment: %s)\n\n", serviceHeader(svc), resolved.Env)
 	} else {
-		fmt.Fprintf(out, "Service %s\n\n", svc.Name)
+		fmt.Fprintf(out, "%s\n\n", serviceHeader(svc))
 	}
 	if len(items) == 0 {
 		fmt.Fprintf(out, "No deployments yet.\n")
@@ -130,7 +130,7 @@ func runDeploymentList(ctx context.Context, out io.Writer, c client.ServerClient
 		if d.CompletedAt != nil {
 			completed = d.CompletedAt.Format("2006-01-02 15:04:05")
 		}
-		row = append(row, string(d.Status), d.ImageTag, d.TriggeredBy,
+		row = append(row, statusLabel(d.Kind, d.Status), d.ImageTag, d.TriggeredBy,
 			d.CreatedAt.Format("2006-01-02 15:04:05"), completed)
 		fmt.Fprintln(tw, strings.Join(row, "\t"))
 	}

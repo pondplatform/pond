@@ -133,6 +133,7 @@ configs:
 
 - **Deploy it first.** A service that was never deployed to the environment, or was last deployed before Pond published these values, can't be depended on yet. The submit is rejected.
 - **The values are copied when you deploy.** A later deployment of the service doesn't change yours. Redeploy yours to pick up, say, a changed port or a rotated key.
+- **It can't be deleted under you.** [`pond service delete`](../cli/README.md#pond-service-delete) refuses to delete a service while one deployed to the same environment depends on it. Once it is deleted, deploying yours is rejected until it is deployed again.
 
 A `service` dependency takes no [input](#managed-vs-manual-dependencies); giving it some is an error.
 
@@ -185,6 +186,8 @@ pond deploy --tag v1.2.3 --input ./deploy-input.json
 ```
 
 Or name it `pond-input-<env>.json` (or `pond-input-<env>.yml`, with the same structure in YAML) next to `pond.yml`, and `pond deploy` picks it up for that environment without `--input`.
+
+A managed dependency belongs to its service. [`pond service delete`](../cli/README.md#pond-service-delete) destroys it, and its data, with the service, unless you pass `--keep-deps`.
 
 Every deployment needs input for every declared dependency; input from earlier deployments is not reused. A dependency the file leaves out makes the server reject the request, and nothing is created. Keeping the file as `pond-input-<env>.yml` next to `pond.yml` means each `pond deploy` sends it without extra flags.
 

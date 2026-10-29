@@ -17,6 +17,12 @@ type DeploymentInfoStore interface {
 	// transaction to serialise every change to one deployment.
 	LockDeployment(ctx context.Context, id uuid.UUID) (*domain.Deployment, error)
 	ListByServiceFiltered(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, status *api.DeploymentStatus, limit int, cursor string) ([]domain.Deployment, error)
+	// ListLatestByProject returns the latest deployment of every service of
+	// the project in every environment it was deployed to.
+	ListLatestByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Deployment, error)
+	// ListUnfinishedByService returns the service's deployments that are in
+	// progress, or whose agent is still running one of their commands.
+	ListUnfinishedByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error)
 	Create(ctx context.Context, d *domain.Deployment) error
 	// SaveDeployment writes status, error and completed_at.
 	SaveDeployment(ctx context.Context, d *domain.Deployment) error
@@ -29,6 +35,9 @@ type DeploymentInfoStore interface {
 	UpdateCommand(ctx context.Context, cmd *domain.Command) error
 	// ListCommandsByDeployment returns the deployment's commands, oldest first.
 	ListCommandsByDeployment(ctx context.Context, deploymentID uuid.UUID) ([]*domain.Command, error)
+	// ListCommandsByServiceEnv returns the commands of the given types of all
+	// the service's deployments in the environment, oldest first.
+	ListCommandsByServiceEnv(ctx context.Context, serviceID, environmentID uuid.UUID, types ...string) ([]*domain.Command, error)
 	// ClaimNextCommand dispatches the cluster's oldest queued command, or
 	// returns nil when there is none.
 	ClaimNextCommand(ctx context.Context, clusterID uuid.UUID, at time.Time) (*domain.Command, error)
@@ -56,6 +65,9 @@ type ServiceRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Service, error)
 	GetByName(ctx context.Context, projectID uuid.UUID, name string) (*domain.Service, error)
 	ListByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Service, error)
+	// Lock takes the service's row lock, serialising deploys and deletes of
+	// the service.
+	Lock(ctx context.Context, id uuid.UUID) error
 	Create(ctx context.Context, svc *domain.Service) error
 	// SetCurrentDeployment records the service's most recently submitted deployment.
 	SetCurrentDeployment(ctx context.Context, serviceID, deploymentID uuid.UUID) error

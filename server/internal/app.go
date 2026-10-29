@@ -109,6 +109,7 @@ func Build(db *sql.DB, cfg Config, log *slog.Logger) http.Handler {
 		Projects:      store.NewProjectStore(db),
 		Envs:          repos.Envs,
 		Services:      repos.Services,
+		Deployments:   repos.Deployments,
 		Clusters:      repos.Clusters,
 		JWTSecret:     jwtSecret,
 		SpecRegistry:  specRegistry,

@@ -19,8 +19,9 @@ const (
 
 // Command types
 const (
-	CommandTypeTofuApply   = "tofu.apply"
-	CommandTypeHelmUpgrade = "helm.upgrade"
+	CommandTypeTofuApply     = "tofu.apply"
+	CommandTypeHelmUpgrade   = "helm.upgrade"
+	CommandTypeServiceDelete = "service.delete"
 )
 
 // Command is one unit of work for an agent. It is created only once it can

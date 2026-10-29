@@ -38,6 +38,9 @@ const (
 	CommandHelmUpgrade CommandType = "helm.upgrade"
 	CommandTofuApply   CommandType = "tofu.apply"
 	CommandTofuOutput  CommandType = "tofu.output"
+	// CommandServiceDelete tears a service down in one environment: its helm
+	// release first, then each managed dependency, in that order.
+	CommandServiceDelete CommandType = "service.delete"
 )
 
 // CommandPayload is the "command" message sent from server to agent.
@@ -87,6 +90,28 @@ type TofuApplyPayload struct {
 type TofuOutputPayload struct {
 	WorkDir   string `json:"workDir"`
 	StatePath string `json:"statePath"`
+}
+
+// ServiceDeletePayload is the typed payload for CommandServiceDelete. Release
+// is nil when the service was never rolled out in the environment.
+type ServiceDeletePayload struct {
+	Release      *HelmRelease         `json:"release,omitempty"`
+	Dependencies []TofuDestroyPayload `json:"dependencies,omitempty"`
+}
+
+// HelmRelease names an installed helm release.
+type HelmRelease struct {
+	ReleaseName string `json:"releaseName"`
+	Namespace   string `json:"namespace"`
+}
+
+// TofuDestroyPayload destroys what a tofu.apply created. WorkDir, StatePath
+// and Vars are the apply's own: the module derives resource names from Vars.
+type TofuDestroyPayload struct {
+	Name      string         `json:"name"` // the dependency's name, for messages
+	WorkDir   string         `json:"workDir"`
+	StatePath string         `json:"statePath"`
+	Vars      map[string]any `json:"vars"`
 }
 
 // MarshalPayload JSON-encodes v and returns it as json.RawMessage.

@@ -199,7 +199,7 @@ func printServiceStatusForEnv(ctx context.Context, out io.Writer, c client.Serve
 		return err
 	}
 
-	fmt.Fprintf(out, "Service %s (environment: %s)\n\n", svc.Name, env.Name)
+	fmt.Fprintf(out, "%s (environment: %s)\n\n", serviceHeader(svc), env.Name)
 	if latest == nil {
 		fmt.Fprintf(out, "No deployments yet.\n")
 		return nil
@@ -219,7 +219,7 @@ func printServiceStatusForEnv(ctx context.Context, out io.Writer, c client.Serve
 // printServiceStatusAllEnvs prints one row per environment with the service's
 // latest deployment there.
 func printServiceStatusAllEnvs(ctx context.Context, out io.Writer, c client.ServerClient, svc api.Service, envs []api.Environment) error {
-	fmt.Fprintf(out, "Service %s\n\n", svc.Name)
+	fmt.Fprintf(out, "%s\n\n", serviceHeader(svc))
 
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ENVIRONMENT\tSTATUS\tIMAGE\tDEPLOYMENT\tCREATED")
@@ -233,10 +233,35 @@ func printServiceStatusAllEnvs(ctx context.Context, out io.Writer, c client.Serv
 			continue
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			env.Name, latest.Status, latest.ImageTag, latest.ID,
+			env.Name, statusLabel(latest.Kind, latest.Status), latest.ImageTag, latest.ID,
 			latest.CreatedAt.Format("2006-01-02 15:04:05"))
 	}
 	return tw.Flush()
+}
+
+// serviceHeader names the service, and says so when it is being or was
+// deleted.
+func serviceHeader(svc api.Service) string {
+	switch svc.Status {
+	case api.ServiceStatusDeleting, api.ServiceStatusDeleted:
+		return fmt.Sprintf("Service %s (%s)", svc.Name, svc.Status)
+	}
+	return "Service " + svc.Name
+}
+
+// statusLabel is how a deployment's status reads. A delete's says what
+// happened to the service: deleting, deleted, or delete failed.
+func statusLabel(kind api.DeploymentKind, status api.DeploymentStatus) string {
+	if kind != api.DeploymentKindDelete {
+		return string(status)
+	}
+	switch status {
+	case api.DeploymentStatusPending, api.DeploymentStatusRunning:
+		return "deleting"
+	case api.DeploymentStatusSucceeded:
+		return "deleted"
+	}
+	return "delete " + string(status)
 }
 
 // latestDeployment returns the service's most recent deployment in an
@@ -269,7 +294,7 @@ func printDeploymentStatus(ctx context.Context, out io.Writer, c client.ServerCl
 
 func printDeploymentSummary(out io.Writer, d *api.Deployment) {
 	fmt.Fprintf(out, "Deployment %s\n", d.ID)
-	fmt.Fprintf(out, "  Status:     %s\n", d.Status)
+	fmt.Fprintf(out, "  Status:     %s\n", statusLabel(d.Kind, d.Status))
 	fmt.Fprintf(out, "  Image:      %s\n", d.ImageTag)
 	fmt.Fprintf(out, "  Triggered:  %s\n", d.TriggeredBy)
 	fmt.Fprintf(out, "  Created:    %s\n", d.CreatedAt.Format("2006-01-02 15:04:05"))

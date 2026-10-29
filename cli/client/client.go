@@ -16,6 +16,9 @@ type ServerClient interface {
 	ListServices(ctx context.Context, projectID uuid.UUID) ([]api.Service, error)
 	ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]api.Environment, error)
 	ListDeployments(ctx context.Context, serviceID uuid.UUID, environmentID *uuid.UUID, limit int) ([]api.DeploymentListItem, error)
+	// DeleteService starts deleting the service from every environment it is
+	// live in, and returns the delete deployments; none when it is live nowhere.
+	DeleteService(ctx context.Context, serviceID uuid.UUID, req api.DeleteServiceRequest) ([]api.Deployment, error)
 }
 
 // NewHTTPClient creates a ServerClient that talks to baseURL without authentication.

@@ -116,3 +116,35 @@ func TestInitResolvesTheEnvironmentWithoutStartingAPortForward(t *testing.T) {
 		t.Errorf("expected no port-forward to be started, got:\n%s", out.String())
 	}
 }
+
+// The --env flag lives on the root, so only a run through it can show that
+// service delete refuses the flag before talking to the server.
+func TestServiceDeleteRefusesAnEnvironmentFlag(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s", r.Method, r.URL)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	t.Setenv(pondconfig.EnvServerURL, srv.URL)
+	t.Setenv(pondconfig.EnvProjectID, uuid.New().String())
+	t.Setenv(pondconfig.EnvConfig, filepath.Join(t.TempDir(), "never-created"))
+	for _, name := range []string{pondconfig.EnvProject, pondconfig.EnvEnvironment, pondconfig.EnvContext, pondconfig.EnvKubeContext,
+		pondconfig.EnvKubeNamespace, pondconfig.EnvKubeService, pondconfig.EnvForwardPort} {
+		t.Setenv(name, "")
+	}
+
+	for _, flag := range []string{"--env", "-e"} {
+		t.Run(flag, func(t *testing.T) {
+			root := NewRootCmd()
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&out)
+			root.SetArgs([]string{"service", "delete", "api", "--yes", flag, "staging"})
+			err := root.ExecuteContext(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "takes no environment") {
+				t.Fatalf("expected %s to be refused, got %v\n%s", flag, err, out.String())
+			}
+		})
+	}
+}

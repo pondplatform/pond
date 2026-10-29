@@ -139,6 +139,7 @@ func toDeploymentDetailResponse(detail *service.DeploymentDetail) shared.Deploym
 		ID:            d.ID,
 		ServiceID:     d.ServiceID,
 		EnvironmentID: d.EnvironmentID,
+		Kind:          shared.DeploymentKind(d.Kind),
 		ImageTag:      d.ImageTag,
 		TriggeredBy:   d.TriggeredBy,
 		Status:        d.APIStatus(),
@@ -164,6 +165,7 @@ func toDeploymentResponse(d *domain.Deployment) shared.Deployment {
 		ID:            d.ID,
 		ServiceID:     d.ServiceID,
 		EnvironmentID: d.EnvironmentID,
+		Kind:          shared.DeploymentKind(d.Kind),
 		ImageTag:      d.ImageTag,
 		TriggeredBy:   d.TriggeredBy,
 		Status:        d.APIStatus(),
@@ -239,6 +241,7 @@ func (h *DeploymentHandler) listByService(ctx context.Context, serviceID uuid.UU
 			ID:            d.ID,
 			ServiceID:     d.ServiceID,
 			EnvironmentID: d.EnvironmentID,
+			Kind:          shared.DeploymentKind(d.Kind),
 			ImageTag:      d.ImageTag,
 			Status:        d.APIStatus(),
 			TriggeredBy:   d.TriggeredBy,
@@ -263,6 +266,29 @@ func (h *DeploymentHandler) Cancel(c *gin.Context) {
 
 func (h *DeploymentHandler) cancel(ctx context.Context, id uuid.UUID) error {
 	return h.svc.Cancel(ctx, id)
+}
+
+// DeleteService starts tearing the service down in every environment it is
+// live in, and answers with one delete deployment per environment.
+func (h *DeploymentHandler) DeleteService(c *gin.Context) {
+	serviceID, ok := parseUUIDParam(c, "serviceId", "service id")
+	if !ok {
+		return
+	}
+	req := shared.DeleteServiceRequest{TriggeredBy: "api"}
+	if !bindJSON(c, &req) {
+		return
+	}
+	deployments, err := h.svc.DeleteService(c.Request.Context(), serviceID, req)
+	if err != nil {
+		writeServiceError(c, err, h.log)
+		return
+	}
+	resp := shared.DeleteServiceResponse{Deployments: make([]shared.Deployment, len(deployments))}
+	for i := range deployments {
+		resp.Deployments[i] = toDeploymentResponse(&deployments[i])
+	}
+	writeJSON(c, http.StatusAccepted, resp)
 }
 
 func (h *DeploymentHandler) GetCommandLogs(c *gin.Context) {

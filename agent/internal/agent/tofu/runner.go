@@ -95,6 +95,12 @@ func (r *runner) Output(ctx context.Context, workDir string, statePath string) (
 }
 
 func (r *runner) Destroy(ctx context.Context, workDir string, statePath string, vars map[string]any, logW io.Writer) error {
+	// A dependency whose apply never ran has no state yet: destroying it
+	// destroys nothing, but tofu still needs the directory to write state to.
+	if err := os.MkdirAll(filepath.Dir(statePath), 0755); err != nil {
+		return fmt.Errorf("create tofu state directory: %w", err)
+	}
+
 	varFile, err := os.CreateTemp("", "pond-tofu-vars-*.tfvars.json")
 	if err != nil {
 		return fmt.Errorf("create tofu var file: %w", err)

@@ -13,22 +13,26 @@ import (
 )
 
 type ServiceHandler struct {
-	services store.ServiceRepository
-	projects store.ProjectRepository
-	log      *slog.Logger
+	services    store.ServiceRepository
+	projects    store.ProjectRepository
+	deployments store.DeploymentInfoStore
+	log         *slog.Logger
 }
 
-func NewServiceHandler(services store.ServiceRepository, projects store.ProjectRepository, log *slog.Logger) *ServiceHandler {
-	return &ServiceHandler{services: services, projects: projects, log: log}
+func NewServiceHandler(services store.ServiceRepository, projects store.ProjectRepository, deployments store.DeploymentInfoStore, log *slog.Logger) *ServiceHandler {
+	return &ServiceHandler{services: services, projects: projects, deployments: deployments, log: log}
 }
 
-func toServiceResponse(s *domain.Service) api.Service {
+// toServiceResponse gives s the status derived from latest, its latest
+// deployment in each environment.
+func toServiceResponse(s *domain.Service, latest []domain.Deployment) api.Service {
 	return api.Service{
 		ID:                  s.ID,
 		ProjectID:           s.ProjectID,
 		Name:                s.Name,
 		CurrentDeploymentID: s.CurrentDeploymentID,
 		RunningDeploymentID: s.RunningDeploymentID,
+		Status:              domain.ServiceStatus(latest),
 		CreatedAt:           s.CreatedAt,
 	}
 }
@@ -43,11 +47,19 @@ func (h *ServiceHandler) Get(c *gin.Context) {
 		writeServiceError(c, err, h.log)
 		return
 	}
-	writeJSON(c, http.StatusOK, toServiceResponse(svc))
+	writeJSON(c, http.StatusOK, svc)
 }
 
-func (h *ServiceHandler) get(ctx context.Context, id uuid.UUID) (*domain.Service, error) {
-	return h.services.GetByID(ctx, id)
+func (h *ServiceHandler) get(ctx context.Context, id uuid.UUID) (api.Service, error) {
+	svc, err := h.services.GetByID(ctx, id)
+	if err != nil {
+		return api.Service{}, err
+	}
+	latest, err := h.latestByService(ctx, svc.ProjectID)
+	if err != nil {
+		return api.Service{}, err
+	}
+	return toServiceResponse(svc, latest[svc.ID]), nil
 }
 
 func (h *ServiceHandler) List(c *gin.Context) {
@@ -72,10 +84,28 @@ func (h *ServiceHandler) list(ctx context.Context, projectID uuid.UUID) ([]api.S
 	if err != nil {
 		return nil, err
 	}
+	latest, err := h.latestByService(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
 
 	items := make([]api.Service, len(services))
 	for i, s := range services {
-		items[i] = toServiceResponse(&s)
+		items[i] = toServiceResponse(&s, latest[s.ID])
 	}
 	return items, nil
+}
+
+// latestByService groups the latest deployment of every service of the
+// project in each environment by service.
+func (h *ServiceHandler) latestByService(ctx context.Context, projectID uuid.UUID) (map[uuid.UUID][]domain.Deployment, error) {
+	deployments, err := h.deployments.ListLatestByProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	byService := make(map[uuid.UUID][]domain.Deployment)
+	for _, d := range deployments {
+		byService[d.ServiceID] = append(byService[d.ServiceID], d)
+	}
+	return byService, nil
 }

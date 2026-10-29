@@ -153,20 +153,24 @@ func reportOutcome(ctx context.Context, out io.Writer, c client.ServerClient, d 
 	if d.CompletedAt != nil {
 		took = " in " + formatDuration(d.CompletedAt.Sub(d.CreatedAt))
 	}
+	noun, what := "Deployment", "deployment"
+	if d.Kind == api.DeploymentKindDelete {
+		noun, what = "Delete", "delete"
+	}
 	switch d.Status {
 	case api.DeploymentStatusSucceeded:
-		fmt.Fprintf(out, "Deployment succeeded%s\n", took)
+		fmt.Fprintf(out, "%s succeeded%s\n", noun, took)
 		return nil
 	case api.DeploymentStatusFailed:
 		fmt.Fprintln(out)
 		printDeploymentStatus(ctx, out, c, d)
 		if d.Error != nil && *d.Error != "" {
-			return fmt.Errorf("deployment failed: %s", *d.Error)
+			return fmt.Errorf("%s failed: %s", what, *d.Error)
 		}
-		return errors.New("deployment failed")
+		return fmt.Errorf("%s failed", what)
 	}
-	fmt.Fprintf(out, "Deployment cancelled%s\n", took)
-	return errors.New("deployment cancelled")
+	fmt.Fprintf(out, "%s cancelled%s\n", noun, took)
+	return fmt.Errorf("%s cancelled", what)
 }
 
 func defaultInputPath(dir, env string) (string, error) {

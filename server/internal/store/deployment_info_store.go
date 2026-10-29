@@ -38,7 +38,7 @@ const (
 		string(domain.CommandStatusDispatched) + `')`
 )
 
-const deploymentColumns = `d.id, d.service_id, d.environment_id, d.image_tag, d.service_config_snapshot, d.variables, d.exports,
+const deploymentColumns = `d.id, d.service_id, d.environment_id, d.kind, d.image_tag, d.service_config_snapshot, d.variables, d.exports,
 	d.status, d.triggered_by, d.created_at, d.completed_at, d.error, ` + startedSQL + `, ` + stoppingSQL
 
 func scanDeployment(row rowScanner) (*domain.Deployment, error) {
@@ -46,7 +46,7 @@ func scanDeployment(row rowScanner) (*domain.Deployment, error) {
 	var configJSON, variablesJSON, exportsJSON []byte
 	var triggeredBy sql.NullString
 	if err := row.Scan(
-		&d.ID, &d.ServiceID, &d.EnvironmentID, &d.ImageTag, &configJSON, &variablesJSON, &exportsJSON,
+		&d.ID, &d.ServiceID, &d.EnvironmentID, &d.Kind, &d.ImageTag, &configJSON, &variablesJSON, &exportsJSON,
 		&d.Status, &triggeredBy, &d.CreatedAt, &d.CompletedAt, &d.Error, &d.Started, &d.Stopping,
 	); err != nil {
 		return nil, err
@@ -127,6 +127,29 @@ func (s *deploymentInfoStore) ListByServiceFiltered(ctx context.Context, service
 	query += fmt.Sprintf(" ORDER BY d.created_at DESC, d.id DESC LIMIT $%d", argIdx)
 	args = append(args, limit+1) // fetch one extra for pagination
 
+	return s.listDeployments(ctx, query, args...)
+}
+
+func (s *deploymentInfoStore) ListLatestByProject(ctx context.Context, projectID uuid.UUID) ([]domain.Deployment, error) {
+	return s.listDeployments(ctx,
+		`SELECT DISTINCT ON (d.service_id, d.environment_id) `+deploymentColumns+`
+		   FROM deployments d JOIN services s ON s.id = d.service_id
+		  WHERE s.project_id = $1
+		  ORDER BY d.service_id, d.environment_id, d.created_at DESC, d.id DESC`,
+		projectID,
+	)
+}
+
+func (s *deploymentInfoStore) ListUnfinishedByService(ctx context.Context, serviceID uuid.UUID) ([]domain.Deployment, error) {
+	return s.listDeployments(ctx,
+		`SELECT `+deploymentColumns+` FROM deployments d
+		  WHERE d.service_id = $1 AND (d.status = $2 OR `+stoppingSQL+`)
+		  ORDER BY d.created_at, d.id`,
+		serviceID, domain.DeploymentInProgress,
+	)
+}
+
+func (s *deploymentInfoStore) listDeployments(ctx context.Context, query string, args ...any) ([]domain.Deployment, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list deployments: %w", err)
@@ -157,10 +180,10 @@ func (s *deploymentInfoStore) Create(ctx context.Context, d *domain.Deployment) 
 	variablesJSON, _ := json.Marshal(variables)
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO deployments
-		        (id, service_id, environment_id, image_tag, service_config_snapshot, variables,
+		        (id, service_id, environment_id, kind, image_tag, service_config_snapshot, variables,
 		         status, triggered_by, created_at, completed_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		d.ID, d.ServiceID, d.EnvironmentID, d.ImageTag, configJSON, variablesJSON,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		d.ID, d.ServiceID, d.EnvironmentID, d.Kind, d.ImageTag, configJSON, variablesJSON,
 		d.Status, d.TriggeredBy, d.CreatedAt, d.CompletedAt,
 	)
 	if err != nil {
@@ -266,6 +289,16 @@ func (s *deploymentInfoStore) ListCommandsByDeployment(ctx context.Context, depl
 	return s.listCommands(ctx,
 		`SELECT `+commandColumns+` FROM commands WHERE deployment_id = $1 ORDER BY created_at, id`,
 		deploymentID,
+	)
+}
+
+func (s *deploymentInfoStore) ListCommandsByServiceEnv(ctx context.Context, serviceID, environmentID uuid.UUID, types ...string) ([]*domain.Command, error) {
+	return s.listCommands(ctx,
+		`SELECT `+commandColumns+` FROM commands
+		  WHERE deployment_id IN (SELECT id FROM deployments WHERE service_id = $1 AND environment_id = $2)
+		    AND type = ANY($3)
+		  ORDER BY created_at, id`,
+		serviceID, environmentID, pq.Array(types),
 	)
 }
 

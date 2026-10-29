@@ -19,10 +19,20 @@ const (
 	DeploymentCancelled  DeploymentState = "cancelled"
 )
 
+// DeploymentKind says what a deployment does. A delete tears its service
+// down in its environment, through one service.delete command.
+type DeploymentKind string
+
+const (
+	DeploymentKindDeploy DeploymentKind = "deploy"
+	DeploymentKindDelete DeploymentKind = "delete"
+)
+
 type Deployment struct {
 	ID                    uuid.UUID                   `json:"id"`
 	ServiceID             uuid.UUID                   `json:"serviceId"`
 	EnvironmentID         uuid.UUID                   `json:"environmentId"`
+	Kind                  DeploymentKind              `json:"kind"`
 	ImageTag              string                      `json:"imageTag"`
 	ServiceConfigSnapshot serviceconfig.ServiceConfig `json:"serviceConfigSnapshot"`
 	Status                DeploymentState             `json:"status"`
@@ -61,6 +71,18 @@ func (d Deployment) APIStatus() api.DeploymentStatus {
 		return api.DeploymentStatusRunning
 	}
 	return api.DeploymentStatusPending
+}
+
+// TornDown is true for a delete that succeeded: the service is gone from the
+// deployment's environment.
+func (d Deployment) TornDown() bool {
+	return d.Kind == DeploymentKindDelete && d.Status == DeploymentSucceeded
+}
+
+// Unfinished is true while the deployment is in progress, or an agent is still
+// running one of its commands after it ended.
+func (d Deployment) Unfinished() bool {
+	return d.Status == DeploymentInProgress || d.Stopping
 }
 
 // DependencyDeployment is a dependency as one deployment resolved it. It does

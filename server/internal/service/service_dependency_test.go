@@ -18,7 +18,9 @@ import (
 func TestResolveServiceDependencies(t *testing.T) {
 	backendID := uuid.New()
 	exports := map[string]string{"host": "backend.staging.svc.cluster.local", "port": "8080"}
-	repos := func(deployments []db.Deployment) store.Repos {
+	// latest answers the lookup of any status, succeeded that of succeeded
+	// deployments only.
+	repos := func(latest, succeeded []db.Deployment) store.Repos {
 		return store.Repos{
 			Services: &testutil.MockServiceRepository{
 				GetByNameFn: func(_ context.Context, _ uuid.UUID, name string) (*db.Service, error) {
@@ -30,10 +32,16 @@ func TestResolveServiceDependencies(t *testing.T) {
 			},
 			Deployments: &testutil.MockDeploymentInfoStore{
 				ListByServiceFilteredFn: func(_ context.Context, serviceID uuid.UUID, envID *uuid.UUID, status *api.DeploymentStatus, limit int, _ string) ([]db.Deployment, error) {
-					if serviceID != backendID || *envID != testEnv.ID || *status != api.DeploymentStatusSucceeded || limit != 1 {
+					if serviceID != backendID || *envID != testEnv.ID || limit != 1 {
 						return nil, errors.New("unexpected lookup")
 					}
-					return deployments, nil
+					switch {
+					case status == nil:
+						return latest, nil
+					case *status == api.DeploymentStatusSucceeded:
+						return succeeded, nil
+					}
+					return nil, errors.New("unexpected status filter")
 				},
 			},
 		}
@@ -50,7 +58,8 @@ func TestResolveServiceDependencies(t *testing.T) {
 	dbInput := map[string]api.DependencyInput{"db": {Managed: true}}
 
 	t.Run("imports the exports of the latest succeeded deployment", func(t *testing.T) {
-		got, err := resolveServiceDependencies(context.Background(), repos([]db.Deployment{{Exports: exports}}), uuid.New(), &testEnv, consumer("backend"), dbInput)
+		deployed := []db.Deployment{{Kind: db.DeploymentKindDeploy, Status: db.DeploymentSucceeded, Exports: exports}}
+		got, err := resolveServiceDependencies(context.Background(), repos(deployed, deployed), uuid.New(), &testEnv, consumer("backend"), dbInput)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -66,21 +75,30 @@ func TestResolveServiceDependencies(t *testing.T) {
 		}
 	})
 
+	beforeExports := []db.Deployment{{Kind: db.DeploymentKindDeploy, Status: db.DeploymentSucceeded}}
+	deleting := []db.Deployment{{Kind: db.DeploymentKindDelete, Status: db.DeploymentInProgress}}
+	deleted := []db.Deployment{{Kind: db.DeploymentKindDelete, Status: db.DeploymentSucceeded}}
+	failedDelete := []db.Deployment{{Kind: db.DeploymentKindDelete, Status: db.DeploymentFailed}}
+	redeploying := []db.Deployment{{Kind: db.DeploymentKindDeploy, Status: db.DeploymentInProgress}}
 	problems := map[string]struct {
-		target      string
-		requested   map[string]api.DependencyInput
-		deployments []db.Deployment
-		want        string
+		target            string
+		requested         map[string]api.DependencyInput
+		latest, succeeded []db.Deployment
+		want              string
 	}{
-		"unknown service":          {target: "nope", want: `service "nope" not found`},
-		"never deployed here":      {target: "backend", want: `no successful deployment in environment "staging"`},
-		"deployed before exports":  {target: "backend", deployments: []db.Deployment{{}}, want: "redeploy it first"},
-		"depends on itself":        {target: "web", want: `names service "web" itself`},
-		"given input in a request": {target: "backend", requested: map[string]api.DependencyInput{"api": {}}, want: "takes no input"},
+		"unknown service":            {target: "nope", want: `service "nope" not found`},
+		"never deployed here":        {target: "backend", want: `no successful deployment in environment "staging"`},
+		"deployed before exports":    {target: "backend", latest: beforeExports, succeeded: beforeExports, want: "redeploy it first"},
+		"being deleted":              {target: "backend", latest: deleting, succeeded: beforeExports, want: `service "backend" is being deleted from environment "staging"`},
+		"deleted":                    {target: "backend", latest: deleted, succeeded: deleted, want: `service "backend" was deleted from environment "staging"`},
+		"delete failed":              {target: "backend", latest: failedDelete, succeeded: beforeExports, want: `last delete of service "backend" in environment "staging" failed`},
+		"redeploying after a delete": {target: "backend", latest: redeploying, succeeded: deleted, want: `no successful deployment in environment "staging"`},
+		"depends on itself":          {target: "web", want: `names service "web" itself`},
+		"given input in a request":   {target: "backend", requested: map[string]api.DependencyInput{"api": {}}, want: "takes no input"},
 	}
 	for name, tc := range problems {
 		t.Run(name, func(t *testing.T) {
-			_, err := resolveServiceDependencies(context.Background(), repos(tc.deployments), uuid.New(), &testEnv, consumer(tc.target), tc.requested)
+			_, err := resolveServiceDependencies(context.Background(), repos(tc.latest, tc.succeeded), uuid.New(), &testEnv, consumer(tc.target), tc.requested)
 			var invalid *api.ValidationErrors
 			if !errors.As(err, &invalid) || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("expected a validation error containing %q, got %v", tc.want, err)

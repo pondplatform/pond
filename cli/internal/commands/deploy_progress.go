@@ -174,7 +174,8 @@ func formatDuration(d time.Duration) string {
 }
 
 // deploySteps names the steps of a deployment: one per managed dependency
-// (its tofu.apply) and the rollout (helm.upgrade).
+// (its tofu.apply) and the rollout (helm.upgrade). A delete has one step, its
+// service.delete.
 type deploySteps struct {
 	service string
 	deps    map[uuid.UUID]api.DependencyDeploymentSummary // keyed by command ID
@@ -201,6 +202,8 @@ func (s deploySteps) label(cmd api.CommandSummary) (doing, done string) {
 		return "Provisioning " + name, "Provisioned " + name
 	case wire.CommandHelmUpgrade:
 		return "Rolling out " + s.service, "Rolled out " + s.service
+	case wire.CommandServiceDelete:
+		return "Deleting " + s.service, "Deleted " + s.service
 	}
 	return cmd.Type, cmd.Type
 }
@@ -222,10 +225,12 @@ func (s deploySteps) finished(cmd api.CommandSummary) string {
 // log shows it best (nil when no command is running).
 func (s deploySteps) current(d *api.Deployment) (string, *uuid.UUID) {
 	total, n := len(d.Commands), 1
-	rollout := false
+	// The final command, a deploy's helm.upgrade or a delete's service.delete,
+	// is counted before it exists.
+	final := false
 	var running, queued []api.CommandSummary
 	for _, cmd := range d.Commands {
-		rollout = rollout || cmd.Type == wire.CommandHelmUpgrade
+		final = final || cmd.Type == wire.CommandHelmUpgrade || cmd.Type == wire.CommandServiceDelete
 		switch cmd.Status {
 		case api.CommandStatusSucceeded:
 			n++
@@ -235,7 +240,7 @@ func (s deploySteps) current(d *api.Deployment) (string, *uuid.UUID) {
 			queued = append(queued, cmd)
 		}
 	}
-	if !rollout {
+	if !final {
 		total++
 	}
 	n = min(n, total)

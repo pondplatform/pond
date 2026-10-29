@@ -14,11 +14,15 @@ import (
 // --- mocks ---
 
 type mockHelmRunner struct {
-	upgradeFn func(ctx context.Context, req wire.HelmUpgradePayload, logW io.Writer) error
+	upgradeFn   func(ctx context.Context, req wire.HelmUpgradePayload, logW io.Writer) error
+	uninstallFn func(ctx context.Context, release wire.HelmRelease, logW io.Writer) error
 }
 
 func (m *mockHelmRunner) Upgrade(ctx context.Context, req wire.HelmUpgradePayload, logW io.Writer) error {
 	return m.upgradeFn(ctx, req, logW)
+}
+func (m *mockHelmRunner) Uninstall(ctx context.Context, release wire.HelmRelease, logW io.Writer) error {
+	return m.uninstallFn(ctx, release, logW)
 }
 
 type mockTofuRunner struct {

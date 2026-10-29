@@ -27,6 +27,9 @@ type CommandExecutor interface {
 // HelmRunner wraps Helm CLI operations.
 type HelmRunner interface {
 	Upgrade(ctx context.Context, req wire.HelmUpgradePayload, logW io.Writer) error
+	// Uninstall removes the release and waits until its resources are gone.
+	// A release that does not exist is not an error.
+	Uninstall(ctx context.Context, release wire.HelmRelease, logW io.Writer) error
 }
 
 // TofuRunner wraps OpenTofu CLI operations.

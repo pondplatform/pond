@@ -17,6 +17,7 @@ type RouterDeps struct {
 	Projects      store.ProjectRepository
 	Envs          store.EnvironmentRepository
 	Services      store.ServiceRepository
+	Deployments   store.DeploymentInfoStore
 	Clusters      store.ClusterRepository
 	JWTSecret     []byte
 	SpecRegistry  dependency.SpecRegistry
@@ -38,7 +39,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	clusterHandler := NewClusterHandler(deps.Clusters, deps.Log)
 	projectHandler := NewProjectHandler(deps.Projects, deps.Envs, deps.Log)
 	envHandler := NewEnvironmentHandler(deps.Envs, deps.Projects, deps.Clusters, deps.Log)
-	serviceHandler := NewServiceHandler(deps.Services, deps.Projects, deps.Log)
+	serviceHandler := NewServiceHandler(deps.Services, deps.Projects, deps.Deployments, deps.Log)
 	depSpecHandler := NewDependencySpecHandler(deps.SpecRegistry, deps.Log)
 	tokenHandler := NewTokenHandler(deps.JWTSecret, deps.Log)
 
@@ -84,6 +85,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	v1.GET("/projects/:projectId/services", az(auth.ResourceProject, auth.VerbRead), serviceHandler.List)
 	v1.GET("/services/:serviceId", az(auth.ResourceService, auth.VerbRead), serviceHandler.Get)
 	v1.GET("/services/:serviceId/deployments", az(auth.ResourceService, auth.VerbRead), deployHandler.ListByService)
+	v1.POST("/services/:serviceId/delete", az(auth.ResourceService, auth.VerbWrite), deployHandler.DeleteService)
 
 	// Dependency specs
 	v1.GET("/dependency-specs", az(auth.ResourceDependency, auth.VerbRead), depSpecHandler.List)

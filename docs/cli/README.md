@@ -317,3 +317,54 @@ A `-` in the completed column means the deployment has not finished yet. Use `po
 | `-f, --pond-file` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
 | `--limit` | no | Maximum number of deployments to list (default 20) |
 
+
+---
+
+## pond service
+
+Parent command for managing services.
+
+### pond service delete
+
+```sh
+pond service delete [service] [flags]
+```
+
+Deletes a service from every environment it is deployed to. In each one, its helm release is uninstalled first, so no pod of the service is left running, and then its [managed dependencies](../services/dependencies.md#managed-vs-manual-dependencies) are destroyed, with their data. Volumes are kept.
+
+The service is looked up by name inside the resolved project, as by `pond deployment status`. When the service argument is omitted, the name is read from the `name` field of `./pond.yml` (or of `--pond-file`).
+
+There is no environment to choose: the service goes from all of them. `--env` and `POND_ENV` are refused, so that a script that means one environment doesn't delete from all of them unnoticed. An environment from the active context is ignored, with a note on stderr.
+
+Before deleting, the command lists the environments and asks for the service name to be typed back. Any other answer, or none, deletes nothing. `--yes` skips the question; without a terminal, as in CI, pass it or pipe the name in.
+
+```sh
+$ pond service delete api
+This deletes service api from prod, staging.
+Its managed dependencies, such as databases, are destroyed with it: their data is lost.
+Volumes are kept.
+Type the service name to confirm: api
+Delete submitted: 4eeb2f2b-9124-4cd7-978a-fb2cbbb02555 from prod (pending)
+Delete submitted: 9a1c07d2-5b3e-4f6a-8d21-6c0e5f4b7a39 from staging (pending)
+Volumes are kept: deploying api again mounts their data again
+```
+
+Without `--wait`, the command exits once the deletes are submitted. With `--wait`, it follows each environment's delete in turn, the way `pond deploy --wait` follows a deployment, and exits non-zero if any of them failed or was cancelled.
+
+The server refuses the delete, and nothing changes, when:
+
+- **Something is still running.** A deployment or delete of the service hasn't finished in some environment. Wait for it, or cancel it, and delete again.
+- **Another service depends on it.** A service with a [`service` dependency](../services/dependencies.md#service) on this one is deployed to one of its environments. Delete that one first, or remove the dependency from it and redeploy it.
+
+While a delete runs, deploying the service is refused.
+
+A delete that fails in one environment doesn't undo the others. Running `pond service delete` again retries only the environments the service is still deployed to; a release that is already gone and a dependency already destroyed are skipped.
+
+A deleted service is still listed: `pond deployment status` shows it as `deleted`, or `deleting` while a delete runs, and each environment's latest deployment as `deleted`, `deleting` or `delete failed`. Deploying it again under the same name brings it back, with its history.
+
+| Flag | Required | Description |
+|---|---|---|
+| `-f, --pond-file` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
+| `--keep-deps` | no | Keep the managed dependencies: only uninstall the service. Their tofu state stays, so deploying the service again under the same name reattaches them |
+| `-y, --yes` | no | Delete without asking for confirmation |
+| `--wait` | no | Wait until the service is deleted from every environment |

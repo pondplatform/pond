@@ -20,6 +20,15 @@ const (
 	DeploymentStatusCancelled  DeploymentStatus = "cancelled"
 )
 
+// DeploymentKind says what a deployment does: roll the service out, or tear
+// it down in its environment.
+type DeploymentKind string
+
+const (
+	DeploymentKindDeploy DeploymentKind = "deploy"
+	DeploymentKindDelete DeploymentKind = "delete"
+)
+
 type CommandStatus string
 
 const (
@@ -61,6 +70,7 @@ type Deployment struct {
 	ID            uuid.UUID                     `json:"id"`
 	ServiceID     uuid.UUID                     `json:"serviceId"`
 	EnvironmentID uuid.UUID                     `json:"environmentId"`
+	Kind          DeploymentKind                `json:"kind"`
 	ImageTag      string                        `json:"imageTag"`
 	TriggeredBy   string                        `json:"triggeredBy"`
 	Status        DeploymentStatus              `json:"status"`
@@ -75,6 +85,7 @@ type DeploymentListItem struct {
 	ID            uuid.UUID        `json:"id"`
 	ServiceID     uuid.UUID        `json:"serviceId"`
 	EnvironmentID uuid.UUID        `json:"environmentId"`
+	Kind          DeploymentKind   `json:"kind"`
 	ImageTag      string           `json:"imageTag"`
 	Status        DeploymentStatus `json:"status"`
 	TriggeredBy   string           `json:"triggeredBy"`
@@ -90,6 +101,20 @@ type SubmitRequest struct {
 	TriggeredBy       string                          `json:"triggeredBy"`
 	CreateIfNotExists bool                            `json:"createIfNotExists"`
 	DeploymentInput
+}
+
+// DeleteServiceRequest is the body of POST /services/:serviceId/delete.
+type DeleteServiceRequest struct {
+	// KeepDependencies leaves the managed dependencies in place: only the
+	// helm release is uninstalled.
+	KeepDependencies bool   `json:"keepDependencies"`
+	TriggeredBy      string `json:"triggeredBy"`
+}
+
+// DeleteServiceResponse lists the delete deployments started, one per
+// environment the service was live in. It is empty when there was none.
+type DeleteServiceResponse struct {
+	Deployments []Deployment `json:"deployments"`
 }
 
 type DependencyInput struct {
