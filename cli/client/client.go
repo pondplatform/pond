@@ -12,6 +12,9 @@ import (
 type ServerClient interface {
 	SubmitDeployment(ctx context.Context, req api.SubmitRequest) (*api.Deployment, error)
 	GetDeployment(ctx context.Context, id uuid.UUID) (*api.Deployment, error)
+	// CancelDeployment stops an in-progress deployment. The server refuses
+	// with a 409 when it has already ended.
+	CancelDeployment(ctx context.Context, id uuid.UUID) error
 	GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]api.CommandLog, error)
 	ListServices(ctx context.Context, projectID uuid.UUID) ([]api.Service, error)
 	ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]api.Environment, error)

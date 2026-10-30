@@ -20,6 +20,10 @@ import (
 
 const testJWTSecret = "test-secret-for-integration-tests-only"
 
+// stopCheckInterval is how often the test server checks whether the command
+// an agent runs should stop.
+const stopCheckInterval = 50 * time.Millisecond
+
 // TestHarness owns a running server, its database connection, and test URLs.
 type TestHarness struct {
 	DB         *sql.DB
@@ -49,7 +53,7 @@ func NewTestHarness(t *testing.T, connStr string) *TestHarness {
 	ts := httptest.NewServer(server.Build(db, server.Config{
 		DatabaseURL:       connStr,
 		JWTSecret:         testJWTSecret,
-		StopCheckInterval: 50 * time.Millisecond,
+		StopCheckInterval: stopCheckInterval,
 	}, log))
 
 	h := &TestHarness{

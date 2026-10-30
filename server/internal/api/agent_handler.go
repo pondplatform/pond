@@ -25,8 +25,9 @@ var upgrader = websocket.Upgrader{
 }
 
 // AgentHandler serves agent WebSocket connections, one per cluster. The agent
-// asks for work with "ready" and reports with "result" and "log"; the server
-// answers, and pushes "cancel" when the command it handed out should stop.
+// opens with "hello", saying what it holds, asks for work with "ready" and
+// reports with "result" and "log"; the server answers, and pushes "cancel"
+// when the command the agent runs should stop.
 type AgentHandler struct {
 	clusters store.ClusterRepository
 	agents   *service.AgentCommands
@@ -75,22 +76,19 @@ func (h *AgentHandler) ServeWS(c *gin.Context) {
 	log := h.log.With("cluster_id", cluster.ID)
 	log.Info("agent connected")
 	_ = h.clusters.UpdateLastSeen(ctx, cluster.ID, time.Now())
-	// Closing the connection makes the agent restart and connect again.
-	if err := h.agents.Connected(ctx, cluster.ID); err != nil {
-		log.Error("fail the commands dispatched before the agent connected", "err", err)
-		return
-	}
 	if err := h.serve(ctx, conn, cluster.ID, log); err != nil {
 		log.Warn("closing agent connection", "err", err)
 	}
 	log.Info("agent disconnected")
 }
 
-// serve answers the agent until the connection ends. It remembers the
-// command it handed out, and while the agent runs it, checks every stopCheck
-// whether the command's deployment has ended; if so it pushes "cancel" once.
-// When a result cannot be stored it returns an error, which closes the
-// connection: the command stays dispatched until the agent connects again.
+// serve answers the agent until the connection ends. Its first message
+// settles what the agent holds. serve remembers the command the agent runs,
+// the one its hello names or the one handed out since, and checks every
+// stopCheck whether that command's deployment has ended; if so it pushes
+// "cancel" once. When a result cannot be stored it returns an error, which
+// closes the connection: the agent keeps the result, and sends it again when
+// it connects again.
 func (h *AgentHandler) serve(ctx context.Context, conn *websocket.Conn, clusterID uuid.UUID, log *slog.Logger) error {
 	inbox := make(chan wire.Envelope)
 	readErr := make(chan error, 1)
@@ -113,6 +111,7 @@ func (h *AgentHandler) serve(ctx context.Context, conn *websocket.Conn, clusterI
 		}
 	}()
 
+	greeted := false
 	var running *uuid.UUID
 	cancelSent := false
 	ticker := time.NewTicker(h.stopCheck)
@@ -144,7 +143,21 @@ func (h *AgentHandler) serve(ctx context.Context, conn *websocket.Conn, clusterI
 			}
 
 		case env := <-inbox:
+			if !greeted {
+				greeted = true
+				runs, err := h.greet(ctx, clusterID, env, log)
+				if err != nil {
+					return err
+				}
+				running, cancelSent = runs, false
+				if env.Type == wire.MessageHello {
+					continue
+				}
+			}
 			switch env.Type {
+			case wire.MessageHello:
+				log.Warn("ignoring a second hello from the agent")
+
 			case wire.MessageReady:
 				cmd, err := h.agents.Next(ctx, clusterID)
 				if err != nil {
@@ -194,6 +207,29 @@ func (h *AgentHandler) serve(ctx context.Context, conn *websocket.Conn, clusterI
 			}
 		}
 	}
+}
+
+// greet settles the commands dispatched on the cluster from the agent's first
+// message, and returns the command the agent runs. An agent that predates
+// hello opens with something else: like one that restarted, it holds nothing
+// from before.
+func (h *AgentHandler) greet(ctx context.Context, clusterID uuid.UUID, env wire.Envelope, log *slog.Logger) (*uuid.UUID, error) {
+	hello := wire.HelloPayload{Restarted: true}
+	if env.Type == wire.MessageHello {
+		if err := json.Unmarshal(env.Data, &hello); err != nil {
+			log.Error("decode hello; taking the agent for restarted", "err", err)
+			hello = wire.HelloPayload{Restarted: true}
+		}
+	}
+	log.Info("agent says what it holds", "restarted", hello.Restarted, "running", hello.Running, "finished", hello.Finished)
+	held := hello.Finished
+	if hello.Running != nil {
+		held = append(held, *hello.Running)
+	}
+	if err := h.agents.Connected(ctx, clusterID, hello.Restarted, held); err != nil {
+		return nil, fmt.Errorf("settle the commands the agent holds: %w", err)
+	}
+	return hello.Running, nil
 }
 
 func send(conn *websocket.Conn, msgType string, payload any) error {

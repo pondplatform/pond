@@ -26,6 +26,7 @@ type fakeClient struct {
 	submitted   []api.SubmitRequest
 	deleted     []api.DeleteServiceRequest
 	deletes     []api.Deployment // what DeleteService returns
+	cancelled   []uuid.UUID
 }
 
 func (f *fakeClient) SubmitDeployment(_ context.Context, req api.SubmitRequest) (*api.Deployment, error) {
@@ -40,6 +41,25 @@ func (f *fakeClient) GetDeployment(_ context.Context, id uuid.UUID) (*api.Deploy
 	return f.detail, nil
 }
 
+// CancelDeployment cancels the detail deployment as the server does: its
+// queued commands are cancelled, and it is cancelling while one is dispatched.
+func (f *fakeClient) CancelDeployment(_ context.Context, id uuid.UUID) error {
+	if f.detail == nil || f.detail.ID != id {
+		return fmt.Errorf("deployment %s not found", id)
+	}
+	f.cancelled = append(f.cancelled, id)
+	f.detail.Status = api.DeploymentStatusCancelled
+	for i, cmd := range f.detail.Commands {
+		switch cmd.Status {
+		case api.CommandStatusQueued:
+			f.detail.Commands[i].Status = api.CommandStatusCancelled
+		case api.CommandStatusDispatched:
+			f.detail.Status = api.DeploymentStatusCancelling
+		}
+	}
+	return nil
+}
+
 func (f *fakeClient) GetCommandLogs(context.Context, uuid.UUID) ([]api.CommandLog, error) {
 	return nil, nil
 }
@@ -52,15 +72,18 @@ func (f *fakeClient) ListEnvironments(context.Context, uuid.UUID) ([]api.Environ
 	return f.envs, nil
 }
 
-// ListDeployments returns deployments newest first, across all environments
-// when envID is nil.
-func (f *fakeClient) ListDeployments(_ context.Context, _ uuid.UUID, envID *uuid.UUID, limit int) ([]api.DeploymentListItem, error) {
+// ListDeployments returns the service's deployments newest first, across all
+// environments when envID is nil.
+func (f *fakeClient) ListDeployments(_ context.Context, serviceID uuid.UUID, envID *uuid.UUID, limit int) ([]api.DeploymentListItem, error) {
 	var items []api.DeploymentListItem
-	if envID != nil {
-		items = append(items, f.deployments[*envID]...)
-	} else {
-		for _, envItems := range f.deployments {
-			items = append(items, envItems...)
+	for id, envItems := range f.deployments {
+		if envID != nil && id != *envID {
+			continue
+		}
+		for _, d := range envItems {
+			if d.ServiceID == serviceID {
+				items = append(items, d)
+			}
 		}
 	}
 

@@ -31,10 +31,8 @@ func main() {
 
 	exec := agent.NewExecutor(helm.NewRunner(), tofu.NewRunner())
 
-	if err := agent.Run(ctx, cfg, exec, log); err != nil {
-		log.Error("agent exited", "err", err)
-		os.Exit(1)
-	}
+	agent.Run(ctx, cfg, exec, log)
+	log.Info("agent stopped")
 }
 
 func envOrDefault(key, defaultVal string) string {

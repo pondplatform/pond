@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,9 +23,9 @@ type CommandResult struct {
 	Error     string
 }
 
-// AgentCommands serves each cluster's one agent: it hands out commands that
-// are ready to run, tells the agent when to stop one, and records what comes
-// back.
+// AgentCommands serves each cluster's one agent: it settles what the agent
+// holds when it connects, hands out commands that are ready to run, tells the
+// agent when to stop one, and records what comes back.
 type AgentCommands struct {
 	repos   store.Repos
 	tx      store.Transactor
@@ -33,24 +34,69 @@ type AgentCommands struct {
 	now     func() time.Time
 }
 
-// agentDisconnected is the error of a command its agent was running when the
-// connection ended.
-const agentDisconnected = "the agent disconnected while running this command, so its outcome is unknown"
+// agentRestarted is the error of a command its agent was running when it
+// restarted.
+const agentRestarted = "the agent restarted while running this command, so its outcome is unknown"
 
-// Connected fails every command still dispatched on the cluster when its
-// agent connects. A cluster has one agent, and it never carries a command
-// across connections, so nothing runs them any more. Each goes through Record,
-// like a result from the agent.
-func (a *AgentCommands) Connected(ctx context.Context, clusterID uuid.UUID) error {
-	orphaned, err := a.repos.Deployments.ListDispatchedByCluster(ctx, clusterID)
+// Connected settles the commands dispatched on the cluster when its agent
+// connects, from what the agent says it holds: the command it runs, and those
+// whose results it sends next. A cluster has one agent, so a command it does
+// not hold is lost. When the agent restarted, it may have been running it, and
+// the command fails, through Record like a result from the agent. Otherwise
+// the agent never received it, and it is queued again.
+//
+// Connected can run again for the same hello, when the connection drops
+// before the agent hears back.
+func (a *AgentCommands) Connected(ctx context.Context, clusterID uuid.UUID, restarted bool, held []uuid.UUID) error {
+	dispatched, err := a.repos.Deployments.ListDispatchedByCluster(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("list dispatched commands: %w", err)
 	}
-	for _, cmd := range orphaned {
-		a.log.Warn("failing a command the agent was running when it disconnected", "command_id", cmd.ID, "cluster_id", clusterID)
-		if err := a.Record(ctx, clusterID, CommandResult{CommandID: cmd.ID, Error: agentDisconnected}); err != nil {
+	for _, cmd := range dispatched {
+		if slices.Contains(held, cmd.ID) {
+			continue
+		}
+		if restarted {
+			a.log.Warn("failing a command the agent was running when it restarted", "command_id", cmd.ID, "cluster_id", clusterID)
+			if err := a.Record(ctx, clusterID, CommandResult{CommandID: cmd.ID, Error: agentRestarted}); err != nil {
+				return err
+			}
+			continue
+		}
+		a.log.Warn("requeueing a command the agent never received", "command_id", cmd.ID, "cluster_id", clusterID)
+		if err := a.requeue(ctx, cmd); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// requeue puts a command the agent never received back in the queue, where
+// its age makes it the next to run. A command whose deployment has ended in
+// the meantime is cancelled instead, like the queued commands of a deployment
+// that ends.
+func (a *AgentCommands) requeue(ctx context.Context, cmd *db.Command) error {
+	err := a.tx.RunInTx(ctx, func(ctx context.Context, tx store.Repos) error {
+		deployment, err := tx.Deployments.LockDeployment(ctx, cmd.DeploymentID)
+		if err != nil {
+			return err
+		}
+		lost, err := tx.Deployments.GetCommand(ctx, cmd.ID)
+		if err != nil {
+			return err
+		}
+		if lost.Status != db.CommandStatusDispatched {
+			return nil
+		}
+		lost.Status = db.CommandStatusQueued
+		if deployment.Status != db.DeploymentInProgress {
+			lost.Status = db.CommandStatusCancelled
+		}
+		lost.UpdatedAt = a.now()
+		return tx.Deployments.UpdateCommand(ctx, lost)
+	})
+	if err != nil {
+		return fmt.Errorf("requeue command %s: %w", cmd.ID, err)
 	}
 	return nil
 }

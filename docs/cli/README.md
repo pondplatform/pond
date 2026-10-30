@@ -209,7 +209,7 @@ Deployment succeeded in 1m28s
 
 `waiting for the agent` means the agent of the environment's cluster hasn't picked the step up yet. It runs one command at a time, so it may be busy with another deployment. See [How work runs](../README.md#how-work-runs).
 
-Only one deployment of a service runs in an environment at a time. While a deploy or delete of the service is in progress in the environment, the server refuses the deploy and creates nothing; the command exits non-zero, naming the deployment in progress. Wait for it to finish, or cancel it, and deploy again. Deploying to other environments is not affected.
+Only one deployment of a service runs in an environment at a time. While a deploy or delete of the service is in progress in the environment, the server refuses the deploy and creates nothing; the command exits non-zero, naming the deployment in progress. Wait for it to finish, or [cancel it](#pond-deployment-cancel), and deploy again. Deploying to other environments is not affected.
 
 Every dependency declared in `pond.yml` needs input on every deployment; input from earlier deployments is not reused. If `--input` leaves out a declared dependency, or names a dependency that is not declared, the server rejects the request and creates nothing.
 
@@ -319,12 +319,85 @@ A `-` in the completed column means the deployment has not finished yet. Use `po
 | `-f, --pond-file` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
 | `--limit` | no | Maximum number of deployments to list (default 20) |
 
+### pond deployment cancel
+
+```sh
+pond deployment cancel [service] [flags]
+```
+
+Cancels the deployment of a service in progress in an environment, or a delete started by `pond service delete`. Steps that have not started are cancelled at once. The agent is told to stop the step it runs, and until it has, the deployment shows as `cancelling`, then `cancelled`. If the agent has lost its connection to the server, it is told when it connects again; see [How work runs](../README.md#how-work-runs).
+
+The service is looked up by name inside the resolved project, as by `pond deployment status`. When the service argument is omitted, the name is read from the `name` field of `./pond.yml` (or of `--pond-file`). An environment is required, via `--env`, `POND_ENV` or the active context: a service has at most one deployment in progress per environment, and that one is cancelled.
+
+Before cancelling, the command shows that deployment and the step it is on, and asks for a `y`. Any other answer, or none, cancels nothing. `--yes` skips the question; without a terminal, as in CI, pass it or pipe `y` in.
+
+```sh
+$ pond deployment cancel api --env prod
+This cancels the deployment of service api to prod:
+  Deployment: 4eeb2f2b-9124-4cd7-978a-fb2cbbb02555
+  Status:     running
+  Step:       [1/2] Provisioning db (postgres)
+  Image:      v1.3.0
+  Triggered:  cli
+  Created:    2026-09-14 09:00:00
+Cancel it? [y/N]: y
+Deployment 4eeb2f2b-9124-4cd7-978a-fb2cbbb02555 cancelled
+The agent is told to stop provisioning db (postgres); the deployment shows as cancelling until it has.
+```
+
+With `--deployment-id`, that deployment is cancelled without asking, and no service or environment is needed.
+
+When nothing is in progress — the latest deployment in the environment, or the one given, has already finished or been cancelled — the command cancels nothing and exits non-zero.
+
+A cancelled deployment doesn't block the next one: you can deploy again right away, and its steps run once the agent has stopped. What was done before the cancel is not undone: dependencies already provisioned stay, and a cancelled rollout or delete leaves the service where it stopped. Deploy again, or run `pond service delete` again, to finish the job.
+
+| Flag | Required | Description |
+|---|---|---|
+| `-e, --env` | yes, unless `--deployment-id` is given | Environment of the deployment to cancel |
+| `-f, --pond-file` | no | Path to the `pond.yml` to read the service name from (default `./pond.yml`) |
+| `--deployment-id` | no | Cancel one deployment by UUID, without asking; cannot be combined with a service name |
+| `-y, --yes` | no | Cancel without asking for confirmation |
+
 
 ---
 
 ## pond service
 
 Parent command for managing services.
+
+### pond service list
+
+```sh
+pond service list [flags]
+```
+
+Lists the services of the resolved project, sorted by name, so `--project` (or `POND_PROJECT` / `POND_PROJECT_ID`, or a context) is required.
+
+With no environment set, each row has the service's status: `deleting` while a delete of it runs in some environment, `deleted` once it is deleted from every environment, and `active` otherwise, including when a delete of it failed somewhere. A deleted service is still listed; deploying it again makes it `active`:
+
+```sh
+$ pond service list
+NAME    STATUS   CREATED
+api     active   2026-09-01 12:00:00
+legacy  deleted  2026-08-20 14:05:00
+worker  active   2026-09-03 16:45:00
+```
+
+When an environment is set — via `--env`, `POND_ENV` or the active context — each row has the service's latest deployment in that environment instead, as in `pond deployment status`, or `-` when the service has never been deployed there:
+
+```sh
+$ pond service list --env prod
+Environment prod
+
+NAME    STATUS     IMAGE   DEPLOYMENT                            CREATED
+api     succeeded  v1.2.3  55555555-5555-5555-5555-555555555555  2026-09-12 10:30:00
+legacy  deleted    v0.9.0  9a1c07d2-5b3e-4f6a-8d21-6c0e5f4b7a39  2026-09-11 09:00:00
+worker  -          -       -                                     -
+```
+
+| Flag | Required | Description |
+|---|---|---|
+| `-e, --env` | no | Show each service's latest deployment in this environment |
 
 ### pond service delete
 
@@ -355,14 +428,14 @@ Without `--wait`, the command exits once the deletes are submitted. With `--wait
 
 The server refuses the delete, and nothing changes, when:
 
-- **Something is in progress.** A deployment or delete of the service is in progress in some environment. Wait for it, or cancel it, and delete again.
+- **Something is in progress.** A deployment or delete of the service is in progress in some environment. Wait for it, or [cancel it](#pond-deployment-cancel), and delete again.
 - **Another service depends on it.** A service with a [`service` dependency](../services/dependencies.md#service) on this one is deployed to one of its environments. Delete that one first, or remove the dependency from it and redeploy it.
 
 While a delete runs, deploying the service is refused.
 
 A delete that fails in one environment doesn't undo the others. Running `pond service delete` again retries only the environments the service is still deployed to; a release that is already gone and a dependency already destroyed are skipped.
 
-A deleted service is still listed: `pond deployment status` shows it as `deleted`, or `deleting` while a delete runs, and each environment's latest deployment as `deleted`, `deleting` or `delete failed`. Deploying it again under the same name brings it back, with its history.
+A deleted service is still listed: `pond service list` and `pond deployment status` show it as `deleted`, or `deleting` while a delete runs, and each environment's latest deployment as `deleted`, `deleting` or `delete failed`. Deploying it again under the same name brings it back, with its history.
 
 | Flag | Required | Description |
 |---|---|---|

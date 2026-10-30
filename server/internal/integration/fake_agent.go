@@ -94,11 +94,16 @@ func NewFakeAgent(serverAddr, token string, b Behavior) *FakeAgent {
 	}
 }
 
-// Connect establishes the WebSocket connection and sends the ready message.
+// Connect establishes the WebSocket connection and opens it like an agent
+// that just started: a hello that holds nothing, then ready.
 func (a *FakeAgent) Connect(ctx context.Context) error {
 	a.conn = agentconn.New(a.serverAddr, a.token)
 	if err := a.conn.Connect(ctx); err != nil {
 		return fmt.Errorf("connect: %w", err)
+	}
+	if err := a.conn.SendHello(ctx, wire.HelloPayload{Restarted: true}); err != nil {
+		a.conn.Close()
+		return fmt.Errorf("send hello: %w", err)
 	}
 	if err := a.conn.SendReady(ctx); err != nil {
 		a.conn.Close()
@@ -270,6 +275,57 @@ func (a *FakeAgent) WaitForCommands(ctx context.Context, t *testing.T, n int) []
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+// AgentSession is an agent connection the test drives by hand, for what the
+// fake agent doesn't do: come back holding commands from an earlier
+// connection, as the agent does after it lost one.
+type AgentSession struct {
+	t    *testing.T
+	conn agentconn.AgentConnection
+}
+
+// ConnectAgent opens a connection for the cluster's agent and sends hello.
+// The connection is closed when the test ends.
+func (h *TestHarness) ConnectAgent(ctx context.Context, t *testing.T, token string, hello wire.HelloPayload) *AgentSession {
+	t.Helper()
+	conn := agentconn.New(h.WsAddr, token)
+	if err := conn.Connect(ctx); err != nil {
+		t.Fatalf("connect agent: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if err := conn.SendHello(ctx, hello); err != nil {
+		t.Fatalf("send hello: %v", err)
+	}
+	return &AgentSession{t: t, conn: conn}
+}
+
+// Ready asks for work and returns the server's answer. The server answers
+// once it has handled everything sent before.
+func (s *AgentSession) Ready(ctx context.Context) *wire.Envelope {
+	s.t.Helper()
+	if err := s.conn.SendReady(ctx); err != nil {
+		s.t.Fatalf("send ready: %v", err)
+	}
+	return s.Receive(ctx)
+}
+
+// Result reports a command's result.
+func (s *AgentSession) Result(ctx context.Context, result *wire.ResultPayload) {
+	s.t.Helper()
+	if err := s.conn.SendResult(ctx, result); err != nil {
+		s.t.Fatalf("send result: %v", err)
+	}
+}
+
+// Receive returns the next message from the server.
+func (s *AgentSession) Receive(ctx context.Context) *wire.Envelope {
+	s.t.Helper()
+	msg, err := s.conn.ReceiveMessage(ctx)
+	if err != nil {
+		s.t.Fatalf("receive: %v", err)
+	}
+	return msg
 }
 
 // NewGate returns a gate for Behavior.Gate and the function that opens it.

@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pondplatform/pond/shared/agent/wire"
 	shared "github.com/pondplatform/pond/shared/server/api"
 )
 
@@ -93,6 +95,42 @@ func TestCancel_ShowsCancellingUntilTheAgentStops(t *testing.T) {
 	}
 }
 
+// TestCancel_ReachesTheAgentOnceItReconnects checks that a deployment
+// cancelled while its agent was disconnected shows as cancelling, and that
+// the agent is told to stop the command when it comes back running it.
+func TestCancel_ReachesTheAgentOnceItReconnects(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	h := NewTestHarness(t, testConnStr)
+	scenario := BuildScenario(ctx, t, h)
+	gate, _ := NewGate(t)
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, Behavior{Gate: gate})
+
+	id := submitDeployment(ctx, t, h, SubmitRequest(scenario, MinimalServiceConfig("test-service"), "v1.0.0"))
+	cmdID := fa.WaitForCommands(ctx, t, 1)[0].ID
+	fa.Stop()
+	if code, resp := cancelDeployment(ctx, t, h, id); code != http.StatusNoContent {
+		t.Fatalf("cancel: expected 204, got %d: %s", code, resp)
+	}
+	waitForAPIStatus(ctx, t, h, id, string(shared.DeploymentStatusCancelling), time.Second)
+
+	agent := h.ConnectAgent(ctx, t, scenario.AgentToken, wire.HelloPayload{Running: &cmdID})
+	msg := agent.Receive(ctx)
+	var stop wire.CancelPayload
+	if msg.Type != wire.MessageCancel || json.Unmarshal(msg.Data, &stop) != nil || stop.CommandID != cmdID {
+		t.Fatalf("expected a cancel for %s, got %s %s", cmdID, msg.Type, msg.Data)
+	}
+	agent.Result(ctx, &wire.ResultPayload{CommandID: cmdID, Error: "cancelled by the server"})
+	if msg := agent.Ready(ctx); msg.Type != wire.MessageIdle {
+		t.Fatalf("expected idle, got %s", msg.Type)
+	}
+	waitForAPIStatus(ctx, t, h, id, "cancelled", time.Second)
+	if cmd := commandRow(t, h, id, cmdID); cmd.Status != "cancelled" || cmd.Error != "cancelled by the server" {
+		t.Errorf("expected the command cancelled by the server, got %+v", cmd)
+	}
+}
+
 // TestCancel_CancelsQueuedCommandsAtOnce checks that commands no agent has
 // picked up yet are cancelled by the cancel request itself.
 func TestCancel_CancelsQueuedCommandsAtOnce(t *testing.T) {
@@ -119,6 +157,31 @@ func TestCancel_CancelsQueuedCommandsAtOnce(t *testing.T) {
 	}
 	waitForCancel(t, fa, running)
 	waitForAPIStatus(ctx, t, h, id, "cancelled", 2*time.Second)
+}
+
+// TestCancel_ThroughTheCLIClient checks the CLI client's cancel: it succeeds
+// on a deployment in progress, and reports the server's refusal on one that
+// has ended.
+func TestCancel_ThroughTheCLIClient(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	h := NewTestHarness(t, testConnStr)
+	scenario := BuildScenario(ctx, t, h)
+	gate, _ := NewGate(t)
+	fa := h.StartFakeAgent(ctx, t, scenario.AgentToken, Behavior{Gate: gate})
+
+	id := submitDeployment(ctx, t, h, SubmitRequest(scenario, MinimalServiceConfig("test-service"), "v1.0.0"))
+	fa.WaitForCommands(ctx, t, 1)
+
+	c := h.Client()
+	if err := c.CancelDeployment(ctx, id); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	waitForAPIStatus(ctx, t, h, id, "cancelled", 2*time.Second)
+	if err := c.CancelDeployment(ctx, id); err == nil || !strings.Contains(err.Error(), "409") {
+		t.Fatalf("cancelling again: expected a 409, got %v", err)
+	}
 }
 
 // TestStateMachine_FailedDependencyCancelsItsQueuedSibling checks that when

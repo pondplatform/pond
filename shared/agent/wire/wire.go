@@ -14,10 +14,15 @@ type Envelope struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// Message types. The agent asks for work with ready, and the server answers
-// with command or idle. The agent reports with result and log. The server
-// pushes cancel when the deployment of the command an agent runs has ended.
+// Message types. The agent opens every connection with hello. It asks for
+// work with ready, and the server answers with command or idle. The agent
+// reports with result and log. The server pushes cancel when the deployment
+// of the command an agent runs has ended.
+//
+// The server handles an agent's messages in order, so its answer to a ready
+// means it has stored everything the agent sent before that ready.
 const (
+	MessageHello   = "hello"
 	MessageReady   = "ready"
 	MessageCommand = "command"
 	MessageIdle    = "idle"
@@ -25,6 +30,18 @@ const (
 	MessageLog     = "log"
 	MessageCancel  = "cancel"
 )
+
+// HelloPayload is the first message on every connection: what the agent
+// holds, so the server can settle the commands it has as dispatched.
+type HelloPayload struct {
+	// Restarted is true until the server has answered the agent once since it
+	// started: it holds nothing from before, so whatever it ran then is lost.
+	Restarted bool `json:"restarted"`
+	// Running is the command the agent runs, if any.
+	Running *uuid.UUID `json:"running,omitempty"`
+	// Finished are the commands whose results the agent sends next.
+	Finished []uuid.UUID `json:"finished,omitempty"`
+}
 
 // CancelPayload is the "cancel" message: the agent should stop the command.
 type CancelPayload struct {

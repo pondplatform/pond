@@ -10,6 +10,7 @@ import (
 // AgentConnection is the public interface for communicating with the pond server over WebSocket.
 type AgentConnection interface {
 	Connect(ctx context.Context) error
+	SendHello(ctx context.Context, hello wire.HelloPayload) error
 	SendReady(ctx context.Context) error
 	ReceiveMessage(ctx context.Context) (*wire.Envelope, error)
 	SendResult(ctx context.Context, result *wire.ResultPayload) error

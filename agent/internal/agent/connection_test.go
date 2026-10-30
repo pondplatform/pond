@@ -125,6 +125,43 @@ func TestConnection_SendResult(t *testing.T) {
 	}
 }
 
+func TestConnection_SendHello(t *testing.T) {
+	received := make(chan wire.Envelope, 1)
+
+	srv := newTestServer(t, func(conn *websocket.Conn) {
+		var env wire.Envelope
+		if err := conn.ReadJSON(&env); err == nil {
+			received <- env
+		}
+	})
+	defer srv.Close()
+
+	addr := strings.TrimPrefix(wsURL(srv), "ws://")
+	c := agent.NewConnection(addr, "tok")
+	if err := c.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+
+	running := uuid.New()
+	if err := c.SendHello(context.Background(), wire.HelloPayload{Running: &running}); err != nil {
+		t.Fatalf("SendHello: %v", err)
+	}
+
+	select {
+	case env := <-received:
+		var hello wire.HelloPayload
+		if err := json.Unmarshal(env.Data, &hello); err != nil {
+			t.Fatalf("decode hello: %v", err)
+		}
+		if env.Type != "hello" || hello.Running == nil || *hello.Running != running || hello.Restarted {
+			t.Errorf("unexpected hello: %s %s", env.Type, env.Data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for server to receive hello")
+	}
+}
+
 func TestConnection_SendLog(t *testing.T) {
 	received := make(chan wire.Envelope, 1)
 

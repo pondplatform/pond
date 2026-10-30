@@ -74,6 +74,10 @@ func (c *connection) ReceiveMessage(ctx context.Context) (*wire.Envelope, error)
 	}
 }
 
+func (c *connection) SendHello(ctx context.Context, hello wire.HelloPayload) error {
+	return c.send(wire.MessageHello, hello)
+}
+
 func (c *connection) SendReady(ctx context.Context) error {
 	return c.send(wire.MessageReady, struct{}{})
 }

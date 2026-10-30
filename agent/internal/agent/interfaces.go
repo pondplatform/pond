@@ -7,9 +7,12 @@ import (
 	"github.com/pondplatform/pond/shared/agent/wire"
 )
 
-// AgentConnection represents the persistent connection to the server.
+// AgentConnection represents the connection to the server. After Close, it
+// can Connect again.
 type AgentConnection interface {
 	Connect(ctx context.Context) error
+	// SendHello opens a connection: it tells the server what the agent holds.
+	SendHello(ctx context.Context, hello wire.HelloPayload) error
 	// SendReady asks the server for a command; it answers with one, or idle.
 	SendReady(ctx context.Context) error
 	// ReceiveMessage reads the next envelope from the server.

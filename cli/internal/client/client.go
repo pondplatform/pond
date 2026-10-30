@@ -18,6 +18,9 @@ import (
 type ServerClient interface {
 	SubmitDeployment(ctx context.Context, req api.SubmitRequest) (*api.Deployment, error)
 	GetDeployment(ctx context.Context, id uuid.UUID) (*api.Deployment, error)
+	// CancelDeployment stops an in-progress deployment. The server refuses
+	// with a 409 when it has already ended.
+	CancelDeployment(ctx context.Context, id uuid.UUID) error
 	GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]api.CommandLog, error)
 	ListServices(ctx context.Context, projectID uuid.UUID) ([]api.Service, error)
 	ListEnvironments(ctx context.Context, projectID uuid.UUID) ([]api.Environment, error)
@@ -89,6 +92,19 @@ func (c *httpClient) GetDeployment(ctx context.Context, id uuid.UUID) (*api.Depl
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	return &d, nil
+}
+
+func (c *httpClient) CancelDeployment(ctx context.Context, id uuid.UUID) error {
+	resp, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/deployments/%s/cancel", id), nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return readError(resp)
+	}
+	return nil
 }
 
 func (c *httpClient) GetCommandLogs(ctx context.Context, commandID uuid.UUID) ([]api.CommandLog, error) {
