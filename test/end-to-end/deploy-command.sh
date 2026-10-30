@@ -48,7 +48,7 @@ the_pod() {
 # ── 1. With a command ─────────────────────────────────────────────────────────
 step "Deploying $SERVICE_NAME with a command"
 OUTPUT=$(POND_SERVER_URL="$SERVER_URL" POND_TOKEN="$POND_TOKEN" \
-  "$POND" deploy \
+  "$POND" deploy --no-wait \
     --pond-file "$SCRIPT_DIR/../test-data/command/pond.yml" \
     --project "$PROJECT_ID" \
     --env staging \

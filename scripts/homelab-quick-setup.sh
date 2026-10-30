@@ -1266,7 +1266,7 @@ summary() {
     echo "        enabled: true"
   fi
   echo
-  echo "  Then run:  pond deploy --tag latest --wait"
+  echo "  Then run:  pond deploy --tag latest"
   if [[ "$INSTALL_GATEWAY" == "true" ]]; then
     echo "  It answers at https://hello.$(env_base_host "$first_env")"
   else

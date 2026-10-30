@@ -70,7 +70,7 @@ gw_status() {
 # ── Submit ────────────────────────────────────────────────────────────────────
 step "Submitting $SERVICE_NAME deployment (tag: $IMAGE_TAG)"
 DEPLOY_OUTPUT=$(POND_SERVER_URL="$SERVER_URL" POND_TOKEN="$POND_TOKEN" \
-  "$POND" deploy \
+  "$POND" deploy --no-wait \
     --pond-file "$SCRIPT_DIR/../test-data/gateway/pond.yml" \
     --project "$PROJECT_ID" \
     --env staging \

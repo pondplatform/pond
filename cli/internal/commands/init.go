@@ -135,7 +135,7 @@ func NewInitCmd() *cobra.Command {
 				fmt.Fprintf(out, "Created %s\n", inputPath)
 			}
 
-			fmt.Fprintln(out, "Next: pond deploy --tag <tag> --wait")
+			fmt.Fprintln(out, "Next: pond deploy --tag <tag>")
 			return nil
 		},
 	}

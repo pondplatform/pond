@@ -151,7 +151,7 @@ Deploy it:
 cd ..
 git clone https://github.com/pondplatform/sample-apps.git
 cd sample-apps/postgres-todo
-pond deploy --tag latest --wait
+pond deploy --tag latest
 ```
 
 Open `https://todo-app.example.com`. To see what's running:

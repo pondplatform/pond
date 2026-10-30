@@ -33,7 +33,7 @@ load_env
 deploy() {
   local output
   output=$(POND_SERVER_URL="$SERVER_URL" POND_TOKEN="$POND_TOKEN" \
-    "$POND" deploy \
+    "$POND" deploy --no-wait \
       --pond-file "$SCRIPT_DIR/../test-data/service-dependency/$1" \
       --project "$PROJECT_ID" \
       --env staging \

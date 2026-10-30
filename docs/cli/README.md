@@ -164,7 +164,7 @@ $ cd my-app
 $ pond init --image ghcr.io/acme/my-app --port 3000 --env production
 Created pond.yml
 Created pond-input-production.yml
-Next: pond deploy --tag <tag> --wait
+Next: pond deploy --tag <tag>
 ```
 
 ---
@@ -182,9 +182,9 @@ pond deploy [flags]
 | `-f, --pond-file` | `./pond.yml` | Path to the service definition file |
 | `-t, --tag` | _(required)_ | Image tag to deploy |
 | `-i, --input` | `pond-input-<env>.yml` or `.json`, if present | Path to a JSON or YAML file with input for dependencies and variables; see [Dependencies](../services/dependencies.md) for the format |
-| `--wait` | `false` | Block until the deployment reaches a terminal state |
+| `--no-wait` | `false` | Exit once the deployment is submitted instead of waiting for it to finish |
 
-Without `--wait`, the command prints the deployment ID and exits. With `--wait`, it polls every 2 seconds and exits when the deployment succeeds, fails or is cancelled. A failed deployment exits non-zero, with the failure reason and the logs of the failed step.
+The command waits for the deployment: it polls every 2 seconds and exits when the deployment succeeds, fails or is cancelled. A failed deployment exits non-zero, with the failure reason and the logs of the failed step. With `--no-wait`, it prints the deployment ID and exits; follow it with [`pond deployment status --follow`](#pond-deployment-status). `--wait`, which waiting used to need, is still accepted and changes nothing.
 
 While waiting, it shows what is being deployed and which step it is on. A deployment has one step per managed dependency, then the rollout. Each step that finishes stays on screen with how long it took:
 
@@ -218,8 +218,9 @@ Without `--input`, the command looks for `pond-input-<env>.yml` or `pond-input-<
 **Examples:**
 
 ```sh
-pond deploy --tag v1.2.3 --wait                                   # uses ./pond-input-<env>.yml or .json if present
-pond deploy --tag v1.2.3 --input ./deploy-input.json --wait
+pond deploy --tag v1.2.3                                   # uses ./pond-input-<env>.yml or .json if present
+pond deploy --tag v1.2.3 --input ./deploy-input.json
+pond deploy --tag v1.2.3 --no-wait                         # exits once the deployment is submitted
 ```
 
 ---
@@ -424,7 +425,7 @@ Delete submitted: 9a1c07d2-5b3e-4f6a-8d21-6c0e5f4b7a39 from staging (pending)
 Volumes are kept: deploying api again mounts their data again
 ```
 
-Without `--wait`, the command exits once the deletes are submitted. With `--wait`, it follows each environment's delete in turn, the way `pond deploy --wait` follows a deployment, and exits non-zero if any of them failed or was cancelled.
+Without `--wait`, the command exits once the deletes are submitted. With `--wait`, it follows each environment's delete in turn, the way `pond deploy` follows a deployment, and exits non-zero if any of them failed or was cancelled.
 
 The server refuses the delete, and nothing changes, when:
 

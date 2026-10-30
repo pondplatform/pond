@@ -262,7 +262,35 @@ func runDeployWait(t *testing.T, polls ...followPoll) (string, error) {
 	pondFile := filepath.Join(t.TempDir(), "pond.yml")
 	writeFile(t, pondFile, deployTestPondYml)
 	c := &followClient{fakeClient: newFakeClient(), polls: polls}
-	return runDeployCmd(t, c, "-f", pondFile, "-t", "v1.2.3", "--wait")
+	return runDeployCmd(t, c, "-f", pondFile, "-t", "v1.2.3")
+}
+
+func TestDeployNoWaitExitsOnceSubmitted(t *testing.T) {
+	pondFile := filepath.Join(t.TempDir(), "pond.yml")
+	writeFile(t, pondFile, deployTestPondYml)
+	c := newFakeClient()
+	c.detail = nil // waiting would fail to get the deployment
+
+	out, err := runDeployCmd(t, c, "-f", pondFile, "-t", "v1", "--no-wait")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "Deployment submitted: " + testDeployID + " (status: pending)\n"; out != want {
+		t.Errorf("expected only %q, got:\n%s", want, out)
+	}
+}
+
+func TestDeployStillAcceptsWait(t *testing.T) {
+	commands.SetPollInterval(t, time.Millisecond)
+	pondFile := filepath.Join(t.TempDir(), "pond.yml")
+	writeFile(t, pondFile, deployTestPondYml)
+	c := &followClient{fakeClient: newFakeClient(), polls: []followPoll{waitPoll(api.DeploymentStatusSucceeded)}}
+
+	out, err := runDeployCmd(t, c, "-f", pondFile, "-t", "v1.2.3", "--wait")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertInOrder(t, out, "Flag --wait has been deprecated", "Deploying api", "Deployment succeeded")
 }
 
 func assertInOrder(t *testing.T, out string, want ...string) {

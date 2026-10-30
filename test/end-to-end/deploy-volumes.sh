@@ -43,7 +43,7 @@ MARKER="written-by-run-$$-$(date +%s)"
 deploy() {
   local output id
   output=$(POND_SERVER_URL="$SERVER_URL" POND_TOKEN="$POND_TOKEN" \
-    "$POND" deploy \
+    "$POND" deploy --no-wait \
       --pond-file "$1" \
       --project "$PROJECT_ID" \
       --env staging \

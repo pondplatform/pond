@@ -75,7 +75,7 @@ poll_status() {
 
 # get_deployment_id <cli_output>
 # Extracts the deployment UUID from CLI output.
-# The CLI prints the deployment ID as a UUID when submitting without --wait.
+# The CLI prints the deployment ID as a UUID when submitting with --no-wait.
 get_deployment_id() {
   local output="$1"
   local id

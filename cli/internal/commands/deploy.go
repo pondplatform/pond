@@ -25,7 +25,7 @@ func NewDeployCmd() *cobra.Command {
 		filePath  string
 		tag       string
 		inputPath string
-		wait      bool
+		noWait    bool
 	)
 
 	cmd := &cobra.Command{
@@ -90,22 +90,25 @@ func NewDeployCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "Deployment submitted: %s (status: %s)\n", d.ID, d.Status)
 
-			if wait {
-				image := tag
-				if overridable.Image != "" {
-					image = overridable.Image + ":" + tag
-				}
-				fmt.Fprintf(out, "Deploying %s (%s) to %s\n", overridable.Name, image, resolved.Env)
-				return waitForDeployment(cmd.Context(), out, sc, d.ID, overridable.Name)
+			if noWait {
+				return nil
 			}
-			return nil
+			image := tag
+			if overridable.Image != "" {
+				image = overridable.Image + ":" + tag
+			}
+			fmt.Fprintf(out, "Deploying %s (%s) to %s\n", overridable.Name, image, resolved.Env)
+			return waitForDeployment(cmd.Context(), out, sc, d.ID, overridable.Name)
 		},
 	}
 
 	cmd.Flags().StringVarP(&filePath, "pond-file", "f", "./pond.yml", "Path to pond.yml")
 	cmd.Flags().StringVarP(&tag, "tag", "t", "", "Image tag to deploy")
 	cmd.Flags().StringVarP(&inputPath, "input", "i", "", "Path to a JSON or YAML file with input for dependencies and variables (default: pond-input-<env>.yml or .json next to the pond file, if present)")
-	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for completion")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Exit once the deployment is submitted instead of waiting for it to finish")
+	// --wait was needed to wait before it became the default; it stays so scripts that pass it keep working.
+	cmd.Flags().Bool("wait", false, "Wait for completion")
+	cmd.Flags().MarkDeprecated("wait", "waiting is now the default; use --no-wait to skip it")
 	cmd.MarkFlagRequired("tag")
 
 	return cmd
